@@ -12,11 +12,11 @@ import * as Records from '../../daemon/src/chat_worktree_records';
 import * as History from '../../daemon/src/chat_branch_history';
 import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/project_repositories';
 
-const database = require('../../daemon/resources/session-database.cjs');
-const publication = require('../../daemon/resources/piop-storage/session-publication.cjs');
-const dependencies = require('../../daemon/resources/piop-storage/goal-dependencies.cjs');
-const assets = require('../../daemon/resources/piop-storage/goal-assets.cjs');
-const lock = require('../../daemon/resources/piop-storage/reference-publication-lock.cjs');
+const database = require('../../daemon/resources/session-database.ts');
+const publication = require('../../daemon/resources/piop-storage/session-publication.ts');
+const dependencies = require('../../daemon/resources/piop-storage/goal-dependencies.ts');
+const assets = require('../../daemon/resources/piop-storage/goal-assets.ts');
+const lock = require('../../daemon/resources/piop-storage/reference-publication-lock.ts');
 
 const daemons: TestDaemon[] = [];
 afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.stop(); }, 60000);

@@ -1,7 +1,7 @@
 import { isMainThread, parentPort, workerData, type MessagePort } from 'node:worker_threads';
 import { BUILD_ID } from './config';
-import { connectWorker } from '../resources/main-thread.cjs';
-import { withinFlow } from '../resources/storage-locks.cjs';
+import { connectWorker } from '../resources/main-thread.ts';
+import { withinFlow } from '../resources/storage-locks.ts';
 import { QUEUED, STARTED, type HostOperationName, type WorkerJob, type WorkerReply } from './host_operation_protocol';
 
 interface Context { begin(): boolean; storage?: WorkerJob['storage'] }
@@ -17,20 +17,20 @@ function started(operation: (input: any) => Promise<unknown> | unknown): Handler
 const handlers: Record<HostOperationName, Handler> = {
   'chat-branch-history': started(async input => (await import('./chat_branch_history')).publishBranchHistory(input)),
   'discard-chat-branch': started(async input => (await import('./chat_branch_history')).discardBranchHistory(input.root, input.sessionId, input.sessionPath)),
-  'session-descendants': started(async input => (await import('../resources/session-descendants.cjs')).sessionDescendants(input)),
-  'index-sessions': started(async input => (await import('../resources/index-sessions.cjs')).indexSessions(input)),
-  'storage-inventory': started(async input => (await import('../resources/storage-inventory.cjs')).storageInventory(input)),
-  'recover-missing-session': started(async input => (await import('../resources/recover-missing-session.cjs')).recoverMissingSession(input)),
-  'relocate-session': started(async input => (await import('../resources/relocate-session.cjs')).checkedRelocation(input)),
-  'record-session-directory': started(async input => (await import('../resources/session-registry.cjs')).recordDirectory(input)),
-  'temporary-chat': started(async input => (await import('../resources/temporary-chat.cjs')).temporaryChat(input)),
-  'goal-text': started(async input => (await import('../resources/piop-storage/goal-dependencies.cjs')).textContents(input.root, input.directory).map((entry: any) => entry.text)),
+  'session-descendants': started(async input => (await import('../resources/session-descendants.ts')).sessionDescendants(input)),
+  'index-sessions': started(async input => (await import('../resources/index-sessions.ts')).indexSessions(input)),
+  'storage-inventory': started(async input => (await import('../resources/storage-inventory.ts')).storageInventory(input)),
+  'recover-missing-session': started(async input => (await import('../resources/recover-missing-session.ts')).recoverMissingSession(input)),
+  'relocate-session': started(async input => (await import('../resources/relocate-session.ts')).checkedRelocation(input)),
+  'record-session-directory': started(async input => (await import('../resources/session-registry.ts')).recordDirectory(input)),
+  'temporary-chat': started(async input => (await import('../resources/temporary-chat.ts')).temporaryChat(input)),
+  'goal-text': started(async input => (await import('../resources/piop-storage/goal-dependencies.ts')).textContents(input.root, input.directory).map(entry => entry.text)),
   'agent-definitions': started(async input => (await import('piop-agent-loader')).loadAgentDefinitions(input)),
   'save-agent-definitions': started(async input => (await import('piop-agent-loader')).saveAgentDefinitions(input)),
   'move-agent': started(async input => (await import('piop-agent-loader')).moveAgent(input)),
   'storage-transaction': async (input, context) => {
     if (!context.storage) throw new Error('Storage transaction has no storage locks');
-    const { runStorageTransaction } = await import('../resources/storage-operation.cjs');
+    const { runStorageTransaction } = await import('../resources/storage-operation.ts');
     const outcome = await runStorageTransaction({ ...context.storage, begin: context.begin }, input);
     return outcome?.state === 'cancelled' ? CANCELLED_RESULT : outcome;
   },

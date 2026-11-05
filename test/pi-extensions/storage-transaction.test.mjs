@@ -1,5 +1,5 @@
-import { historyContract } from '../../daemon/resources/piop-storage/goal-assets.cjs';
-import conversationStorage from '../../daemon/resources/conversation-storage.cjs';
+import { historyContract } from '../../daemon/resources/piop-storage/goal-assets.ts';
+import * as conversationStorage from '../../daemon/resources/conversation-storage.ts';
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -15,7 +15,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, lstat
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { after } from 'node:test';
-import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
 
 const bun = process.env.PIOP_TEST_BUN || 'bun';
 const maxCrashes = 200;
@@ -47,7 +46,7 @@ else {
   bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*'], logLevel: 'silent',
   banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   define: { __PIOP_BUILD_ID__: '"storage-test"', __PIOP_DEVELOPMENT__: 'false', __PIOP_PROJECT_DIR__: '""' },
-  plugins: [storageSchemaImports(), daemonImports()],
+  plugins: [daemonImports()],
 });
 
 const sessionId = '6f2c1d4e-8a9b-4c3d-9e1f-0a1b2c3d4e5f';

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import * as SessionDatabase from '../../daemon/resources/session-database.cjs';
+import * as SessionDatabase from '../../daemon/resources/session-database.ts';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { startDaemon, waitForSessions, type TestDaemon } from './harness';

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canFork, isCurrent } from "../piop-storage/session-records.cjs";
+import { canFork, isCurrent } from "../piop-storage/session-records.ts";
 import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
@@ -9,9 +9,9 @@ import { publishAuxiliaryCopies, releaseHistory, retainHistory, writeSessionFile
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
-import { rootForDirectory } from "../piop-storage/goal-assets.cjs";
-import { planAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.cjs";
-import { sessionName } from "../session-broker/session-names.cjs";
+import { rootForDirectory } from "../piop-storage/goal-assets.ts";
+import { planAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.ts";
+import { sessionName } from "../session-broker/session-names.ts";
 import type { ForkMode, ForkResult } from "./interface.ts";
 
 export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };

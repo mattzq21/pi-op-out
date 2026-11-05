@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { join } from 'node:path';
-import * as SessionTables from '../resources/session-database.cjs';
+import * as SessionTables from '../resources/session-database.ts';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from './host_operations';

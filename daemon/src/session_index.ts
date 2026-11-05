@@ -11,7 +11,7 @@ import { ProjectMetadataCache } from './project_metadata';
 import { refreshProjectRepository } from './project_repositories';
 import * as sidebarStorage from './sidebar_storage';
 import * as Registry from './session_registry';
-import * as WorktreeRecords from '../resources/chat-worktree-records.cjs';
+import * as WorktreeRecords from '../resources/chat-worktree-records.ts';
 import { loadAppSettings } from './settings';
 import type { RemoteHost } from './settings_types';
 import { transaction } from './util/db';

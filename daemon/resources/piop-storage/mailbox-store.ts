@@ -3,8 +3,7 @@ import { open, type FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import type { DatabaseSync } from "node:sqlite";
-import { connection, register, storageRoot, transaction } from "../session-database.cjs";
+import { connection, register, storageRoot, transaction, type Connection } from "../session-database.ts";
 import { assertSameDelivery, messageDetails, messageSchema, recordSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
 
 // Agent mail that waits in the database until its chat saves it. Only the daemon runs these; Pi asks through its storage channel.
@@ -58,27 +57,27 @@ async function readDeliveries(file: FileHandle, sessionId: string) {
 
 const receiptCacheSchema = Type.Array(Type.Tuple([Type.String(), Type.String()]));
 
-function cachedReceipts(db: DatabaseSync, id: string, path: string, fingerprint: string | undefined) {
+function cachedReceipts(db: Connection, id: string, path: string, fingerprint: string | undefined) {
   if (fingerprint === undefined) return undefined;
   const row = db.prepare("SELECT deliveries_json FROM session_mailbox_receipt_cache WHERE session_id=? AND session_path=? AND fingerprint=?").get(id, path, fingerprint);
 
   return row ? new Map<string, string>(Parse(receiptCacheSchema, JSON.parse(String(row.deliveries_json)))) : undefined;
 }
 
-function registeredFingerprint(db: DatabaseSync, id: string, path: string) {
+function registeredFingerprint(db: Connection, id: string, path: string) {
   const row = db.prepare(`SELECT modified_ns, size FROM session_file_metadata WHERE session_id=? AND session_path=?
     AND NOT EXISTS (SELECT 1 FROM session_file_writes WHERE session_id=?)`).get(id, path, id);
 
   return row ? `${row.modified_ns}:${row.size}` : undefined;
 }
 
-function saveReceipts(db: DatabaseSync, id: string, path: string, fingerprint: string, receipts: Map<string, string>) {
+function saveReceipts(db: Connection, id: string, path: string, fingerprint: string, receipts: Map<string, string>) {
   db.prepare(`INSERT INTO session_mailbox_receipt_cache SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
     ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, fingerprint=excluded.fingerprint, deliveries_json=excluded.deliveries_json`)
     .run(fingerprint, JSON.stringify([...receipts]), id, path);
 }
 
-async function readSavedDeliveries(db: DatabaseSync, id: string, path: string, required: boolean) {
+async function readSavedDeliveries(db: Connection, id: string, path: string, required: boolean) {
   let file;
 
   try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
@@ -137,7 +136,7 @@ function mailbox(root: string, request: unknown) {
   return { db, ...chat };
 }
 
-function nextRecord(db: DatabaseSync, sessionId: string, deliveryId: string, message: MailboxMessage): MailboxRecord {
+function nextRecord(db: Connection, sessionId: string, deliveryId: string, message: MailboxMessage): MailboxRecord {
   const row = Parse(Type.Object({ sequence: Type.Integer() }), db.prepare(
     "SELECT max(coalesce(max(sequence)+1, 0), ?) AS sequence FROM session_mailbox WHERE session_id=?").get(Date.now(), sessionId));
 

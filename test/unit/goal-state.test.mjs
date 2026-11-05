@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import goals from '../../daemon/resources/piop-storage/goals.cjs';
-import database from '../../daemon/resources/session-database.cjs';
+import * as goals from '../../daemon/resources/piop-storage/goals.ts';
+import * as database from '../../daemon/resources/session-database.ts';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'piop-goal-sql-'));

@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { startDaemon, type TestDaemon } from './harness';
 
-const records = createRequire(import.meta.url)('../../daemon/resources/application-records.cjs');
+const records = createRequire(import.meta.url)('../../daemon/resources/application-records.ts');
 let daemon: TestDaemon;
 beforeAll(async () => { daemon = await startDaemon(); }, 60000);
 afterAll(async () => { await daemon?.stop(); });

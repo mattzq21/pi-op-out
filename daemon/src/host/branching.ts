@@ -9,7 +9,7 @@ import { argument, expandHome, parseLaunchSpec, readHeaderLine, sessionSpec, spe
 import type { Host } from './controller';
 import { readonlyCommand, type ReadonlyView } from './readonly_views';
 import type { Session } from './session';
-import { forkPoint } from '../../resources/piop-storage/session-records.cjs';
+import { forkPoint } from '../../resources/piop-storage/session-records.ts';
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
 const FORKS = ['fork', 'fork_after', 'copy_after', 'clone'];

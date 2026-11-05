@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema } from "typebox";
 import { Parse } from "typebox/value";
-import { isAuxiliary } from "../../../daemon/resources/piop-storage/session-records.cjs";
-import { sessionName } from "../../../daemon/resources/session-broker/session-names.cjs";
+import { isAuxiliary } from "../../../daemon/resources/piop-storage/session-records.ts";
+import { sessionName } from "../../../daemon/resources/session-broker/session-names.ts";
 import { sessionControls } from "../../../daemon/resources/piop-controls/interface.ts";
 import { openAuxiliaryChat } from "../../../daemon/resources/session-broker/auxiliary.ts";
 

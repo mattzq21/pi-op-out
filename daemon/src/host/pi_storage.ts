@@ -1,9 +1,9 @@
 import type { Duplex } from 'node:stream';
-import { releaseClaims, storageOperation } from '../../resources/piop-storage/storage-operations.mjs';
-import { acquireReferencePublicationLockAsync } from '../../resources/piop-storage/reference-publication-lock.cjs';
-import { acquireAsync as acquireGoalAssets } from '../../resources/piop-storage/goal-assets.cjs';
-import { withinFlow } from '../../resources/storage-locks.cjs';
-import { readLines } from '../../resources/lf-lines.cjs';
+import { releaseClaims, storageOperation } from '../../resources/piop-storage/storage-operations.ts';
+import { acquireReferencePublicationLockAsync } from '../../resources/piop-storage/reference-publication-lock.ts';
+import { acquireAsync as acquireGoalAssets } from '../../resources/piop-storage/goal-assets.ts';
+import { withinFlow } from '../../resources/storage-locks.ts';
+import { readLines } from '../../resources/lf-lines.ts';
 import { errorText } from '../util/sync';
 
 // The kinds of storage changes that a process may ask for. A Pi with a chat may make all of them.

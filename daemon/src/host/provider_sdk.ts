@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir, nodeExecutable, pathWithNode } from '../environment';
 import { generatedExtensions } from '../extensions';
-import { readLines } from '../../resources/lf-lines.cjs';
+import { readLines } from '../../resources/lf-lines.ts';
 import { installedPi } from '../pi_install';
 import { Mutex } from '../util/sync';
 import type { Duplex } from 'node:stream';

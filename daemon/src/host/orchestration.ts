@@ -14,7 +14,7 @@ import { rememberProjectRepository } from '../project_repositories';
 import { recentHistory } from './history_window';
 import { QueueStorage } from './queue_storage';
 import { QueueState } from './queue_state';
-import { renameSession } from '../../resources/session-broker/session-names.cjs';
+import { renameSession } from '../../resources/session-broker/session-names.ts';
 import type { Host } from './controller';
 import type { Session } from './session';
 import { observedElsewhere } from '../util/sync';

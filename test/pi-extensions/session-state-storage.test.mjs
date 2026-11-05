@@ -6,9 +6,8 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import database from '../../daemon/resources/session-database.cjs';
-import sessionNames from '../../daemon/resources/session-broker/session-names.cjs';
-import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
+import * as database from '../../daemon/resources/session-database.ts';
+import * as sessionNames from '../../daemon/resources/session-broker/session-names.ts';
 import { testPi } from '../pi-install.mjs';
 import { localStorageChannel } from '../local-storage-channel.mjs';
 
@@ -29,7 +28,7 @@ async function fixture(t) {
     rmSync(home, { recursive: true, force: true });
   });
   const bundle = join(home, 'storage.mjs');
-  if (!installSessionStorage) await build({ entryPoints: ['test/session-storage-entry.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  if (!installSessionStorage) await build({ entryPoints: ['test/session-storage-entry.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   if (!installSessionStorage) ({ installSessionStorage, localTranscriptWrites } = await import(pathToFileURL(bundle)));
   const { SessionManager } = await import(pathToFileURL(join(sdk, 'dist/core/session-manager.js')));
   installSessionStorage(SessionManager, localTranscriptWrites());
@@ -149,7 +148,7 @@ test('fork publication copies current settings once, independent of the selected
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
   const bundle = join(f.home, 'publish.mjs');
-  await build({ entryPoints: ['daemon/resources/piop-storage/publication-writes.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ entryPoints: ['daemon/resources/piop-storage/publication-writes.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { writeSessionFile } = await import(pathToFileURL(bundle));
   const id = database.reserve(f.root);
   const target = join(f.root, 'sessions', `2026-10-19T01-00-00-000Z_${id}.jsonl`);
@@ -169,7 +168,7 @@ test('a rename shows in the chat list, keeps the transcript, and a failed write 
   const first = f.manager.appendMessage({ role: 'user', content: 'First', timestamp: 1 });
   const body = readFileSync(f.file, 'utf8');
   const bundle = join(f.home, 'lists.mjs');
-  await build({ entryPoints: ['daemon/resources/sdk-session-list.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports(), localStorageChannel()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ entryPoints: ['daemon/resources/sdk-session-list.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [localStorageChannel()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   (await import(pathToFileURL(bundle))).installSessionLists(f.SessionManager);
   sessionNames.renameSession(f.root, f.id, 'First name');
   assert.equal((await f.SessionManager.listAll())[0].name, 'First name');
@@ -234,7 +233,7 @@ test('current model settings preserve the history used for compaction', async t 
 test('the chat preview and reopened session follow a branch choice without a transcript write', async t => {
   const f = await fixture(t);
   const bundle = join(f.home, 'index.mjs');
-  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.cjs";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { indexSessions } = await import(pathToFileURL(bundle));
   const summary = async () => {
     const result = await indexSessions({ paths: [f.file] });
@@ -271,7 +270,7 @@ test('the chat preview and reopened session follow a branch choice without a tra
 
 test('recovered queued-input chats keep their names in SQL when reopened', async t => {
   const f = await fixture(t);
-  const { createTranscript } = await import('../../daemon/resources/piop-storage/recovery.cjs');
+  const { createTranscript } = await import('../../daemon/resources/piop-storage/recovery.ts');
   const id = database.reserve(f.root);
   const file = join(f.root, 'sessions', `recovered_${id}.jsonl`);
   const db = database.connection(f.root);
@@ -292,7 +291,7 @@ test('recovered queued-input chats keep their names in SQL when reopened', async
 test('a skill prompt that names its skill gives the session name one skill reference', async t => {
   const f = await fixture(t);
   const bundle = join(f.home, 'index.mjs');
-  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.cjs";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { indexSessions } = await import(pathToFileURL(bundle));
   const skill = '<skill name="statechart" location="/skills/statechart/SKILL.md">\nReferences are relative to /skills/statechart.\n\nbody\n</skill>';
   f.manager.appendMessage({ role: 'user', content: `${skill}\n\n$statechart draw the simplest example.`, timestamp: 1 });

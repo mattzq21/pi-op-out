@@ -6,7 +6,7 @@ export function registerConversationClient(pi: ExtensionAPI) {
   pi.events.on("piop:rpc", request => {
     if (request.command !== "conversation_client") return;
     request.ready = Promise.resolve().then(() => {
-      const client = request.payload?.clientId;
+      const client = (request.payload as { clientId?: unknown } | undefined)?.clientId;
       if (typeof client !== "string" || !client) throw new Error("Conversation client is missing");
       process.env.PIOP_CONVERSATION_CLIENT = client;
       return null;

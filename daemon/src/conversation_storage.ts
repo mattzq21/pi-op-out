@@ -1,4 +1,4 @@
-import * as Storage from '../resources/conversation-storage.cjs';
+import * as Storage from '../resources/conversation-storage.ts';
 
 export function read(root: string, key: string): string | undefined { return Storage.readRecord(root, key) ?? undefined; }
 

@@ -1,4 +1,4 @@
-import { readLines } from '../resources/lf-lines.cjs';
+import { readLines } from '../resources/lf-lines.ts';
 import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { isAuxiliary, records } from '../resources/piop-storage/session-records.cjs';
+import { isAuxiliary, records } from '../resources/piop-storage/session-records.ts';
 import { locateSessionFile, RESTORED_KINDS, sessionDescendants } from './archives';
 import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError, type RestoreResult } from './storage_transactions';

@@ -37,6 +37,7 @@
     "reinstall": "bun scripts/reinstall-mobile.mjs",
     "reinstall:desktop": "bun scripts/reinstall-desktop.mjs",
     "reinstall:release": "bun scripts/reinstall-mobile.mjs --release",
+    "typecheck:daemon": "node scripts/typecheck-daemon.mjs",
     "test:mobile": "python3 scripts/test-run.py node --test test/mobile/*.test.mjs",
     "test:unit": "python3 scripts/test-run.py node scripts/test-unit.mjs test/unit/*.test.mjs",
     "test:unit:chromium": "PIOP_TEST_BROWSER=chromium python3 scripts/test-run.py node scripts/test-unit.mjs test/unit/*.test.mjs",

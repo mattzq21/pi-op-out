@@ -22,7 +22,7 @@ export function registerContextInsertions(pi: ExtensionAPI) {
   pi.on("context", event => {
     if (!event.messages.some(systemMessage)) return;
 
-    return { messages: event.messages.map(message => message.role === "custom" && systemMessage(message) ? { role: "system" as const, content: message.content, timestamp: message.timestamp } : message) };
+    return { messages: event.messages.map(message => message.role === "custom" && systemMessage(message) ? { role: "system" as const, content: message.content as string, timestamp: message.timestamp } : message) };
   });
   pi.on("session_shutdown", () => off());
 }

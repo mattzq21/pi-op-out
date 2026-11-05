@@ -9,7 +9,7 @@ import { BUILD_ID, DEVELOPMENT, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PEER_PROT
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import * as daemonRestart from './daemon_restart';
-import * as records from '../resources/application-records.cjs';
+import * as records from '../resources/application-records.ts';
 import * as clientCommands from './client_commands';
 import { responseErrorText } from './storage_transactions';
 import { refusalText } from './pi_rejection';

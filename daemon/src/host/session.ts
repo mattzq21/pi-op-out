@@ -1,5 +1,5 @@
-import { canFork } from '../../resources/piop-storage/session-records.cjs';
-import { sessionName } from '../../resources/session-broker/session-names.cjs';
+import { canFork } from '../../resources/piop-storage/session-records.ts';
+import { sessionName } from '../../resources/session-broker/session-names.ts';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { getProjectRepository } from '../project_repositories';

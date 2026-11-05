@@ -1,6 +1,6 @@
-export type { Connection as Database } from '../../resources/session-database.cjs';
+export type { Connection as Database } from '../../resources/session-database.ts';
 
-export { connection, transaction } from '../../resources/session-database.cjs';
+export { connection, transaction } from '../../resources/session-database.ts';
 
 export function blob(value: unknown): Buffer | undefined {
   if (value === null || value === undefined) return undefined;

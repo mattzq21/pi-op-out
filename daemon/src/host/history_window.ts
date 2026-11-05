@@ -1,4 +1,4 @@
-import { isAuxiliaryParent } from '../../resources/piop-storage/session-records.cjs';
+import { isAuxiliaryParent } from '../../resources/piop-storage/session-records.ts';
 import { branchEntries } from './payload';
 
 const RECENT_TURNS = 5;

@@ -4,17 +4,16 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { build } from 'esbuild';
-import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
 
 const { home, cwd, folder } = JSON.parse(readFileSync(0, 'utf8'));
 process.env.HOME = home; delete process.env.PIOP_STORAGE_DIRECTORY;
 const directory = await mkdtemp(join(home, 'subagent-fixture-'));
 try {
   const outfile = join(directory, 'publication-writes.mjs');
-  await build({ entryPoints: ['daemon/resources/piop-storage/publication-writes.mjs'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
+  await build({ entryPoints: ['daemon/resources/piop-storage/publication-writes.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { writeSessionFile } = await import(pathToFileURL(outfile));
-  const { reserve } = await import("../../daemon/resources/session-database.cjs");
+  const { reserve } = await import("../../daemon/resources/session-database.ts");
   const sessions = join(home, '.piop', 'sessions', folder);
   await mkdir(sessions, { recursive: true });
   const publish = async (name, parent) => {

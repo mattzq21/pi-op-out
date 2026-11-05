@@ -38,7 +38,7 @@ export function agentResources(settings: AppSettings): any {
   return { skills: skillLists(settings), tools: toolLists(settings) };
 }
 
-const BRIDGE = 'runtime-bridge.cjs';
+const BRIDGE = 'runtime-bridge.mjs';
 const PROVIDER_SDK = 'provider-sdk.mjs';
 
 // Each core extension is one built file. Settings groups an extension's tools under its file name.

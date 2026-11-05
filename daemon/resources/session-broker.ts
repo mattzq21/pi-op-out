@@ -11,7 +11,7 @@ import { registerContextInsertions } from "./session-broker/context-insertions.t
 import { registerToolInventory } from "./session-broker/tool-inventory.ts";
 import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
 import { existsSync } from "node:fs";
-import { call } from "./storage-channel.cjs";
+import { call } from "./storage-channel.ts";
 
 export { writeSessionFile, publicationRetainsDependencies, type PublicationOptions, type SessionPublication } from "./piop-storage/session-file.ts";
 

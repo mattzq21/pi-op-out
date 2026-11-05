@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import * as storageDatabase from "../../daemon/resources/session-database.cjs";
-import { call } from "../../daemon/resources/storage-channel.cjs";
-import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "../../daemon/resources/agent-definitions-writes.mjs";
+import * as storageDatabase from "../../daemon/resources/session-database.ts";
+import { call } from "../../daemon/resources/storage-channel.ts";
+import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "../../daemon/resources/agent-definitions-writes.ts";
 import { execFile } from "node:child_process";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";

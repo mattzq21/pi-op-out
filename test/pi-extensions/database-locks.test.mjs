@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { compileAgentFixture } from '../compile-defined-agent-fixture.mjs';
 
-const settings = createRequire(import.meta.url)('../../daemon/resources/application-records.cjs');
+const settings = createRequire(import.meta.url)('../../daemon/resources/application-records.ts');
 
 function assertDatabaseLocked(file) {
   const result = spawnSync('python3', ['-c', `import fcntl,sys

@@ -1,14 +1,14 @@
-import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
-import { sessionName } from "../../resources/session-broker/session-names.cjs";
+import * as SessionRecords from "../../resources/piop-storage/session-records.ts";
+import { sessionName } from "../../resources/session-broker/session-names.ts";
 import { randomUUID } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
 import * as ConversationStorage from '../conversation_storage';
 import * as RestoreRecovery from '../restore_recovery';
 import * as Registry from '../session_registry';
-import * as ChildIndex from '../../resources/session-broker/session-child-index.cjs';
+import * as ChildIndex from '../../resources/session-broker/session-child-index.ts';
 import { getProjectRepository } from '../project_repositories';
-import * as StorageLocks from '../../resources/storage-locks.cjs';
+import * as StorageLocks from '../../resources/storage-locks.ts';
 import { flag } from './json';
 import { readHeaderLine } from './protocol';
 import { errorText } from '../util/sync';

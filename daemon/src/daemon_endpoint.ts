@@ -6,7 +6,7 @@ import { Check } from 'typebox/value';
 import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
-import * as records from '../resources/application-records.cjs';
+import * as records from '../resources/application-records.ts';
 import * as restartStorage from './restart_storage';
 import { tryLockFileSync, type FileLock } from './util/flock';
 import { extensionBase } from './extensions';

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import * as Endpoint from '../daemon_endpoint';
-import * as Records from '../../resources/application-records.cjs';
+import * as Records from '../../resources/application-records.ts';
 import * as Contributions from '../plugin_contributions';
 import { catalog } from '../plugin_catalog';
 import type { PluginStatus } from '../../../protocol/plugins';

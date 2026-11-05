@@ -3,11 +3,10 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 
 let compiled;
 function compileGoalFiles() {
-  return compiled ??= build({ stdin: { contents: 'export { materializeGoal } from "./daemon/src/host/goals/files.ts";', resolveDir: process.cwd() }, write: false, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()],
+  return compiled ??= build({ stdin: { contents: 'export { materializeGoal } from "./daemon/src/host/goals/files.ts";', resolveDir: process.cwd() }, write: false, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent',
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   }).then(result => result.outputFiles[0].contents);
 }

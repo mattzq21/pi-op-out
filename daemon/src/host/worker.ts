@@ -1,5 +1,5 @@
 import { reserve } from '../session_registry';
-import { readLines } from '../../resources/lf-lines.cjs';
+import { readLines } from '../../resources/lf-lines.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Duplex } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';

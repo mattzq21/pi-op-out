@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { compileAgentFixture } from './compile-defined-agent-fixture.mjs';
 import { testPi } from './pi-install.mjs';
 
-const records = createRequire(import.meta.url)('../daemon/resources/application-records.cjs');
+const records = createRequire(import.meta.url)('../daemon/resources/application-records.ts');
 export const { root: piRoot } = await testPi();
 
 export const encoded = value => Buffer.from(JSON.stringify(value)).toString('base64url');

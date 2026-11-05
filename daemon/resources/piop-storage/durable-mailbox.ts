@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { Check, Parse } from "typebox/value";
-import { call } from "../storage-channel.cjs";
+import { call } from "../storage-channel.ts";
 import { assertSameDelivery, messageDetails, messageSchema, objectSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
 
 export type { MailboxDetails, MailboxMessage } from "./mailbox-records.ts";

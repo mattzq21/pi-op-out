@@ -1,5 +1,5 @@
-export { reserveSessionId } from "./identities.mjs";
-import { call } from "../storage-channel.cjs";
+export { reserveSessionId } from "./identities.ts";
+import { call } from "../storage-channel.ts";
 
 // New chats that a Pi extension makes. The daemon saves them: each call goes through the storage channel and waits for the answer.
 

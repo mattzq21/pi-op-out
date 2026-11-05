@@ -6,7 +6,7 @@ import { PROCESS_TAG } from './process_cleanup';
 import { errorText } from './util/sync';
 import { isHostOperationWorker, runHostOperationWorker } from './host_operation_worker';
 import { STORAGE_DIRECTORY } from './config';
-import { readOnlyStorage } from '../resources/session-database.cjs';
+import { readOnlyStorage } from '../resources/session-database.ts';
 import { stateRecords } from './plugin_contributions';
 
 // The modes that run the daemon. Each takes the daemon lock before it changes the storage.

@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { ensurePrivateDir } from './private_fs';
-import * as records from '../resources/application-records.cjs';
+import * as records from '../resources/application-records.ts';
 import type { App } from './app';
 import { updateSettings } from './local_host';
 import * as peers from './peers';

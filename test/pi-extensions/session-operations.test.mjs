@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
-import database from '../../daemon/resources/session-database.cjs';
+import * as database from '../../daemon/resources/session-database.ts';
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
 import { installBroker } from '../runtime-events-fixture.mjs';
 import { localStorageChannel } from '../local-storage-channel.mjs';
 
@@ -21,7 +20,7 @@ function compiledControls() {
     bundle: true, write: false, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent',
     external: ['@earendil-works/*'],
     banner: { js: "import { createRequire as __fixtureRequire } from 'node:module'; const require = __fixtureRequire(import.meta.url);" },
-    plugins: [storageSchemaImports(), localStorageChannel()],
+    plugins: [localStorageChannel()],
   });
 }
 

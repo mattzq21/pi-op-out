@@ -1,8 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
 import { isAbsolute } from "node:path";
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { connection, register, storageRoot, transaction } from "../session-database.cjs";
+import { connection, register, storageRoot, transaction, type Connection } from "../session-database.ts";
 import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
 // The subagent runs of each parent chat. Only the daemon runs these; Pi asks through its storage channel.
@@ -34,19 +33,19 @@ function decodeRun(saved: Static<typeof savedRunSchema>, sessionId: string) {
   return run;
 }
 
-function readRun(db: DatabaseSync, sessionId: string, id: string) {
+function readRun(db: Connection, sessionId: string, id: string) {
   const row = db.prepare(`${selectRuns} WHERE r.session_id=? AND r.run_id=?`).get(sessionId, id);
 
   return row ? decodeRun(Parse(savedRunSchema, row), sessionId) : undefined;
 }
 
-function storeRun(db: DatabaseSync, run: SubagentRun) {
+function storeRun(db: Connection, run: SubagentRun) {
   db.prepare(`INSERT INTO session_subagent_runs VALUES (?, ?, ?, ?) ON CONFLICT(session_id, run_id)
     DO UPDATE SET started_at=excluded.started_at, run_json=excluded.run_json`)
     .run(run.parentSessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
 }
 
-function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
+function mergePendingRun(db: Connection, run: SubagentRun) {
   const previous = readRun(db, run.parentSessionId, resultNotificationId(run));
 
   if (previous && previous.status !== "running" && run.status === "running") return false;

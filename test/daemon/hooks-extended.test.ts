@@ -160,7 +160,7 @@ test('availability errors are reported, and an already available session needs n
 });
 
 test('runtime invalidation cancels availability before the context becomes stale', async () => {
-  const { installAvailability } = await import('../../daemon/resources/runtime-availability.cjs');
+  const { installAvailability } = await import('../../daemon/resources/runtime-availability.ts');
   const f = fixture();
   let idle = false;
   let stale = false;

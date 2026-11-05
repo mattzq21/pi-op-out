@@ -1,15 +1,15 @@
-import * as StorageLocks from "../../../resources/storage-locks.cjs";
-import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "../../../resources/piop-storage/goal-directory-recovery.cjs";
-import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "../../../resources/piop-storage/goal-dependencies.cjs";
-import { markCleanup } from "../../../resources/session-database.cjs";
+import * as StorageLocks from "../../../resources/storage-locks.ts";
+import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "../../../resources/piop-storage/goal-directory-recovery.ts";
+import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "../../../resources/piop-storage/goal-dependencies.ts";
+import { markCleanup } from "../../../resources/session-database.ts";
 import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { parsePreparation, read as readPreparation, save as savePreparation, type GoalAttachment, type GoalDraft, type GoalPreparation } from "../../../resources/piop-storage/goal-preparations.cjs";
-import { allocate as allocateGoalDirectory } from "../../../resources/piop-storage/goal-ownership.cjs";
-import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "../../../resources/piop-storage/goal-assets.cjs";
-import { acquireReferencePublicationLockAsync } from "../../../resources/piop-storage/reference-publication-lock.cjs";
+import { parsePreparation, read as readPreparation, save as savePreparation, type GoalAttachment, type GoalDraft, type GoalPreparation } from "../../../resources/piop-storage/goal-preparations.ts";
+import { allocate as allocateGoalDirectory } from "../../../resources/piop-storage/goal-ownership.ts";
+import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "../../../resources/piop-storage/goal-assets.ts";
+import { acquireReferencePublicationLockAsync } from "../../../resources/piop-storage/reference-publication-lock.ts";
 import { requestRetention } from "../../retention_requests";
 
 export interface GoalPlace { file: string; sessionId: string; cwd: string }

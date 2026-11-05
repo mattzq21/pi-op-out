@@ -5,7 +5,7 @@ import { publishedTrace } from '../trace-command-fixture.mjs';
 async function publish({ home, content, folder, cwd, controlsBundle }) {
   const cleanup = [];
   try {
-    const chat = await publishedTrace({ after: action => cleanup.push(action) }, undefined, content, { home, folder, cwd, controlsBundle });
+    const chat = await publishedTrace({ after: action => cleanup.push(action) }, content, { home, folder, cwd, controlsBundle });
     return { id: chat.id, path: chat.path };
   } finally {
     for (const action of cleanup.reverse()) await action();

@@ -1,4 +1,4 @@
-import * as History from '../resources/chat-branch-history.cjs';
+import * as History from '../resources/chat-branch-history.ts';
 import type { BranchHistoryRequest, BranchHistoryResult } from './chat_branch_operations';
 
 export function publishBranchHistory(request: BranchHistoryRequest): Promise<BranchHistoryResult> {

@@ -13,7 +13,7 @@ const { root } = await testPi();
 const sdk = name => import(pathToFileURL(join(root, `dist/core/${name}.js`)));
 const { createAgentSession } = await sdk('sdk');
 const { AgentSession } = await sdk('agent-session');
-const { installAvailability } = await import('../../daemon/resources/runtime-availability.cjs');
+const { installAvailability } = await import('../../daemon/resources/runtime-availability.ts');
 installAvailability(AgentSession);
 const { DefaultResourceLoader } = await sdk('resource-loader');
 const { SettingsManager } = await sdk('settings-manager');

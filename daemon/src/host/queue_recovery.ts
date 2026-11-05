@@ -1,11 +1,11 @@
-import { createTranscript, removeTemporary } from '../../resources/piop-storage/recovery.cjs';
+import { createTranscript, removeTemporary } from '../../resources/piop-storage/recovery.ts';
 import { closeSync, constants, existsSync, openSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction } from '../util/db';
 import { errorText } from '../util/sync';
-import * as StorageLocks from '../../resources/storage-locks.cjs';
+import * as StorageLocks from '../../resources/storage-locks.ts';
 import { readHeaderLine } from './protocol';
 import { ConversationOwnership, within } from './ownership';
 import { QueueStorage } from './queue_storage';

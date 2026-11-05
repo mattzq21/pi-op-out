@@ -2,9 +2,9 @@ import { z } from 'zod';
 import { lstatSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from '../host_operations';
-import * as StorageLocks from '../../resources/storage-locks.cjs';
+import * as StorageLocks from '../../resources/storage-locks.ts';
 
-// The shared reference publication lock, as in reference-publication-lock.cjs.
+// The shared reference publication lock, as in reference-publication-lock.ts.
 export async function lock(root: string): Promise<{ release(): void }> {
   const release = await StorageLocks.lock('reference-publication:' + root, { shared: true, timeoutMs: 10_000 });
   if (!release) throw new Error('Chat storage is busy with another change; try again');

@@ -4,8 +4,8 @@ import { userInfo } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { installName, installPi } = require('../daemon/resources/pi-install.cjs');
-const { SUPPORTED_PI_VERSION } = require('../daemon/resources/pi-runtime.cjs');
+const { installName, installPi } = require('../daemon/resources/pi-install.ts');
+const { SUPPORTED_PI_VERSION } = require('../daemon/resources/pi-runtime.ts');
 const manifest = readFileSync(new URL('../daemon/resources/pi/package.json', import.meta.url), 'utf8');
 const lockfile = readFileSync(new URL('../daemon/resources/pi/bun.lock', import.meta.url), 'utf8');
 const name = installName(manifest, lockfile);
