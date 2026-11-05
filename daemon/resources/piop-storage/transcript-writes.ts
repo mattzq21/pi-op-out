@@ -65,15 +65,28 @@ export function publish(_root: string, request: any): null {
   return null;
 }
 
+// Appends one line. A last line that an earlier write did not finish is dropped first.
 function appendLine(path: string, item: any): void {
   const line = Buffer.from(JSON.stringify(item) + "\n", "utf8");
-  const descriptor = storageFs.openSync(path, storageFs.constants.O_WRONLY | storageFs.constants.O_APPEND);
+  const descriptor = storageFs.openSync(path, storageFs.constants.O_RDWR);
 
   try {
-    if (storageFs.writeSync(descriptor, line) !== line.length) throw new Error(`Session append was incomplete: ${path}`);
+    const size = storageFs.fstatSync(descriptor).size;
+    const end = Buffer.alloc(1);
+
+    if (size > 0 && (storageFs.readSync(descriptor, end, 0, 1, size - 1) !== 1 || end[0] !== 10)) storageFs.ftruncateSync(descriptor, completeLength(path, size));
+    const start = storageFs.fstatSync(descriptor).size;
+
+    if (storageFs.writeSync(descriptor, line, 0, line.length, start) !== line.length) throw new Error(`Session append was incomplete: ${path}`);
     storageFs.fsyncSync(descriptor);
   } catch (error) { throw damaged(error); }
   finally { storageFs.closeSync(descriptor); }
+}
+
+// The length of the transcript up to the end of its last complete line.
+function completeLength(path: string, size: number): number {
+  const body = storageFs.readFileSync(path);
+  return Math.min(size, body.lastIndexOf(10) + 1);
 }
 
 // Adds one entry. Settings and extension records go to the database; the rest go to the end of the file.
@@ -94,21 +107,6 @@ export function append(_root: string, request: any): null {
   return null;
 }
 
-// Drops the end of a last line that a write did not finish: the file keeps its first `end` bytes.
-export function repair(_root: string, request: any): null {
-  const path = transcriptPath(request?.path);
-  if (!Number.isSafeInteger(request.end) || request.end < 0) throw new Error("Invalid transcript end");
-  database.revisePath(storageRootOf(path), path);
-  const descriptor = storageFs.openSync(path, storageFs.constants.O_RDWR);
-
-  try {
-    if (request.end > storageFs.fstatSync(descriptor).size) throw new Error(`The saved session is shorter than expected: ${path}`);
-    storageFs.ftruncateSync(descriptor, request.end);
-    storageFs.fsyncSync(descriptor);
-    return null;
-  } finally { storageFs.closeSync(descriptor); }
-}
-
 export function selectBranch(_root: string, request: any): null {
   const leaf = request?.leaf;
   const tip = request?.tip;
@@ -122,7 +120,7 @@ export function copyGoal(_root: string, request: any): null {
   return null;
 }
 
-export const OPERATIONS = { publish, append, repair, selectBranch, copyGoal };
+export const OPERATIONS = { publish, append, selectBranch, copyGoal };
 
 // Runs the operations in this process, on the storage that HOME and PIOP_STORAGE_DIRECTORY name at each call.
 // Only tests and fixtures that stand in for the daemon use it.

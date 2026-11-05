@@ -33,7 +33,7 @@ function inspect(directory, file, expected) {
   if (entries.some(entry => entry.type === 'message')) return;
   const root = path.dirname(directory);
 
-  if (database.queuedInput(root, header.id) !== undefined) return;
+  if (database.hasQueuedInput(root, header.id)) return;
 
   return { root, id: header.id, target: { root: directory, path: file, area: 'sessions' } };
 }

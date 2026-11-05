@@ -78,8 +78,7 @@ const archive = onMainThread('session-lifecycle.archive', (root: string, ids: st
 
 const restore = onMainThread('session-lifecycle.restore', (root: string, ids: string[]) => setArchived(root, ids, false));
 
-// Removes the rows of the chats ids (the tables that refer to them cascade), and asks for the cleanup of temporary
-// folders that only they used.
+// Removes the rows of the chats ids (the tables that refer to them cascade).
 const forget = onMainThread('session-lifecycle.forget', (root: string, ids: string[]) => {
   database.transaction(root, 'IMMEDIATE', () => {
     sessions(root, ids);
@@ -88,8 +87,6 @@ const forget = onMainThread('session-lifecycle.forget', (root: string, ids: stri
       conversationStorage.forget(root, id);
       database.deleteSessionRow(root, id);
     }
-
-    database.markCleanup(root, 'temporary-chat');
   });
 });
 
@@ -115,7 +112,9 @@ function deleteSessions(root: string, ids: string[]): string[] {
   try { goalFiles.collect(root); }
   catch (error) { warnings.push(`Deleted, but its goal files were kept until the next start: ${(error as Error).message}`); }
 
-  warnings.push(...maintenance(root));
+  const temporary = cleanupTemporaryChats(root);
+
+  if (temporary) warnings.push(temporary);
 
   return warnings;
 }
@@ -129,29 +128,14 @@ function deleteBlank(root: string, target: any): string[] {
   return deleteSessions(root, [candidate.id]);
 }
 
+// Removes the temporary folders of deleted chats that no other chat works in. A folder that another chat works in stays
+// until that chat is deleted too.
 function cleanupTemporaryChats(root: string): string | undefined {
-  try {
-    const revision = database.cleanupRequest(root, 'temporary-chat');
-
-    if (revision === undefined) return;
-    const result = temporaryChat.cleanupDeleted(root);
-
-    if (result?.pending) return result.warning;
-    database.finishCleanup(root, 'temporary-chat', revision);
-  } catch (error) { return `Temporary folder cleanup will retry: ${(error as Error).message}`; }
+  try { temporaryChat.cleanupDeleted(root); }
+  catch (error) { return `Temporary folder cleanup is tried again at the next deletion or start: ${(error as Error).message}`; }
 }
 
-// Finishes temporary folder cleanup. Returns the warnings.
-function maintenance(root: string): string[] {
-  const warnings: string[] = [];
-  const temporary = cleanupTemporaryChats(root);
-
-  if (temporary) warnings.push(temporary);
-
-  return warnings;
-}
-
-// Deletions and maintenance run one at a time.
+// Deletions run one at a time.
 function locked<T>(root: string, nonblocking: boolean, operation: () => T): T | { busy: true } {
   const release = lockSync('session-transactions:' + root, { wait: !nonblocking });
 
@@ -163,7 +147,7 @@ function locked<T>(root: string, nonblocking: boolean, operation: () => T): T | 
 
 function answer(warnings: string[], fields: Record<string, unknown> = {}): Record<string, unknown> { return warnings.length ? { ...fields, warning: warnings.join('\n') } : fields; }
 
-// The worker side of the storage changes that touch files: delete, delete of a blank chat, and maintenance.
+// The worker side of the storage changes that touch files: delete, and delete of a blank chat.
 function run(context: { root: string; begin: () => boolean }, request: any): any {
   const root = context.root;
 
@@ -173,15 +157,6 @@ function run(context: { root: string; begin: () => boolean }, request: any): any
 
   if (request?.action === 'delete-blank') return locked(root, true, () => answer(deleteBlank(root, request.blank)));
 
-  if (request?.action === 'maintain') {
-    return locked(root, true, () => {
-      const warnings = maintenance(root);
-
-      if (warnings.length) throw new Error(warnings.join('\n'));
-
-      return {};
-    });
-  }
   throw new Error(`Unknown session storage action: ${request?.action}`);
 }
 
@@ -222,6 +197,10 @@ function sweep(root: string): string[] {
 
   try { goalFiles.collect(root, true); }
   catch (error) { warnings.push(`Could not remove the unused goal files: ${(error as Error).message}`); }
+
+  const temporary = cleanupTemporaryChats(root);
+
+  if (temporary) warnings.push(temporary);
 
   return warnings;
 }

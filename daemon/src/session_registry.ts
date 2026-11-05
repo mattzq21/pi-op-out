@@ -1,13 +1,4 @@
-import { z } from 'zod';
-import { join } from 'node:path';
 import * as SessionTables from '../resources/session-database.ts';
-import { STORAGE_DIRECTORY } from './config';
-import { homeDir } from './environment';
-import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from './host_operations';
-
-type RecordRequest = { root: string; sessionId: string; sessionPath: string | null; cwd: string; checkedAt: number };
-
-const recordOperation = hostOperation<RecordRequest, null>('record-session-directory', 'general', DEFAULT_TIMEOUT, z.null());
 
 export function ids(root: string): string[] {
   return SessionTables.registeredSessionIds(root);
@@ -22,39 +13,10 @@ export function releaseReservation(root: string, id: string): void {
   SessionTables.releaseReservedSession(root, id);
 }
 
-// True when a deletion asked for cleanup that has not finished.
-export function cleanupPending(root: string): boolean {
-  return SessionTables.hasCleanupRequests(root);
-}
-
 export function setTaskRunning(root: string, id: string, running: boolean): void {
   SessionTables.setRunningTask(root, id, running);
 }
 
 export function runningTasks(root: string): string[] {
   return SessionTables.runningTaskIds(root);
-}
-
-export function record(state: any, cwd: string | undefined | null): void {
-  const id = typeof state?.sessionId === 'string' ? state.sessionId : undefined;
-  if (!id || typeof cwd !== 'string') return;
-  const request: RecordRequest = { root: join(homeDir(), STORAGE_DIRECTORY), sessionId: id, sessionPath: state.sessionFile ?? null, cwd, checkedAt: Date.now() };
-  pendingRecords.delete(id);
-  pendingRecords.set(id, request);
-  if (!recording) void writeRecords();
-}
-
-const pendingRecords = new Map<string, RecordRequest>();
-let recording = false;
-
-async function writeRecords(): Promise<void> {
-  recording = true;
-  try {
-    for (let next = pendingRecords.entries().next(); !next.done; next = pendingRecords.entries().next()) {
-      const [id, request] = next.value;
-      pendingRecords.delete(id);
-      try { await runHostOperation(recordOperation, request); }
-      catch (error: any) { console.error(`Session registry: ${error?.message ?? error}`); }
-    }
-  } finally { recording = false; }
 }

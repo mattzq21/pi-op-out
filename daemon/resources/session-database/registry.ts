@@ -36,23 +36,6 @@ function savedSessionRowsExcept(root: string, exceptId: string): Array<{ session
   return connection(root).prepare('SELECT session_id, session_path, archived FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(exceptId) as Array<{ session_id: string; session_path: string; archived: number }>;
 }
 
-// Every registered session with a transcript path, except exceptId.
-function savedSessionsExcept(root: string, exceptId: string): Array<{ session_id: string; session_path: string }> {
-  return connection(root).prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(exceptId) as Array<{ session_id: string; session_path: string }>;
-}
-
-// Removes the registry rows of sessionIds: queue origins, ownership records and the sessions.
-function removeForgottenSessions(root: string, sessionIds: string[], ownershipKeys: string[]): void {
-  const db = connection(root);
-  const origin = db.prepare('DELETE FROM queue_origins WHERE session_id=?');
-  const ownership = db.prepare('DELETE FROM conversation_ownership WHERE record_id=?');
-  const session = db.prepare('DELETE FROM sessions WHERE lower(session_id) = ?');
-
-  for (const id of sessionIds) origin.run(id);
-  for (const key of ownershipKeys) ownership.run(key);
-  for (const id of sessionIds) session.run(id.toLowerCase());
-}
-
 function setRunningTask(root: string, sessionId: string, running: boolean): void {
   const db = connection(root);
 
@@ -65,12 +48,6 @@ function runningTaskIds(root: string): string[] {
 }
 
 // Saves the folder of a session when checkedAt is not older than the saved check.
-function saveSessionDirectory(root: string, sessionId: string, cwd: string, checkedAt: number, exists: boolean): void {
-  connection(root).prepare(`INSERT INTO session_directories (session_id, cwd, checked_at, directory_exists) VALUES (?, ?, ?, ?)
-    ON CONFLICT(session_id) DO UPDATE SET cwd=excluded.cwd, checked_at=excluded.checked_at, directory_exists=excluded.directory_exists
-    WHERE excluded.checked_at >= session_directories.checked_at`).run(sessionId, cwd, checkedAt, Number(exists));
-}
-
 function sessionNameOf(root: string, sessionId: string): string | undefined {
   return (connection(root).prepare('SELECT name FROM session_names WHERE session_id=?').get(sessionId) as { name: string } | undefined)?.name;
 }
@@ -182,4 +159,4 @@ function deleteSessionRow(root: string, sessionId: string): void {
   connection(root).prepare('DELETE FROM sessions WHERE session_id=?').run(sessionId);
 }
 
-export { registeredSessionIds, releaseReservedSession, sessionRowExists, isSavedSession, sessionIdByPath, savedSessionsExcept, savedSessionRowsExcept, removeForgottenSessions, setRunningTask, runningTaskIds, saveSessionDirectory, sessionNameOf, saveSessionName, addAuxiliaryChild, sessionTreeIds, auxiliaryDescendantIds, chatWorktreeBody, chatWorktreeBodies, writeChatWorktreeBody, conversationOwnershipBody, saveConversationOwnership, removeConversationOwnership, mailboxHasMessages, mailboxHasDelivery, subagentRunBodies, savedSessionRow, savedSessionRevision, descendantSessionRows, setSessionArchived, deleteSessionRow };
+export { registeredSessionIds, releaseReservedSession, sessionRowExists, isSavedSession, sessionIdByPath, savedSessionRowsExcept, setRunningTask, runningTaskIds, sessionNameOf, saveSessionName, addAuxiliaryChild, sessionTreeIds, auxiliaryDescendantIds, chatWorktreeBody, chatWorktreeBodies, writeChatWorktreeBody, conversationOwnershipBody, saveConversationOwnership, removeConversationOwnership, mailboxHasMessages, mailboxHasDelivery, subagentRunBodies, savedSessionRow, savedSessionRevision, descendantSessionRows, setSessionArchived, deleteSessionRow };

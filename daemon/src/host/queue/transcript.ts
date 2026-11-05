@@ -1,5 +1,4 @@
-import { closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
 import { errorText } from '../../util/sync';
 import { parseIdentity } from './storage';
 
@@ -11,16 +10,8 @@ export function savedUserMessages(path: string, sessionId: string): any[] {
   }
   try {
     if (!fstatSync(fd).isFile()) throw new Error('Queued-input transcript must be a regular file');
-    const content = readFileSync(fd);
-    const messages = readUserMessages(content, sessionId);
-    if (messages.length) {
-      try { fsyncSync(fd); } catch (error) { throw new Error('Cannot sync saved queued input: ' + errorText(error)); }
-      try {
-        const directory = openSync(dirname(path), 'r');
-        try { fsyncSync(directory); } finally { closeSync(directory); }
-      } catch (error) { throw new Error('Cannot sync queued-input transcript directory: ' + errorText(error)); }
-    }
-    return messages;
+    // The daemon saves each transcript write to disk before it answers, so what this reads stays after a stop.
+    return readUserMessages(readFileSync(fd), sessionId);
   } finally { closeSync(fd); }
 }
 

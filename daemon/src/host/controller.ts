@@ -27,7 +27,6 @@ import { drainSaves } from './queue';
 import { detachReadonly, readonlyCommand, readonlyPresence } from './readonly_views';
 import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { Session, type SessionHost, sessionCommand } from './session';
-import { recoverQueuedInput, watchRetention } from './storage_upkeep';
 import { SubmissionLedger } from './submissions';
 import { ToolPayloadCache } from './tool_payload';
 import type { HostServices } from './services';
@@ -56,7 +55,6 @@ export class Host implements SessionHost {
   readonly orchestration = new Orchestration(this);
   readonly pins = new MessagePins(this);
   private mutations = new MutationGuards(this);
-  private stopRetention?: () => void;
   readonly submissions: SubmissionLedger;
 
   readonly events: HostEvents;
@@ -74,9 +72,7 @@ export class Host implements SessionHost {
     host.agentDefinitions = definitions;
     host.ownershipValue = await ConversationOwnership.create(home, storage, { revoke: (id, intent) => host.releaseConversation(id, intent) });
     try { host.submissions.recover(); } catch (error) { host.events.diagnostic('Could not decide the messages left from the last run: ' + errorText(error)); }
-    recoverQueuedInput(host.storageRoot(), host.ownership(), host.events);
     services.bind(host);
-    host.stopRetention = watchRetention(host.storageRoot(), host.ownership(), host.events);
     return host;
   }
 
@@ -380,7 +376,6 @@ export class Host implements SessionHost {
 
   private async stop(): Promise<void> {
     this.shuttingDown = true;
-    this.stopRetention?.();
     await this.services.shutdown();
     await stopPromptPreviews();
     await Promise.allSettled([...this.starts]);

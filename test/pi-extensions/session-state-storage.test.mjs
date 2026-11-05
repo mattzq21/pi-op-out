@@ -261,24 +261,13 @@ test('the chat preview and reopened session follow a branch choice without a tra
   assert.equal(f.SessionManager.open(f.file).getLeafId(), next);
 });
 
-test('recovered queued-input chats keep their names in SQL when reopened', async t => {
+test('the end of a line that a stop cut short is dropped before the next entry is saved', async t => {
   const f = await fixture(t);
-  const { createTranscript } = await import('../../daemon/resources/piop-storage/recovery.ts');
-  const id = database.reserve(f.root);
-  const file = join(f.root, 'sessions', `recovered_${id}.jsonl`);
-  const db = connection(f.root);
-  database.bind(f.root, id, file);
-  db.exec("CREATE TRIGGER reject_recovered_name BEFORE INSERT ON session_names BEGIN SELECT RAISE(ABORT, 'recovery name write failed'); END;");
-  assert.throws(() => createTranscript(file, id, f.home, 'Important queued request'), /recovery name write failed/);
-  assert.equal(existsSync(file), false);
-  assert.equal(existsSync(join(f.root, 'sessions', '.queued-input-recovery-' + id)), false);
-  db.exec('DROP TRIGGER reject_recovered_name');
-  assert.equal(createTranscript(file, id, f.home, 'Important queued request'), true);
-  assert.equal(sessionNames.sessionName(file, id), 'Recovered queued input: Important queued request');
-  assert.equal(readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse).some(entry => entry.type === 'session_info'), false);
-  sessionNames.renameSession(f.root, id, 'Renamed recovered chat');
-  assert.equal(createTranscript(file, id, f.home, 'Another request'), false);
-  assert.equal(sessionNames.sessionName(file, id), 'Renamed recovered chat');
+  f.manager.appendMessage({ role: 'user', content: 'First', timestamp: 1 });
+  writeFileSync(f.file, readFileSync(f.file, 'utf8') + '{"type":"message","id":"cut');
+  const reopened = f.SessionManager.open(f.file);
+  reopened.appendMessage({ role: 'user', content: 'Second', timestamp: 2 });
+  assert.deepEqual(f.physical().filter(entry => entry.type === 'message').map(entry => entry.message.content), ['First', 'Second']);
 });
 
 test('a skill prompt that names its skill gives the session name one skill reference', async t => {

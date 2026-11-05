@@ -3,7 +3,7 @@ import { Check } from "typebox/value";
 
 // The saved form of agent mail, for Pi and the daemon.
 
-export const detailsSchema = Type.Object({ notificationId: Type.String(), mailboxSessionId: Type.String(), mailboxFingerprint: Type.String() });
+export const detailsSchema = Type.Object({ notificationId: Type.String(), mailboxSessionId: Type.String() });
 
 export const objectSchema = Type.Record(Type.String(), Type.Unknown());
 
@@ -35,8 +35,4 @@ export function messageDetails(entry: unknown): MailboxDetails | undefined {
   if (Check(storedMessageSchema, entry)) return entry.message.details;
 
   return undefined;
-}
-
-export function assertSameDelivery(fingerprint: string, message: MailboxMessage) {
-  if (fingerprint !== message.details.mailboxFingerprint) throw new Error("Agent delivery ID was reused for a different message");
 }

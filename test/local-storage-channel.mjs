@@ -11,7 +11,7 @@ export function call(name, payload) {
   return operation.run(process.env.PIOP_TEST_STORAGE_ROOT || sessionReferenceRoot(), structuredClone(payload));
 }
 
-export const transcriptWrites = Object.fromEntries(['publish', 'append', 'repair', 'bind', 'selectBranch', 'copyGoal']
+export const transcriptWrites = Object.fromEntries(['publish', 'append', 'selectBranch', 'copyGoal']
   .map(name => [name, request => localTranscriptWrites()[name](request)]));
 
 // The test process is the daemon here, so it writes its storage itself.

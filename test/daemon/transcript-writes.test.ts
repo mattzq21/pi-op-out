@@ -24,7 +24,7 @@ test('each transcript write moves the chat revision, and the saved agent mail fo
   const header = { type: 'session', version: 3, id, timestamp, cwd: root };
   const question = { type: 'message', id: 'u1', parentId: null, timestamp, message: { role: 'user', content: 'Hello', timestamp: 1 } };
   const mail = { type: 'custom_message', id: 'm1', parentId: 'u1', timestamp, customType: 'piop-agent-message', content: 'Mail', display: true,
-    details: { notificationId: 'delivery', mailboxSessionId: id, mailboxFingerprint: 'print' } };
+    details: { notificationId: 'delivery', mailboxSessionId: id } };
   const revision = () => core.connection(root).prepare('SELECT revision FROM sessions WHERE session_id=?').get(id).revision;
   const saved = () => mailbox.saved(root, { sessionId: id, path });
 
@@ -33,7 +33,7 @@ test('each transcript write moves the chat revision, and the saved agent mail fo
   const created = revision();
   writes.append(root, { path, sessionId: id, entry: mail, after: null });
   expect(revision()).toBeGreaterThan(created);
-  expect(saved()).toEqual([['delivery', 'print']]);
+  expect(saved()).toEqual(['delivery']);
 
   const appended = revision();
   writes.publish(root, { path, entries: [header, question], exclusive: false });

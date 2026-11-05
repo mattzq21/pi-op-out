@@ -60,7 +60,9 @@ function call(operation: string, payload: unknown): unknown {
 }
 
 // The transcript writes of session-storage.ts, run by the daemon.
-const transcriptWrites: Record<'publish' | 'append' | 'repair' | 'bind' | 'selectBranch' | 'copyGoal', (request: unknown) => unknown> = Object.fromEntries(['publish', 'append', 'repair', 'bind', 'selectBranch', 'copyGoal']
-  .map(name => [name, request => call('transcript.' + name, request)])) as Record<'publish' | 'append' | 'repair' | 'bind' | 'selectBranch' | 'copyGoal', (request: unknown) => unknown>;
+type TranscriptWrite = 'publish' | 'append' | 'selectBranch' | 'copyGoal';
+
+const transcriptWrites = Object.fromEntries((['publish', 'append', 'selectBranch', 'copyGoal'] as const)
+  .map(name => [name, (request: unknown) => call('transcript.' + name, request)])) as Record<TranscriptWrite, (request: unknown) => unknown>;
 
 export { call, claim, hasChannel, transcriptWrites };

@@ -1,8 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { createHash } from "node:crypto";
 import { Check, Parse } from "typebox/value";
 import { call } from "../storage-channel.ts";
-import { assertSameDelivery, messageDetails, messageSchema, objectSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
+import { messageDetails, messageSchema, objectSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
 
 export type { MailboxDetails, MailboxMessage } from "./mailbox-records.ts";
 
@@ -20,13 +19,12 @@ function chat(ctx: ExtensionContext) {
 
 function normalizeMessage(ctx: ExtensionContext, message: SendMessage, deliveryId: string): MailboxMessage {
   const details = Check(objectSchema, message.details) ? message.details : {};
-  const fingerprint = createHash("sha256").update(JSON.stringify([message.customType, message.content, details])).digest("hex");
 
-  return Parse(messageSchema, { ...message, details: { ...details, notificationId: deliveryId, mailboxSessionId: ctx.sessionManager.getSessionId(), mailboxFingerprint: fingerprint } });
+  return Parse(messageSchema, { ...message, details: { ...details, notificationId: deliveryId, mailboxSessionId: ctx.sessionManager.getSessionId() } });
 }
 
 async function savedDeliveries(ctx: ExtensionContext) {
-  return new Map<string, string>(await call("mailbox.saved", chat(ctx)) as Array<[string, string]>);
+  return new Set<string>(await call("mailbox.saved", chat(ctx)) as string[]);
 }
 
 async function pendingRecords(ctx: ExtensionContext) {
@@ -98,13 +96,11 @@ export class DurableMailbox {
       if (!deliveryId.trim()) throw new Error("Agent mail requires a stable delivery ID");
       const sessionId = ctx.sessionManager.getSessionId();
       const normalized = normalizeMessage(ctx, message, deliveryId);
-      const saved = (await savedDeliveries(ctx)).get(deliveryId);
+      const saved = (await savedDeliveries(ctx)).has(deliveryId);
 
       if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
 
-      if (saved) { assertSameDelivery(saved, normalized);
-
-        return false; }
+      if (saved) return false;
 
       const record = await storePending(ctx, deliveryId, normalized);
 
@@ -120,11 +116,7 @@ export class DurableMailbox {
       const saved = await savedDeliveries(ctx);
 
       for (const record of records) {
-        if (!this.consumed.has(this.key(ctx, record.deliveryId))) continue;
-        const fingerprint = saved.get(record.deliveryId);
-
-        if (!fingerprint) continue;
-        assertSameDelivery(fingerprint, record.message);
+        if (!this.consumed.has(this.key(ctx, record.deliveryId)) || !saved.has(record.deliveryId)) continue;
         await removePending(ctx, record);
         this.queued.delete(this.key(ctx, record.deliveryId));
         this.consumed.delete(this.key(ctx, record.deliveryId));
@@ -143,10 +135,7 @@ export class DurableMailbox {
       const branch = this.liveDeliveries(ctx, ctx.sessionManager.getBranch());
 
       for (const record of records) {
-        const fingerprint = saved.get(record.deliveryId);
-
-        if (fingerprint) {
-          assertSameDelivery(fingerprint, record.message);
+        if (saved.has(record.deliveryId)) {
           this.queued.add(this.key(ctx, record.deliveryId));
 
           if (branch.has(record.deliveryId)) this.pi.events.emit("piop:agent-mail", { notificationId: record.deliveryId, customType: record.message.customType });

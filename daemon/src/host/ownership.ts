@@ -101,16 +101,6 @@ export class ConversationOwnership {
     return { release };
   }
 
-  // Both locks of id, or undefined when someone holds one.
-  tryLock(id: string): Held | undefined {
-    const key = ConversationOwnership.key(id);
-    const conversation = StorageLocks.lockSync('conversation:' + key, { wait: false });
-    if (!conversation) return undefined;
-    const mutation = StorageLocks.lockSync('conversation-mutation:' + key, { wait: false });
-    if (!mutation) { conversation(); return undefined; }
-    return { release: () => { mutation(); conversation(); } };
-  }
-
   owns(id: string, client: string, allowReleased: boolean): boolean {
     const record = this.read(id);
     if (!record) return false;

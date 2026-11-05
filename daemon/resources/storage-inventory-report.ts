@@ -1,5 +1,3 @@
-import type { RootOwner } from './storage-inventory-roots.ts';
-
 const archiveCoverage = 'Logical size of this JSONL transcript. Excludes save files, loop state, attachments, descendant chats, working folders. Other saved files are included in category disk totals where their folders are available. This is not an estimate of freed disk space.';
 
 const definitions = [
@@ -14,11 +12,7 @@ const definitions = [
 ];
 
 function publicRoot(record) {
-  const root: { path: string; ownership: string; provenance: string[]; owners: RootOwner[]; available: boolean; state?: string } = { path: record.path, ownership: record.ownership, provenance: record.provenance, owners: record.owners, available: record.available ?? false };
-
-  if (record.state) root.state = record.state;
-
-  return root;
+  return { path: record.path, ownership: record.ownership, provenance: record.provenance, owners: record.owners, available: record.available ?? false };
 }
 
 function diskCategory(definition, disk, activeCount, archivedCount) {

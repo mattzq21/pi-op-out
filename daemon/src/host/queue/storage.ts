@@ -1,4 +1,4 @@
-import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import { clearQueue, isQueueHeld, nextQueueItemId, savedQueue, setQueueHeld, transaction, writeQueue, type QueueRow } from '../../../resources/session-database.ts';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
@@ -31,16 +31,9 @@ export async function drainSaves(root: string): Promise<void> {
 
 export class QueueStorage {
   readonly path: string;
-  origin: any = null;
 
   constructor(directory: string, sessionId: string) {
     this.path = join(directory, parseIdentity(sessionId) + '.json');
-  }
-
-  withOrigin(cwd: string, sessionPath: string | null | undefined): this {
-    if (!isAbsolute(cwd)) throw new Error('Queued-input recovery requires an absolute working directory');
-    this.origin = { cwd, sessionPath: sessionPath ?? null };
-    return this;
   }
 
   root(): string { return dirname(dirname(this.path)); }
@@ -50,13 +43,8 @@ export class QueueStorage {
     return nextQueueItemId(this.root());
   }
 
-  record(): any | null {
-    return savedQueue(this.root(), this.id());
-  }
-
   load(): any[] {
-    const saved = this.record();
-    return saved ? recoverItems(saved) : [];
+    return recoverItems(savedQueue(this.root(), this.id()));
   }
 
   held(): boolean {
@@ -70,7 +58,6 @@ export class QueueStorage {
 
   async recover(pending: any[]): Promise<any[]> {
     const snapshot = structuredClone(pending);
-    const origin = structuredClone(this.origin);
     return inOrder(resolve(this.root()), async () => {
       const recovered = this.load();
       for (const item of snapshot) {
@@ -78,7 +65,7 @@ export class QueueStorage {
         restartItem(item);
         if (!recovered.some(saved => saved.id === item.id)) recovered.push(item);
       }
-      await this.saveLocked(recovered, origin);
+      this.saveLocked(recovered);
       return recovered;
     });
   }
@@ -86,20 +73,13 @@ export class QueueStorage {
   async save(items: any[]): Promise<void> {
     validateItems(items);
     const snapshot = structuredClone(items);
-    const origin = structuredClone(this.origin);
-    return inOrder(resolve(this.root()), () => this.saveLocked(snapshot, origin));
+    return inOrder(resolve(this.root()), async () => this.saveLocked(snapshot));
   }
 
-  private async saveLocked(items: any[], origin: any): Promise<void> {
+  private saveLocked(items: any[]): void {
     const root = this.root();
-    transaction(root, 'IMMEDIATE', () => this.writeItems(root, items, origin));
-  }
-
-  private writeItems(root: string, items: any[], origin: any): void {
     const id = this.id();
-    if (!items.length) return clearQueue(root, id);
-    if (!origin) throw new Error('Queued-input recovery is missing its working directory');
-    writeQueue(root, id, { cwd: typeof origin.cwd === 'string' ? origin.cwd : null, sessionPath: typeof origin.sessionPath === 'string' ? origin.sessionPath : null }, queueRows(items));
+    transaction(root, 'IMMEDIATE', () => items.length ? writeQueue(root, id, queueRows(items)) : clearQueue(root, id));
   }
 }
 
@@ -113,18 +93,8 @@ function restartItem(item: any): void {
   delete item.used;
 }
 
-function recoverItems(saved: any): any[] {
-  if (saved.version !== 1) throw new Error('Unsupported queued-input journal version');
-  if (!Array.isArray(saved.items)) throw new Error('Invalid queued-input journal');
-  const items = structuredClone(saved.items);
-  const identities = new Set<string>();
-  for (const item of items) {
-    validateItem(item);
-    const key = JSON.stringify(item.id);
-    if (identities.has(key)) throw new Error('Duplicate queued-input journal identity');
-    identities.add(key);
-    restartItem(item);
-  }
+function recoverItems(items: any[]): any[] {
+  for (const item of items) restartItem(item);
   return items;
 }
 
@@ -135,10 +105,10 @@ function validateItems(items: any[]): void {
 
 export function validateItem(item: any): void {
   itemId(item);
-  if (typeof item.message !== 'string' || (item.behavior !== 'steer' && item.behavior !== 'followUp')) throw new Error('Invalid queued-input journal item');
+  if (typeof item.message !== 'string' || (item.behavior !== 'steer' && item.behavior !== 'followUp')) throw new Error('Invalid queued item');
   if (item.images !== undefined) {
-    if (!Array.isArray(item.images)) throw new Error('Invalid queued-input journal attachments');
-    if (item.images.some((image: any) => typeof image?.data !== 'string' || typeof image?.mimeType !== 'string')) throw new Error('Invalid queued-input journal attachment');
+    if (!Array.isArray(item.images)) throw new Error('Invalid queued item attachments');
+    if (item.images.some((image: any) => typeof image?.data !== 'string' || typeof image?.mimeType !== 'string')) throw new Error('Invalid queued item attachment');
   }
 }
 

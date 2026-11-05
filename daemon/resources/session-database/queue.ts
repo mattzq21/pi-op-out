@@ -1,7 +1,5 @@
 import { connection, transaction } from './core.ts';
 
-export type SavedQueue = { version: 1; origin: { cwd: string; sessionPath: string | null }; items: any[] };
-
 export type QueueRow = { id: number; message: string; behavior: "steer" | "followUp"; details: string; images: Array<{ mimeType: string | null; data: Buffer; details: string }> };
 
 export type SubmissionState = "received" | "accepted" | "rejected";
@@ -31,33 +29,13 @@ function queueItems(root: string, sessionId: string): any[] {
   });
 }
 
-// The saved queue of a chat, also when it has no items; null when the chat has no saved queue.
-function savedQueue(root: string, sessionId: string): SavedQueue | null {
-  return transaction(root, 'DEFERRED', () => {
-    const origin = connection(root).prepare('SELECT cwd, session_path FROM queue_origins WHERE session_id=?').get(sessionId) as { cwd: string; session_path: string | null } | undefined;
-
-    if (!origin) return null;
-
-    return { version: 1 as const, origin: { cwd: origin.cwd, sessionPath: origin.session_path ?? null }, items: queueItems(root, sessionId) };
-  });
+// The saved queue of a chat, in order.
+function savedQueue(root: string, sessionId: string): any[] {
+  return transaction(root, 'DEFERRED', () => queueItems(root, sessionId.toLowerCase()));
 }
 
-function queuedInputs(root: string): Array<{ session_id: string; record_json: string }> {
-  return transaction(root, 'DEFERRED', () => (connection(root).prepare('SELECT session_id FROM queue_origins').all() as Array<{ session_id: string }>).flatMap(row => {
-    const record = savedQueue(root, row.session_id);
-
-    return record?.items.length ? [{ session_id: row.session_id, record_json: JSON.stringify(record) }] : [];
-  }));
-}
-
-function queuedInput(root: string, id: string): SavedQueue | undefined {
-  const record = savedQueue(root, id.toLowerCase());
-
-  return record?.items.length ? record : undefined;
-}
-
-function queuedSessionIds(root: string): string[] {
-  return connection(root).prepare('SELECT DISTINCT session_id FROM queue_items').all().map(row => String(row.session_id));
+function hasQueuedInput(root: string, sessionId: string): boolean {
+  return connection(root).prepare('SELECT 1 FROM queue_items WHERE session_id=?').get(sessionId.toLowerCase()) !== undefined;
 }
 
 function nextQueueItemId(root: string): string {
@@ -81,15 +59,14 @@ function clearQueue(root: string, sessionId: string): void {
   const db = connection(root);
 
   db.prepare('DELETE FROM queue_items WHERE session_id=?').run(sessionId);
-  db.prepare('DELETE FROM queue_origins WHERE session_id=?').run(sessionId);
 }
 
-// Replaces the saved queue of a chat with items. Run it in a transaction.
-function writeQueue(root: string, sessionId: string, origin: { cwd: string | null; sessionPath: string | null }, items: QueueRow[]): void {
+// Replaces the saved queue of a chat with items. Only a chat with a saved transcript keeps queued input, so that each
+// saved queue has a chat that shows it. Run it in a transaction.
+function writeQueue(root: string, sessionId: string, items: QueueRow[]): void {
   const db = connection(root);
 
-  db.prepare('INSERT INTO queue_origins VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET cwd=excluded.cwd, session_path=excluded.session_path')
-    .run(sessionId, origin.cwd, origin.sessionPath);
+  if (!db.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path IS NOT NULL').get(sessionId)) throw new Error('Queued input needs a saved chat');
   db.prepare('DELETE FROM queue_items WHERE session_id=? AND queue_item_id NOT IN (SELECT value FROM json_each(?))').run(sessionId, JSON.stringify(items.map(item => item.id)));
 
   const saveItem = db.prepare('INSERT INTO queue_items VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(queue_item_id) DO UPDATE SET queue_position=excluded.queue_position, message=excluded.message, behavior=excluded.behavior, details_json=excluded.details_json WHERE queue_items.session_id=excluded.session_id');
@@ -101,11 +78,6 @@ function writeQueue(root: string, sessionId: string, origin: { cwd: string | nul
     dropImages.run(item.id, item.images.length);
     item.images.forEach((image, position) => saveImage.run(item.id, position + 1, image.mimeType, image.data, image.details));
   });
-}
-
-// Gives a chat with queued input its recovered transcript path. False when the chat has another path.
-function bindRecoveredQueue(root: string, sessionId: string, sessionPath: string): boolean {
-  return Number(connection(root).prepare('UPDATE sessions SET session_path=?1 WHERE session_id=?2 AND (session_path IS NULL OR session_path=?1)').run(sessionPath, sessionId).changes) === 1;
 }
 
 // ---- Submission outcomes ----
@@ -133,21 +105,20 @@ function isGoalSubmissionQueued(root: string, id: string): boolean {
 
 // ---- Agent mail ----
 
-// The agent mail that the transcript of a chat holds: delivery ID and fingerprint pairs.
-function mailboxReceipts(root: string, sessionId: string): Array<[string, string]> {
-  return connection(root).prepare('SELECT delivery_id, fingerprint FROM session_mailbox_receipts WHERE session_id=?').all(sessionId)
-    .map(row => [String(row.delivery_id), String(row.fingerprint)]);
+// The delivery IDs of the agent mail that the transcript of a chat holds.
+function mailboxReceipts(root: string, sessionId: string): string[] {
+  return connection(root).prepare('SELECT delivery_id FROM session_mailbox_receipts WHERE session_id=?').all(sessionId).map(row => String(row.delivery_id));
 }
 
-function addMailboxReceipt(root: string, sessionId: string, deliveryId: string, fingerprint: string): void {
-  connection(root).prepare('INSERT INTO session_mailbox_receipts VALUES (?, ?, ?) ON CONFLICT(session_id, delivery_id) DO UPDATE SET fingerprint=excluded.fingerprint').run(sessionId, deliveryId, fingerprint);
+function addMailboxReceipt(root: string, sessionId: string, deliveryId: string): void {
+  connection(root).prepare('INSERT OR IGNORE INTO session_mailbox_receipts VALUES (?, ?)').run(sessionId, deliveryId);
 }
 
-function replaceMailboxReceipts(root: string, sessionId: string, receipts: Array<[string, string]>): void {
+function replaceMailboxReceipts(root: string, sessionId: string, receipts: string[]): void {
   const db = connection(root);
 
   db.prepare('DELETE FROM session_mailbox_receipts WHERE session_id=?').run(sessionId);
-  for (const [deliveryId, fingerprint] of receipts) addMailboxReceipt(root, sessionId, deliveryId, fingerprint);
+  for (const deliveryId of receipts) addMailboxReceipt(root, sessionId, deliveryId);
 }
 
 function mailboxDeliveries(root: string, sessionId: string): unknown[] {
@@ -162,12 +133,12 @@ function nextMailboxSequence(root: string, sessionId: string): unknown {
   return connection(root).prepare('SELECT max(coalesce(max(sequence)+1, 0), ?) AS sequence FROM session_mailbox WHERE session_id=?').get(Date.now(), sessionId)?.sequence;
 }
 
-function addMailboxDelivery(root: string, sessionId: string, deliveryId: string, sequence: number, fingerprint: string, messageJson: string): void {
-  connection(root).prepare('INSERT INTO session_mailbox VALUES (?, ?, ?, ?, ?)').run(sessionId, deliveryId, sequence, fingerprint, messageJson);
+function addMailboxDelivery(root: string, sessionId: string, deliveryId: string, sequence: number, messageJson: string): void {
+  connection(root).prepare('INSERT INTO session_mailbox VALUES (?, ?, ?, ?)').run(sessionId, deliveryId, sequence, messageJson);
 }
 
-function removeMailboxDelivery(root: string, sessionId: string, deliveryId: string, fingerprint: string): void {
-  connection(root).prepare('DELETE FROM session_mailbox WHERE session_id=? AND delivery_id=? AND fingerprint=?').run(sessionId, deliveryId, fingerprint);
+function removeMailboxDelivery(root: string, sessionId: string, deliveryId: string): void {
+  connection(root).prepare('DELETE FROM session_mailbox WHERE session_id=? AND delivery_id=?').run(sessionId, deliveryId);
 }
 
 // ---- Subagent runs ----
@@ -230,4 +201,4 @@ function saveBranchSelection(root: string, sessionId: string, tipId: string | nu
     ON CONFLICT(session_id) DO UPDATE SET tip_id=excluded.tip_id, leaf_id=excluded.leaf_id`).run(sessionId, tipId, leafId);
 }
 
-export { savedQueue, queuedInputs, queuedInput, queuedSessionIds, nextQueueItemId, isQueueHeld, setQueueHeld, clearQueue, writeQueue, bindRecoveredQueue, pruneSubmissionOutcomes, receivedSubmissions, submissionOutcome, saveSubmissionOutcome, isGoalSubmissionQueued, mailboxReceipts, addMailboxReceipt, replaceMailboxReceipts, mailboxDeliveries, mailboxDelivery, nextMailboxSequence, addMailboxDelivery, removeMailboxDelivery, subagentRun, subagentRuns, saveSubagentRun, sessionStateRecord, seedSessionStateRecord, appendSessionStateRecord, sessionStateRecords, sessionStateSequence, currentSessionStates, saveCurrentSessionState, branchSelection, saveBranchSelection };
+export { savedQueue, hasQueuedInput, nextQueueItemId, isQueueHeld, setQueueHeld, clearQueue, writeQueue, pruneSubmissionOutcomes, receivedSubmissions, submissionOutcome, saveSubmissionOutcome, isGoalSubmissionQueued, mailboxReceipts, addMailboxReceipt, replaceMailboxReceipts, mailboxDeliveries, mailboxDelivery, nextMailboxSequence, addMailboxDelivery, removeMailboxDelivery, subagentRun, subagentRuns, saveSubagentRun, sessionStateRecord, seedSessionStateRecord, appendSessionStateRecord, sessionStateRecords, sessionStateSequence, currentSessionStates, saveCurrentSessionState, branchSelection, saveBranchSelection };

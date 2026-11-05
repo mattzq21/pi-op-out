@@ -78,7 +78,7 @@ export class QueueRecord {
   }
 
   reportError(error: string): void {
-    this.executor.publish({ type: 'extension_ui_request', method: 'notify', notifyType: 'error', message: 'Queued input recovery could not be updated: ' + error });
+    this.executor.publish({ type: 'extension_ui_request', method: 'notify', notifyType: 'error', message: 'Queued input could not be saved: ' + error });
   }
 
   async observe(event: any): Promise<void> {

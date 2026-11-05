@@ -1,14 +1,12 @@
 import { z } from 'zod';
 import * as Lifecycle from '../../resources/session-lifecycle.ts';
 import { hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from '../host_operations';
-import { requestRetention } from './retention_requests';
 
 export interface SavedSession { sessionId: string; sessionPath: string; archived: boolean }
 
 type Request =
   | { action: 'delete'; sessionIds: string[] }
-  | { action: 'delete-blank'; blank: { path?: string | null; id?: string | null } }
-  | { action: 'maintain' };
+  | { action: 'delete-blank'; blank: { path?: string | null; id?: string | null } };
 
 const answerSchema = z.object({ warning: z.string().optional(), busy: z.boolean().optional() });
 
@@ -37,18 +35,11 @@ export function restore(ids: string[], root = profileRoot()): void { Lifecycle.r
 // Deletes the chats ids: their rows at once, then their files.
 export async function deleteSessions(ids: string[]): Promise<void> {
   await run({ action: 'delete', sessionIds: ids });
-  // What only the deleted chats used can be freed now.
-  requestRetention(profileRoot());
 }
 
 // Deletes a chat that has no message, unless the storage is busy.
 export async function deleteBlank(blank: { path?: string | null; id?: string | null }): Promise<void> {
   await run({ action: 'delete-blank', blank });
-}
-
-// Finishes deferred retention and temporary folder cleanup. False when the storage was busy.
-export function maintain(options: { root?: string; signal?: AbortSignal } = {}): Promise<boolean> {
-  return run({ action: 'maintain' }, options);
 }
 
 // Removes the files of chats that were deleted while the daemon stopped. Gives the warnings.

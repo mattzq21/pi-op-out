@@ -3,9 +3,8 @@ import { sessionName } from '../../../resources/session-broker/session-names.ts'
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { getProjectRepository } from '../../projects';
-import * as Registry from '../../session_registry';
 import { Mutex, errorText } from '../../util/sync';
-import { array, clone, flag, kind, setEntry, text, jsonEqual } from '../json';
+import { array, clone, flag, kind, setEntry, text } from '../json';
 import { historyOutline, olderHistory, recentHistory, turnWork } from '../history_window';
 import { savedToolPayload } from '../payload';
 import { readHeaderLine, argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch } from '../protocol';
@@ -136,7 +135,7 @@ export class Session {
 
   static async spawn(launch: SessionLaunch, pending: any[], host: SessionHost, home: string, toolPayloads: ToolPayloadCache, assertRunning: () => void): Promise<Session> {
     prepareSpec(launch.spec, launch.key, launch.clientId, home);
-    const storage = queueStorage(host, launch.spec, launch.cwd, home, launch.key);
+    const storage = queueStorage(host, launch.spec, launch.key);
     const held = storage?.held() ?? false;
     const recovered = storage ? await storage.recover(pending) : pending;
     const identity = argument(launch.spec, '--session') !== undefined ? launch.key : (argument(launch.spec, '--session-id') ?? launch.key);
@@ -518,7 +517,6 @@ export class Session {
       if (event.sessionId === this.identity) await this.queue.consumed(text(event, 'queueId'));
       return;
     }
-    if (kind(event) === 'agent_settled' || (kind(event) === 'message_end' && event.message?.role === 'assistant')) Registry.record(this.state, this.cwd);
     this.retainLive(event);
     this.announceSessionFile(event);
     if (kind(event) === 'extension_ui_request') {
@@ -708,7 +706,6 @@ export class Session {
       const name = typeof data.sessionFile === 'string' && typeof data.sessionId === 'string' ? sessionName(data.sessionFile, data.sessionId) : undefined;
       if (name === undefined) delete data.sessionName; else data.sessionName = name;
     }
-    if (!jsonEqual(this.state?.sessionId, data?.sessionId)) Registry.record(data, this.cwd);
     this.state = clone(data);
     const id = data?.sessionId;
     let rekey: [string, string] | undefined;
@@ -742,9 +739,7 @@ export class Session {
   }
 }
 
-function queueStorage(host: SessionHost, spec: LaunchSpec, cwd: string | null, home: string, key: string): QueueStorage | null {
+function queueStorage(host: SessionHost, spec: LaunchSpec, key: string): QueueStorage | null {
   const root = host.queueRoot();
-  if (root === null) return null;
-  const directory = cwd ?? spec.cwd ?? home;
-  return new QueueStorage(root, specIdentity(spec, key)).withOrigin(directory, argument(spec, '--session'));
+  return root === null ? null : new QueueStorage(root, specIdentity(spec, key));
 }

@@ -43,9 +43,10 @@ function temporaryChatSessionRows(root: string): { session_id: string; session_p
   return rows(root, 'SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL ORDER BY session_id');
 }
 
-// The text of each queued input, with the session ID it belongs to.
-function temporaryChatQueuedTexts(root: string): { session_id: string; text: string }[] {
-  return rows(root, `SELECT session_id, cwd || COALESCE(session_path, '') AS text FROM queue_origins UNION ALL SELECT session_id, message || details_json AS text FROM queue_items UNION ALL SELECT q.session_id, a.details_json AS text FROM queue_attachments a JOIN queue_items q USING(queue_item_id)`);
+// True when a queued message of a chat other than excluded names text.
+function queuedInputMentions(root: string, text: string, excluded?: string): boolean {
+  return connection(root).prepare(`SELECT 1 FROM queue_items q WHERE q.session_id IS NOT ? AND (instr(q.message || q.details_json, ?)
+    OR EXISTS (SELECT 1 FROM queue_attachments a WHERE a.queue_item_id=q.queue_item_id AND instr(a.details_json, ?))) LIMIT 1`).get(excluded ?? null, text, text) !== undefined;
 }
 
 // Subagent runs copied with a fork.
@@ -58,21 +59,9 @@ function saveForkSubagentRun(root: string, sessionId: string, runId: string, sta
     .run(sessionId, runId, startedAt, JSON.stringify(run));
 }
 
-// The IDs in sessionIds that have no row in the session registry. IDs compare without case.
-function unregisteredSessionIds(root: string, sessionIds: string[]): string[] {
-  const read = connection(root).prepare('SELECT 1 FROM sessions WHERE lower(session_id) = ?');
-
-  return sessionIds.filter(id => !read.get(id.toLowerCase()));
-}
-
-// The working folder of each session that has one, for the storage inventory.
-function inventorySessionDirectories(root: string): { session_id: string; session_path: string | null; cwd: string }[] {
-  return rows(root, 'SELECT r.session_id, s.session_path, r.cwd FROM session_directories r JOIN sessions s USING(session_id)');
-}
-
 // Every saved chat with its archive state, for the storage inventory.
 function inventorySessions(root: string): { session_id: string; session_path: string; archived: number }[] {
   return rows(root, 'SELECT session_id, session_path, archived FROM sessions WHERE session_path IS NOT NULL');
 }
 
-export { temporaryChatFolder, temporaryChatOwner, insertTemporaryChatFolder, temporaryChatAllocations, orphanTemporaryChatAllocations, removeTemporaryChatAllocation, removeReservedSessionId, temporaryChatSessionExists, temporaryChatSessionRows, temporaryChatQueuedTexts, forkSourceSubagentRuns, saveForkSubagentRun, unregisteredSessionIds, inventorySessionDirectories, inventorySessions };
+export { temporaryChatFolder, temporaryChatOwner, insertTemporaryChatFolder, temporaryChatAllocations, orphanTemporaryChatAllocations, removeTemporaryChatAllocation, removeReservedSessionId, temporaryChatSessionExists, temporaryChatSessionRows, queuedInputMentions, forkSourceSubagentRuns, saveForkSubagentRun, inventorySessions };

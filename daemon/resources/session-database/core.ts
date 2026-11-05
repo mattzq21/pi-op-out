@@ -42,10 +42,11 @@ function rollback(db: Connection, error: unknown): unknown {
   return error;
 }
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 // The whole storage schema. Only this module creates or changes tables.
-const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1)), revision INTEGER NOT NULL DEFAULT 0); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
+const SCHEMA = `DROP TABLE IF EXISTS queue_origins; DROP TABLE IF EXISTS recovery_directories; DROP TABLE IF EXISTS cleanup_requests; DROP TABLE IF EXISTS session_directories; DROP TABLE IF EXISTS session_mailbox; DROP TABLE IF EXISTS session_mailbox_receipts;
+      CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1)), revision INTEGER NOT NULL DEFAULT 0); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_branch_selection (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, tip_id TEXT, leaf_id TEXT);
       CREATE TABLE IF NOT EXISTS session_extension_state (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, state_key TEXT NOT NULL, entry_json TEXT NOT NULL, PRIMARY KEY(session_id, state_key));
       CREATE TABLE IF NOT EXISTS session_extension_records (sequence INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, entry_id TEXT NOT NULL, after_id TEXT, entry_json TEXT NOT NULL, UNIQUE(session_id, entry_id)); CREATE INDEX IF NOT EXISTS session_extension_records_order ON session_extension_records(session_id, sequence);
@@ -62,7 +63,7 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE INDEX IF NOT EXISTS auxiliary_children_child ON auxiliary_children(child_id);
       CREATE TABLE IF NOT EXISTS session_mailbox (
         session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-        delivery_id TEXT NOT NULL, sequence INTEGER NOT NULL, fingerprint TEXT NOT NULL,
+        delivery_id TEXT NOT NULL, sequence INTEGER NOT NULL,
         message_json TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
       CREATE INDEX IF NOT EXISTS session_mailbox_order ON session_mailbox(session_id, sequence);
       CREATE TABLE IF NOT EXISTS session_subagent_runs (
@@ -78,13 +79,8 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_group_orders (scope TEXT NOT NULL, owner TEXT NOT NULL, position INTEGER NOT NULL, token TEXT NOT NULL, PRIMARY KEY(scope, owner, position));
       CREATE TABLE IF NOT EXISTS conversation_ownership (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queue_item_sequence (id INTEGER PRIMARY KEY CHECK(id=1), last_id INTEGER NOT NULL);
       INSERT OR IGNORE INTO queue_item_sequence VALUES (1, 0);
-      CREATE TABLE IF NOT EXISTS queue_origins (
-        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-        cwd TEXT NOT NULL, session_path TEXT);
       CREATE TABLE IF NOT EXISTS queue_items (
         queue_item_id INTEGER PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
@@ -103,7 +99,6 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
         attachment_position INTEGER NOT NULL CHECK(attachment_position>=1),
         media_type TEXT NOT NULL, data BLOB NOT NULL, details_json TEXT NOT NULL,
         UNIQUE(queue_item_id, attachment_position));
-      CREATE TABLE IF NOT EXISTS session_directories (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL, checked_at INTEGER NOT NULL, directory_exists INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS chat_worktrees (chat_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS submission_outcomes (submission_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('received', 'accepted', 'rejected')), error TEXT, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS session_names (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, name TEXT NOT NULL);
@@ -111,7 +106,7 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS session_mailbox_receipts (
         session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-        delivery_id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
+        delivery_id TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
       CREATE TABLE IF NOT EXISTS sdk_settings (path TEXT PRIMARY KEY, body TEXT);
       CREATE TABLE IF NOT EXISTS session_group_parents (group_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL);
       INSERT OR IGNORE INTO session_group_state VALUES (1, 0);
@@ -279,29 +274,6 @@ function rows<Row>(root: string, sql: string, ...parameters: SQLInputValue[]): R
   return connection(root).prepare(sql).all(...parameters) as Row[];
 }
 
-function recoveryRecords(root: string): Array<{ record_id: string; record_json: string }> { return rows<{ record_id: string; record_json: string }>(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }
-
-const saveRecoveryRecord = onMainThread('session-database.saveRecoveryRecord', (root: string, record: { id: string }, reserve = false) => {
-  connection(root).prepare('INSERT INTO recovery_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json'))
-    .run(record.id, JSON.stringify(record));
-});
-
-const markCleanup = onMainThread('session-database.markCleanup', (root: string, kind: string): void => {
-  connection(root).prepare('INSERT INTO cleanup_requests VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1').run(kind);
-});
-
-function hasCleanupRequests(root: string): boolean {
-  return Boolean((connection(root).prepare('SELECT EXISTS(SELECT 1 FROM cleanup_requests) AS pending').get() as { pending: number }).pending);
-}
-
-function cleanupRequest(root: string, kind: string): number | undefined {
-  return (connection(root).prepare('SELECT revision FROM cleanup_requests WHERE kind=?').get(kind) as { revision: number } | undefined)?.revision;
-}
-
-const finishCleanup = onMainThread('session-database.finishCleanup', (root: string, kind: string, revision: number) => {
-  connection(root).prepare('DELETE FROM cleanup_requests WHERE kind=? AND revision=?').run(kind, revision);
-});
-
 function lookup(root: string, sessionId: string): string | null | undefined {
   return (connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId) as { session_path: string | null } | undefined)?.session_path;
 }
@@ -323,4 +295,4 @@ function storageRoot(file: string): string {
   throw new Error('Conversation is outside session storage');
 }
 
-export { connection, transactionOf, rows, isDatabaseChange, databaseExists, readOnlyStorage, transaction, reserve, reserveId, bind, register, isRegistered, lookup, paths, storageRoot, markCleanup, hasCleanupRequests, cleanupRequest, finishCleanup, recoveryRecords, saveRecoveryRecord, touch, revise, revisePath };
+export { connection, transactionOf, rows, isDatabaseChange, databaseExists, readOnlyStorage, transaction, reserve, reserveId, bind, register, isRegistered, lookup, paths, storageRoot, touch, revise, revisePath };

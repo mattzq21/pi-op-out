@@ -91,24 +91,3 @@ test.concurrent('closing an unused temporary chat keeps the subfolder of an arch
     expect(existsSync(temporary.cwd)).toBe(false);
   } finally { await daemon.stop(); }
 }, 60_000);
-
-test.concurrent('temporary folder cleanup waits for a damaged chat header to be repaired', async () => {
-  const daemon = await startDaemon();
-  try {
-    const temporary = await daemon.invoke('create_temporary_chat', { hostId: 'local' });
-    const saved = JSON.parse(execFileSync('node', [fileURLToPath(new URL('../fixtures/publish-chat.mjs', import.meta.url))], {
-      encoding: 'utf8', timeout: 30_000,
-      input: JSON.stringify({ home: daemon.home, cwd: daemon.home, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved work', timestamp: 1 } }) + '\n' }),
-    }));
-    const original = readFileSync(saved.path, 'utf8');
-    writeFileSync(saved.path, 'damaged header\n');
-    await daemon.invoke('remove_temporary_chat', { hostId: 'local', path: temporary.cwd });
-    expect(await daemon.invoke('validate_project_directory', { hostId: 'local', path: temporary.cwd, allowStorage: true }))
-      .toBe(temporary.cwd);
-
-    writeFileSync(saved.path, original);
-    await daemon.invoke('remove_temporary_chat', { hostId: 'local', path: temporary.cwd });
-    expect(await daemon.failure('validate_project_directory', { hostId: 'local', path: temporary.cwd, allowStorage: true }))
-      .toContain('is unavailable');
-  } finally { await daemon.stop(); }
-}, 60_000);

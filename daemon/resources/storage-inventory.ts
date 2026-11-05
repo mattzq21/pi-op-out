@@ -91,7 +91,6 @@ async function storageInventory(request: { profile: string; archivesOnly?: boole
 
   if (request.archivesOnly === true) return { categories: [], archives, warnings };
 
-  if (database.cleanupRequest(profile, 'temporary-chat') !== undefined) warnings.push('Temporary folder cleanup for deleted sessions is pending');
   const recovery = recoveryRoots(profile, warnings);
   const archived = new Set(archivedRows.flatMap(row => [row.session_path, row.session_path.replace(/\.jsonl$/, '.snapshots')]));
   const disk = await diskStorage(profile, { archived, recovery });

@@ -11,7 +11,7 @@ function specialCategory(target: string, category: string, metadata: any, discov
 
   if (!metadata.isDirectory()) return category;
 
-  if (discovery.recovery.has(target)) return discovery.recovery.get(target).ownership === 'owned' ? 'recovery-storage' : 'unattributed-recovery-storage';
+  if (discovery.recovery.has(target)) return 'recovery-storage';
 
   return category;
 }
@@ -84,14 +84,8 @@ async function diskStorage(profile: string, discovery: any) {
   }
 
   async function visitRecovery(record: any): Promise<void> {
-    const category = record.ownership === 'owned' ? 'recovery-storage' : 'unattributed-recovery-storage';
-    addCount(category);
-    await visitRecord(category, record);
-
-    if (record.state === 'allocated' || !record.workdir) return;
-
-    try { if (!(await fs.lstat(record.workdir)).isDirectory()) throw new Error('Recovery workdir is not a directory'); }
-    catch (error) { warnings.push(`${record.workdir}: ${record.state} recovery workdir unavailable: ${(error as Error).message}`); record.available = false; }
+    addCount('recovery-storage');
+    await visitRecord('recovery-storage', record);
   }
 
   function registerTemporaryChats(): void {

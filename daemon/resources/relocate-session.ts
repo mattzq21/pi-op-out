@@ -1,14 +1,7 @@
 import fs from 'node:fs';
-import { dirname, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
 import * as database from './session-database.ts';
-
-function syncDirectory(directory: string) {
-  const descriptor = fs.openSync(directory, 'r');
-
-  try { fs.fsyncSync(descriptor); }
-  finally { fs.closeSync(descriptor); }
-}
+import { storagePublish } from './storage-file.ts';
 
 function relocateSession(profile: string, sessionPath: string, requestedReplacement: string, from?: string) {
   const replacement = fs.realpathSync(requestedReplacement);
@@ -27,23 +20,8 @@ function rewriteHeader(profile: string, sessionPath: string, replacement: string
   if (from !== undefined && header.cwd !== from) return;
   header.cwd = replacement;
   lines[0] = JSON.stringify(header);
-  const temporary = `${sessionPath}.${randomUUID()}.tmp`;
-  let file;
-
-  try {
-    const mode = fs.statSync(sessionPath).mode & 0o777;
-    file = fs.openSync(temporary, 'wx', mode);
-    fs.fchmodSync(file, mode);
-    fs.writeFileSync(file, lines.join('\n'));
-    fs.fsyncSync(file);
-    fs.closeSync(file); file = undefined;
-    database.revise(profile, header.id);
-    fs.renameSync(temporary, sessionPath);
-    syncDirectory(dirname(sessionPath));
-  } finally {
-    if (file !== undefined) fs.closeSync(file);
-    fs.rmSync(temporary, { force: true });
-  }
+  database.revise(profile, header.id);
+  storagePublish(sessionPath, join(dirname(sessionPath), `.${basename(sessionPath)}.relocate`), lines.join('\n'), false);
 }
 
 function checkedRelocation(request: any) {

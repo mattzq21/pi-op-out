@@ -69,7 +69,7 @@ test.concurrent('failed recovery preserves the chat and permits retry after the 
 
     expect(await daemon.failure('recover_missing_session', {
       sessionPath: chat.path, hostId: 'local', action: 'empty', clientId: 'recovery-test',
-    })).toContain('Recovery directory is not a regular directory');
+    })).toContain('Could not recover the session directory');
     expect(await daemon.invoke('list_sessions')).toEqual(before);
     expect(readFileSync(obstruction, 'utf8')).toBe('Keep this file');
 

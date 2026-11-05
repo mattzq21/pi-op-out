@@ -3,18 +3,17 @@ import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
 import * as database from "../session-database.ts";
 import { list as savedReceipts } from "./mailbox-receipts.ts";
-import { assertSameDelivery, messageSchema, recordSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
+import { messageSchema, recordSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
 
 // Agent mail that waits in the database until its chat saves it. Only the daemon runs these; Pi asks through its storage channel.
 
-const savedRecordSchema = Type.Object({ session_id: Type.String(), delivery_id: Type.String(), sequence: Type.Integer(), fingerprint: Type.String(), message_json: Type.String() });
+const savedRecordSchema = Type.Object({ session_id: Type.String(), delivery_id: Type.String(), sequence: Type.Integer(), message_json: Type.String() });
 
 function mailboxRecord(saved: Static<typeof savedRecordSchema>): MailboxRecord {
   const record = Parse(recordSchema, { version: 1, sessionId: saved.session_id, deliveryId: saved.delivery_id,
     sequence: saved.sequence, message: JSON.parse(saved.message_json) });
 
   if (record.message.details.mailboxSessionId !== record.sessionId || record.message.details.notificationId !== record.deliveryId) throw new Error("Invalid saved agent delivery identity");
-  assertSameDelivery(saved.fingerprint, record.message);
 
   return record;
 }
@@ -36,13 +35,13 @@ function nextRecord(root: string, sessionId: string, deliveryId: string, message
   const sequence = Parse(Type.Integer(), database.nextMailboxSequence(root, sessionId));
 
   const record: MailboxRecord = { version: 1, sessionId, deliveryId, sequence, message };
-  database.addMailboxDelivery(root, record.sessionId, record.deliveryId, record.sequence, record.message.details.mailboxFingerprint, JSON.stringify(record.message));
+  database.addMailboxDelivery(root, record.sessionId, record.deliveryId, record.sequence, JSON.stringify(record.message));
 
   return record;
 }
 
 export const OPERATIONS = {
-  // The mail that the chat's transcript already holds: delivery ID and fingerprint pairs.
+  // The delivery IDs of the mail that the chat's transcript already holds.
   saved: (root: string, request: unknown) => {
     const { sessionId } = mailbox(root, request);
 
@@ -62,10 +61,7 @@ export const OPERATIONS = {
 
     return database.transaction(root, "IMMEDIATE", () => {
       const existing = database.mailboxDelivery(root, sessionId, deliveryId);
-      const record = existing ? mailboxRecord(Parse(savedRecordSchema, existing)) : nextRecord(root, sessionId, deliveryId, message);
-      assertSameDelivery(record.message.details.mailboxFingerprint, message);
-
-      return record;
+      return existing ? mailboxRecord(Parse(savedRecordSchema, existing)) : nextRecord(root, sessionId, deliveryId, message);
     });
   },
   remove: (root: string, request: { record: unknown }) => {
@@ -73,7 +69,7 @@ export const OPERATIONS = {
     const record = Parse(recordSchema, request.record);
 
     if (record.sessionId !== sessionId) throw new Error("Agent mail belongs to another conversation");
-    database.removeMailboxDelivery(root, record.sessionId, record.deliveryId, record.message.details.mailboxFingerprint);
+    database.removeMailboxDelivery(root, record.sessionId, record.deliveryId);
 
     return null;
   },

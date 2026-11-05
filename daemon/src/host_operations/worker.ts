@@ -21,7 +21,6 @@ const handlers: Record<HostOperationName, Handler> = {
   'storage-inventory': started(async input => (await import('../../resources/storage-inventory.ts')).storageInventory(input)),
   'recover-missing-session': started(async input => (await import('../../resources/recover-missing-session.ts')).recoverMissingSession(input)),
   'relocate-session': started(async input => (await import('../../resources/relocate-session.ts')).checkedRelocation(input)),
-  'record-session-directory': started(async input => (await import('../../resources/session-registry.ts')).recordDirectory(input)),
   'temporary-chat': started(async input => (await import('../../resources/temporary-chat.ts')).temporaryChat(input)),
   'agent-definitions': started(async input => (await import('piop-agent-loader')).loadAgentDefinitions(input)),
   'save-agent-definitions': started(async input => (await import('piop-agent-loader')).saveAgentDefinitions(input)),

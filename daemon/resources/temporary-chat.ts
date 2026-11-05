@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import * as database from './session-database.ts';
 import { onMainThread } from './main-thread.ts';
 import { folderNames, ownsFolder, uuid } from './temporary-chat-inventory.ts';
@@ -16,13 +15,6 @@ function directoryExists(directory) {
     if (error.code === 'ENOENT') return false;
     throw error;
   }
-}
-
-function sync(directory) {
-  const descriptor = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
-
-  try { fs.fsyncSync(descriptor); }
-  finally { fs.closeSync(descriptor); }
 }
 
 // Saves which folder belongs to the temporary chat id, or returns the one it has.
@@ -48,8 +40,6 @@ function create(root, id) {
   if (!directoryExists(tmp)) fs.mkdirSync(tmp);
 
   if (!directoryExists(directory)) fs.mkdirSync(directory);
-  sync(tmp);
-  sync(root);
 
   return directory;
 }
@@ -77,93 +67,56 @@ function firstLine(file) {
   } finally { fs.closeSync(descriptor); }
 }
 
-function deferReference(file, reason) {
-  return { deferred: `Temporary folder cleanup deferred: cannot read the working folder from ${file}: ${reason}` };
-}
+// The working folders of the saved chats, except the chat excluded.
+function workingFolders(root: string, excluded?: string): string[] {
+  const folders: string[] = [];
 
-// The saved chats and queued messages that the references come from. When they are unchanged, so are the references.
-function referenceSources(root) {
-  const sessions = database.temporaryChatSessionRows(root);
-  const queued = database.temporaryChatQueuedTexts(root);
-
-  return { sessions, queued, version: createHash('sha256').update(JSON.stringify([sessions, queued])).digest('hex') };
-}
-
-const unchanged = onMainThread('temporary-chat.unchanged', (root: string, version: string) => referenceSources(root).version === version);
-
-type ReferenceSnapshot = { deferred: string; version?: undefined } | { deferred?: undefined; version: string; directories: string[]; queued: string[] };
-
-function references(root: string, excluded?: string): ReferenceSnapshot {
-  const { version, sessions: rows, queued: texts } = referenceSources(root);
-  const directories: string[] = [];
-
-  for (const row of rows) {
+  for (const row of database.temporaryChatSessionRows(root)) {
     if (row.session_id === excluded) continue;
+    let line;
 
-    try {
-      const line = firstLine(row.session_path);
-
-      if (line === null) return deferReference(row.session_path, 'missing, oversized, or non-regular chat header');
-      const cwd = JSON.parse(line).cwd;
-
-      if (!path.isAbsolute(cwd)) return deferReference(row.session_path, 'working folder path is not absolute');
-      directories.push(path.resolve(cwd));
-    } catch (error) {
+    try { line = firstLine(row.session_path); }
+    catch (error) {
       if (error.code === 'ENOENT') continue;
-
-      return deferReference(row.session_path, error.message);
+      throw new Error(`Cannot read the working folder from ${row.session_path}: ${error.message}`);
     }
+    const cwd = line === null ? undefined : JSON.parse(line).cwd;
+
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error(`Cannot read the working folder from ${row.session_path}`);
+    folders.push(path.resolve(cwd));
   }
 
-  const queued = texts.filter(row => row.session_id !== excluded).map(row => row.text);
-
-  return { version, directories, queued };
+  return folders;
 }
 
-function inUse(snapshot, directory) {
-  return snapshot.directories.some(cwd => cwd === directory || cwd.startsWith(directory + path.sep))
-    || snapshot.queued.some(body => body.includes(directory));
+// True when a saved chat works in directory, or a queued message names it.
+function inUse(root: string, folders: string[], directory: string, excluded?: string): boolean {
+  return folders.some(cwd => cwd === directory || cwd.startsWith(directory + path.sep)) || database.queuedInputMentions(root, directory, excluded);
 }
 
 function removeChecked(root, directory, id) {
-  const snapshot = references(root, id);
-
-  if (snapshot.deferred) console.error(snapshot.deferred);
-
-  if (snapshot.deferred !== undefined || inUse(snapshot, directory) || !unchanged(root, snapshot.version)) return;
-  remove(root, directory, id);
+  if (!inUse(root, workingFolders(root, id), directory, id)) remove(root, directory, id);
 }
 
+// Removes the temporary folders of deleted chats, except those in use.
 function cleanupDeleted(root) {
   if (!directoryExists(path.join(root, 'tmp'))) return;
   const candidates = database.orphanTemporaryChatAllocations(root);
 
   if (!candidates.length) return;
-  const snapshot = references(root);
-
-  if (snapshot.deferred !== undefined) throw new Error(snapshot.deferred);
-  if (!unchanged(root, snapshot.version)) throw new Error('Temporary folder cleanup deferred: session storage changed while references were checked');
-  const failures = removeCandidates(root, snapshot, candidates);
-
-  if (failures.length) throw new Error(`Temporary folder cleanup failed: ${failures.join('; ')}`);
-  const pending = database.orphanTemporaryChatAllocations(root).map(row => row.original_path).filter(directory => !inUse(snapshot, directory));
-
-  return pending.length ? { pending: true, warning: `Temporary folder cleanup deferred: ${pending.join('; ')}` } : { pending: false };
-}
-
-function removeCandidates(root, snapshot, candidates) {
+  const folders = workingFolders(root);
   const failures: string[] = [];
 
   for (const candidate of candidates) {
     const directory = candidate.original_path;
 
-    if (!ownsFolder(root, candidate.session_id, directory) || inUse(snapshot, directory)) continue;
+    if (!ownsFolder(root, candidate.session_id, directory) || inUse(root, folders, directory)) continue;
 
     try { remove(root, directory, candidate.session_id); }
     catch (error) { failures.push(`${directory}: ${error.message}`); }
   }
 
-  return failures;
+  if (failures.length) throw new Error(`Temporary folder cleanup failed: ${failures.join('; ')}`);
 }
 
 const forgetAllocation = onMainThread('temporary-chat.forgetAllocation', (root: string, directory: string, id: string) => {
@@ -189,7 +142,6 @@ function remove(root, directory, id) {
     }
   }
 
-  if (directoryExists(path.dirname(directory))) sync(path.dirname(directory));
   forgetAllocation(root, directory, id);
 }
 

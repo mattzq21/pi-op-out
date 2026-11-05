@@ -237,7 +237,7 @@ export async function relocateSession(app: App, sessionPath: string, cwd: string
 
 const relocateOperation = hostOperation<{ profile: string; sessionPath: string; cwd: string; from?: string }, null>('relocate-session', 'general', DEFAULT_TIMEOUT, z.unknown().transform(() => null));
 
-const recoverySchema = z.object({ cwd: z.string(), recovery: z.unknown(), warnings: z.array(z.string()) });
+const recoverySchema = z.object({ cwd: z.string(), warnings: z.array(z.string()) });
 
 type Recovery = z.output<typeof recoverySchema>;
 

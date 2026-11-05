@@ -35,25 +35,11 @@ function writesFor(prototype) {
 
 function writes(manager) { return writesFor(Object.getPrototypeOf(manager)); }
 
-// Reads a saved transcript, after any end of a line that a write did not finish has been dropped.
-function repairedTranscript(path, transcriptWrites) {
-  const read = readTranscript(path);
-  if (!read.partial) return read.entries;
-  transcriptWrites.repair({ path, end: read.end });
-  console.warn(`${path}: last write was interrupted; dropped ${read.partial} bytes`);
-  return read.entries;
-}
-
 function installSessionCreation(SessionManager) {
   const prototype = SessionManager.prototype;
 
-  patchMethod(SessionManager, "open", open => function (this: any, path, ...args) {
-    if (storageFs.existsSync(path)) repairedTranscript(path, writesFor(this.prototype));
-    return open.call(this, path, ...args);
-  });
-
   patchMethod(prototype, "_setSessionFile", setFile => function (this: any, path, entries) {
-    if (this.persist && storageFs.existsSync(path)) entries = repairedTranscript(path, writes(this));
+    if (this.persist && storageFs.existsSync(path)) entries = readTranscript(path).entries;
     return setFile.call(this, path, entries);
   });
 
@@ -69,7 +55,7 @@ function installSessionCreation(SessionManager) {
   });
 
   patchMethod(prototype, "_loadEntries", load => function (this: any, entries, options) {
-    if (this.persist && this.sessionFile) entries = repairedTranscript(this.sessionFile, writes(this));
+    if (this.persist && this.sessionFile) entries = readTranscript(this.sessionFile).entries;
     return load.call(this, takeCurrentState(this, entries), options);
   });
 
@@ -178,7 +164,7 @@ export function installSessionStorage(SessionManager, transcriptWrites) {
   installSessionLookup(SessionManager);
   installSessionCreation(SessionManager);
 
-  if (["publish", "append", "repair", "selectBranch", "copyGoal"].some(name => typeof transcriptWrites?.[name] !== "function")) throw new Error("Session storage needs its transcript writes");
+  if (["publish", "append", "selectBranch", "copyGoal"].some(name => typeof transcriptWrites?.[name] !== "function")) throw new Error("Session storage needs its transcript writes");
   installedWrites.set(prototype, transcriptWrites);
 
   patchMethod(prototype, "_buildIndex", buildIndex => function (this: any) {
