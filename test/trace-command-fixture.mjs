@@ -1,23 +1,24 @@
-import stateRecords from '../daemon/resources/piop-storage/session-records.cjs';
-import sessionNames from '../daemon/resources/session-broker/session-names.cjs';
-import { reserve, bind, connection } from "../daemon/resources/session-database.cjs";
+import * as stateRecords from '../daemon/resources/piop-storage/session-records.ts';
+import * as sessionNames from '../daemon/resources/session-broker/session-names.ts';
+import { reserve, bind } from "../daemon/resources/session-database.ts";
+import { connection } from "../daemon/resources/session-database/core.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { build } from 'esbuild';
-import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 import { installBroker } from './runtime-events-fixture.mjs';
 import { localStorageChannel } from './local-storage-channel.mjs';
 
 export async function buildTraceControls(outfile) {
-  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports(), localStorageChannel()],
+  if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not build the Pi controls');
+  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [localStorageChannel()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
 }
 
-export async function publishedTrace(t, traceReader, content, { folder = '', home: existingHome, cwd, controlsBundle = process.env.PIOP_TEST_CONTROLS_BUNDLE } = {}) {
+export async function publishedTrace(t, content, { folder = '', home: existingHome, cwd, controlsBundle = process.env.PIOP_TEST_CONTROLS_BUNDLE } = {}) {
   const home = existingHome ?? await mkdtemp(join(tmpdir(), 'piop-public-trace-'));
   const buildDirectory = await mkdtemp(join(home, 'publication-test-'));
   const sessions = join(home, '.piop', 'sessions', folder);
@@ -36,7 +37,7 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   const header = { type: 'session', version: 3, id, cwd: cwd ?? home };
   const user = { type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Start' } };
   await writeFile(source, JSON.stringify(header) + '\n' + JSON.stringify(user) + '\n');
-  bind(connection(join(home, '.piop')), id, source);
+  bind(join(home, '.piop'), id, source);
   const outfile = controlsBundle ?? join(buildDirectory, 'operations.mjs');
   if (!controlsBundle) await buildTraceControls(outfile);
   installBroker(t, (path, { count }) => {
@@ -74,10 +75,5 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
     return fork.sessionPath;
   };
   const path = content === undefined ? undefined : await publish(content);
-  let tool;
-  if (traceReader) {
-    traceReader({ registerTool(value) { tool = value; } });
-    if (tool?.name !== 'read_trace') throw new Error('Trace tool was not registered');
-  }
-  return { home, path, id: identities.get(path), publish, read: (query = path) => tool.execute(randomUUID(), { query }, undefined, undefined, { cwd: home }) };
+  return { home, path, id: identities.get(path) };
 }

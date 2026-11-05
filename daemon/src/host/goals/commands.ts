@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { text } from '../json';
-import type { QueueGate } from '../queue_gate';
-import type { QueueDelivery } from '../queue_delivery';
+import type { QueueDelivery, QueueGate } from '../queue';
 import { agentObjective, validateObjective } from './files';
 import { goalChangedPrompt, goalSetPrompt } from './prompts';
 import { GOAL_TOOL, type ContextInsertion, type Goal } from './state';

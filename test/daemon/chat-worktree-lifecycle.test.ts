@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { startDaemon, type TestDaemon } from './harness';
 import { gitRepository } from './agent-chats';
-import * as Git from '../../daemon/src/chat_worktrees';
-import * as Records from '../../daemon/src/chat_worktree_records';
-import * as Lifecycle from '../../daemon/src/chat_worktree_lifecycle';
-import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/project_repositories';
+import * as Git from '../../daemon/src/worktrees/worktrees';
+import * as Records from '../../daemon/src/worktrees/records';
+import * as Lifecycle from '../../daemon/src/worktrees/lifecycle';
+import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/projects/repositories';
 
 const daemons: TestDaemon[] = [];
 afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.stop(); }, 60000);

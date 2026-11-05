@@ -1,7 +1,7 @@
 import { basename, isAbsolute, join } from 'node:path';
-import { getProjectRepository, rememberProjectRepository } from '../project_repositories';
-import * as Worktrees from '../chat_worktree_records';
-import { publishBranchHistory } from '../chat_branch_operations';
+import { getProjectRepository, rememberProjectRepository } from '../projects';
+import * as Worktrees from '../worktrees';
+import { publishBranchHistory } from '../worktrees';
 import * as Registry from '../session_registry';
 import { flag, kind, text } from './json';
 import { Guard, ownershipError } from './ownership';
@@ -9,7 +9,7 @@ import { argument, expandHome, parseLaunchSpec, readHeaderLine, sessionSpec, spe
 import type { Host } from './controller';
 import { readonlyCommand, type ReadonlyView } from './readonly_views';
 import type { Session } from './session';
-import { forkPoint } from '../../resources/piop-storage/session-records.cjs';
+import { forkPoint } from '../../resources/piop-storage/session-records.ts';
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
 const FORKS = ['fork', 'fork_after', 'copy_after', 'clone'];

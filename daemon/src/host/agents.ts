@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { hostOperation, runHostOperation } from '../host_operations';
 import { installedPi } from '../pi_install';
-import * as Contributions from '../plugin_contributions';
+import * as Contributions from '../plugins';
 import type { FastModelSnapshot } from './fast_models';
 
 const definitionsSchema = z.looseObject({ config: z.looseObject({ agents: z.array(z.unknown()) }), prompts: z.record(z.string(), z.unknown()) });

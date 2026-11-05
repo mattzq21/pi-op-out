@@ -1,6 +1,6 @@
 import type { Duplex } from 'node:stream';
-import { storageOperation } from '../../resources/piop-storage/storage-operations.mjs';
-import { readLines } from '../../resources/lf-lines.cjs';
+import { storageOperation } from '../../resources/piop-storage/storage-operations.ts';
+import { readLines } from '../../resources/lf-lines.ts';
 import { errorText } from '../util/sync';
 
 // The kinds of storage changes that a process may ask for. A Pi with a chat may make all of them.

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.mjs";
-import { patchMethod } from "../../daemon/resources/pi-patch.cjs";
+import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.ts";
+import { patchMethod } from "../../daemon/resources/pi-patch.ts";
 import { agentExtensions } from "./extension-loader.ts";
 import type { ExtensionAPI, ExtensionRuntime, ModelRegistry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";

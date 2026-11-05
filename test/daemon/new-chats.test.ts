@@ -7,9 +7,10 @@ let home: string;
 let root: string;
 let folder: string;
 let previousStorage: string | undefined;
-const database = require('../../daemon/resources/session-database.cjs');
-const newChats = require('../../daemon/resources/piop-storage/new-chats.cjs');
-const lifecycle = require('../../daemon/resources/session-lifecycle.cjs');
+const database = require('../../daemon/resources/session-database.ts');
+const newChats = require('../../daemon/resources/piop-storage/new-chats.ts');
+const lifecycle = require('../../daemon/resources/session-lifecycle.ts');
+const core = require('../../daemon/resources/session-database/core.ts');
 
 beforeAll(() => {
   previousStorage = process.env.PIOP_STORAGE_DIRECTORY;
@@ -48,7 +49,7 @@ test('a chat that a stop leaves before its commit is not shown, and the start sw
 
 test('a failed commit leaves no files and gives back the reserved ID', () => {
   const id = database.reserve(root);
-  const db = database.connection(root);
+  const db = core.connection(root);
   db.exec("CREATE TRIGGER reject_new_chat BEFORE UPDATE OF session_path ON sessions WHEN NEW.session_id='" + id + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
   try { expect(() => newChats.create(root, chat(id))).toThrow(/^Index write failed$/); }
   finally { db.exec('DROP TRIGGER reject_new_chat'); }
@@ -67,6 +68,6 @@ test('a new chat is saved with its name, records and link to its parent in one c
 
   expect(lifecycle.session(root, childId)).toEqual({ sessionId: childId, sessionPath: child.path, archived: false });
   expect(lifecycle.descendants(root, parentId)).toEqual([{ sessionId: childId, sessionPath: child.path, archived: false }]);
-  expect(database.connection(root).prepare('SELECT name FROM session_names WHERE session_id=?').get(childId)).toEqual({ name: 'Side chat' });
+  expect(core.connection(root).prepare('SELECT name FROM session_names WHERE session_id=?').get(childId)).toEqual({ name: 'Side chat' });
   expect(existsSync(child.path.replace(/\.jsonl$/, '.snapshots/new-chat.pending'))).toBe(false);
 });

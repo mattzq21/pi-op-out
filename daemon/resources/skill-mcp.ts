@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { ExtensionAPI, ExtensionContext, McpServerConfig } from "@earendil-works/pi-coding-agent";
 import { skillMcpServerSchema, skillMcpServersSchema } from "../../pi-extensions/piop-define-agents/mcp-schema.ts";
-import { subscribeConnections } from "./mcp-connections.cjs";
+import { subscribeConnections } from "./mcp-connections.ts";
 import { leadingCalls, skillPaths } from "./piop-controls/skill-calls.ts";
 
 const ENTRY = "piop-skill-mcp";

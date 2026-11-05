@@ -4,14 +4,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 let root: string;
-const database = require('../../daemon/resources/session-database.cjs');
+const database = require('../../daemon/resources/session-database.ts');
+const core = require('../../daemon/resources/session-database/core.ts');
 let writes: any;
 let mailbox: any;
 
 beforeAll(async () => {
   root = join(realpathSync(mkdtempSync(join(tmpdir(), 'piop-transcript-writes-'))), '.piop');
   mkdirSync(join(root, 'sessions'), { recursive: true });
-  writes = (await import('../../daemon/resources/piop-storage/transcript-writes.mjs')).OPERATIONS;
+  writes = (await import('../../daemon/resources/piop-storage/transcript-writes.ts')).OPERATIONS;
   mailbox = (await import('../../daemon/resources/piop-storage/mailbox-store.ts')).OPERATIONS;
 });
 afterAll(() => rmSync(join(root, '..'), { recursive: true, force: true }));
@@ -24,7 +25,7 @@ test('each transcript write moves the chat revision, and the saved agent mail fo
   const question = { type: 'message', id: 'u1', parentId: null, timestamp, message: { role: 'user', content: 'Hello', timestamp: 1 } };
   const mail = { type: 'custom_message', id: 'm1', parentId: 'u1', timestamp, customType: 'piop-agent-message', content: 'Mail', display: true,
     details: { notificationId: 'delivery', mailboxSessionId: id, mailboxFingerprint: 'print' } };
-  const revision = () => database.connection(root).prepare('SELECT revision FROM sessions WHERE session_id=?').get(id).revision;
+  const revision = () => core.connection(root).prepare('SELECT revision FROM sessions WHERE session_id=?').get(id).revision;
   const saved = () => mailbox.saved(root, { sessionId: id, path });
 
   writes.publish(root, { path, entries: [header, question], exclusive: true });

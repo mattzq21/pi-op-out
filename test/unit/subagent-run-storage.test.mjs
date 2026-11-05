@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import database from '../../daemon/resources/session-database.cjs';
+import * as database from '../../daemon/resources/session-database.ts';
+import { connection } from '../../daemon/resources/session-database/core.ts';
 import { OPERATIONS } from '../../daemon/resources/piop-storage/subagent-run-store.ts';
 
 test('subagent status updates use one SQL row with the current task', t => {
@@ -12,9 +13,8 @@ test('subagent status updates use one SQL row with the current task', t => {
   mkdirSync(join(root, 'sessions'));
   const parent = database.reserve(root), child = database.reserve(root);
   const file = join(root, 'sessions', 'parent.jsonl'), childFile = join(root, 'sessions', 'child.jsonl');
-  const db = database.connection(root);
-  database.bind(db, parent, file);
-  database.bind(db, child, childFile);
+  database.bind(root, parent, file);
+  database.bind(root, child, childFile);
   const persistSubagentRun = run => OPERATIONS.persist(root, { sessionId: parent, path: file, run });
   const savedSubagentRuns = () => OPERATIONS.saved(root, { sessionId: parent, path: file });
   const run = { version: 1, toolCallId: 'call', parentSessionId: parent, sessionId: child, sessionPath: childFile, hostId: 'local', name: 'Worker', task: 'Original task', status: 'running', startedAt: 1 };
@@ -25,5 +25,5 @@ test('subagent status updates use one SQL row with the current task', t => {
   assert.equal(saved.length, 1);
   assert.equal(saved[0].status, 'completed');
   assert.equal(saved[0].task, 'Resolved task text');
-  assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
+  assert.equal(connection(root).prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
 });

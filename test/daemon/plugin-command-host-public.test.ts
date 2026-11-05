@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { readJson, save } from '../../daemon/resources/application-records.cjs';
+import { readJson, save } from '../../daemon/resources/application-records.ts';
 import { remoteMachine, startDaemon, useRemotes } from './harness';
 
 test('new chat commands use the selected host plugin setup', async () => {

@@ -8,8 +8,8 @@ import { BrokerRequestError, currentHost, request } from "./client.ts";
 import { createProfileSession } from "./agent-profiles.ts";
 import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
 import { activeConversation } from "./conversation-location.ts";
-import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary } from "../piop-storage/session-records.cjs";
-import { sessionName } from "./session-names.cjs";
+import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary } from "../piop-storage/session-records.ts";
+import { sessionName } from "./session-names.ts";
 import { steering } from "./steering.ts";
 
 const messageSchema = Type.Object({ role: Type.String(), content: Type.Optional(Type.Unknown()), toolName: Type.Optional(Type.String()), customType: Type.Optional(Type.String()), details: Type.Optional(Type.Unknown()), stopReason: Type.Optional(Type.String()), errorMessage: Type.Optional(Type.String()) });

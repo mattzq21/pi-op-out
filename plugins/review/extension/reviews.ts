@@ -11,12 +11,12 @@ import { Check, Parse } from "typebox/value";
 import { currentHost } from "../../../daemon/resources/session-broker/client.ts";
 import { childFastModeEntry } from "../../../daemon/resources/session-broker/fast-mode.ts";
 import { locateConversation } from "../../../daemon/resources/session-broker/conversation-location.ts";
-import { readJson } from "../../../daemon/resources/application-records.cjs";
+import { readJson } from "../../../daemon/resources/application-records.ts";
 import type { ReviewImage, ReviewSession } from "./interface.ts";
 import { openAuxiliaryChat } from "../../../daemon/resources/session-broker/auxiliary.ts";
-import { AUXILIARY_PARENT, auxiliaryParent, records } from "../../../daemon/resources/piop-storage/session-records.cjs";
-import { children } from "../../../daemon/resources/session-broker/session-child-index.cjs";
-import { storageRoot } from "../../../daemon/resources/session-database.cjs";
+import { AUXILIARY_PARENT, auxiliaryParent, records } from "../../../daemon/resources/piop-storage/session-records.ts";
+import { children } from "../../../daemon/resources/session-broker/session-child-index.ts";
+import { storageRoot } from "../../../daemon/resources/session-database.ts";
 import reviewPrompt from "./review-prompt.txt";
 
 const reviewSchema = Schema.Object({ kind: Schema.Literal("review"), sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), scope: Schema.Optional(Schema.String()) });

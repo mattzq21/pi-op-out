@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canFork, isCurrent } from "../piop-storage/session-records.cjs";
+import { canFork, isCurrent } from "../piop-storage/session-records.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -7,7 +7,7 @@ import { currentHost } from "../session-broker/client.ts";
 import { createFork, reserveSessionId } from "../piop-storage/session-file.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { sessionName } from "../session-broker/session-names.cjs";
+import { sessionName } from "../session-broker/session-names.ts";
 import type { ForkMode, ForkResult } from "./interface.ts";
 
 export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };

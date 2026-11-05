@@ -5,7 +5,7 @@ import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { ensurePrivateDir } from './private_fs';
 import * as R from './resources';
-import * as Contributions from './plugin_contributions';
+import * as Contributions from './plugins';
 import type { AppSettings } from './settings_types';
 import { errorText } from './util/sync';
 
@@ -38,7 +38,7 @@ export function agentResources(settings: AppSettings): any {
   return { skills: skillLists(settings), tools: toolLists(settings) };
 }
 
-const BRIDGE = 'runtime-bridge.cjs';
+const BRIDGE = 'runtime-bridge.mjs';
 const PROVIDER_SDK = 'provider-sdk.mjs';
 
 // Each core extension is one built file. Settings groups an extension's tools under its file name.

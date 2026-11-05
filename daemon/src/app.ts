@@ -1,11 +1,11 @@
-import { DaemonClients } from './daemon_clients';
-import * as daemonRestart from './daemon_restart';
-import { PiRuntime } from './pi_runtime';
+import { DaemonClients } from './clients';
+import * as daemonRestart from './restart';
+import { PiRuntime } from './pi';
 import { interruptTerminals, TerminalRuntime } from './terminals';
-import { SessionIndexRuntime } from './session_index';
+import { SessionIndexRuntime } from './sessions';
 import { BrokerRuntime } from './broker';
 import { PeerRuntime } from './peers';
-import { UsageRuntime } from './provider_usage';
+import { UsageRuntime } from './providers';
 
 // owner: the client that the event is for. Undefined means all clients.
 type Listener = (payload: any, owner: string | undefined) => void;

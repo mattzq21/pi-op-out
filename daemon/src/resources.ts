@@ -1,6 +1,6 @@
 import agentCommands from '../resources/agent-commands.json?raw';
-import runtimeBridge from '../resources/runtime-bridge.cjs?node-program' with { type: 'text' };
-import providerSdk from '../resources/provider-sdk.mjs?node-program' with { type: 'text' };
+import runtimeBridge from '../resources/runtime-bridge.ts?node-program' with { type: 'text' };
+import providerSdk from '../resources/provider-sdk.ts?node-program' with { type: 'text' };
 import ocx from '../../pi-extensions/piop-ocx-provider/index.ts?pi-extension' with { type: 'text' };
 import providersRefresh from '../../pi-extensions/piop-providers-refresh/index.ts?pi-extension' with { type: 'text' };
 import mcp from '../resources/mcp-bridge.ts?pi-extension' with { type: 'text' };

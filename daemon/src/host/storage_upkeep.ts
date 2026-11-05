@@ -1,10 +1,10 @@
 import * as Registry from '../session_registry';
-import * as SessionLifecycle from '../session_lifecycle';
-import { errorText } from '../util/sync';
+import { errorText, sleep } from '../util/sync';
 import type { ConversationOwnership } from './ownership';
-import { recoverMissingTranscripts, type Recovery } from './queue_recovery';
+import { recoverMissingTranscripts, type Recovery } from './queue';
 import type { HostEvents } from './events';
-import { collectRetentionWith } from '../retention_requests';
+import { collectRetentionWith } from '../storage';
+import * as SessionLifecycle from '../storage/lifecycle.ts';
 
 export function recoverQueuedInput(root: string, ownership: ConversationOwnership, events: HostEvents): void {
   report(recoverMissingTranscripts(root, ownership), events);

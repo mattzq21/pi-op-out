@@ -1,6 +1,6 @@
 import { Type, type Static } from 'typebox';
 import { Check } from 'typebox/value';
-import { connection } from './util/db';
+import * as Storage from '../resources/session-database.ts';
 
 // The records of a daemon restart in the storage database of root:
 //   plan: the restart in progress: its identity, the daemon that asked for it, the new and the fallback daemon file,
@@ -30,32 +30,31 @@ function checked<Name extends RestartRecord>(name: Name, value: unknown): Record
 }
 
 export function read<Name extends RestartRecord>(root: string, name: Name): Records[Name] | null {
-  const row: any = connection(root).prepare('SELECT record_json FROM restart_records WHERE name=?').get(name);
-  return row ? checked(name, JSON.parse(row.record_json)) : null;
+  const record = Storage.restartRecordJson(root, name);
+  return record === undefined ? null : checked(name, JSON.parse(record));
 }
 
 export function write<Name extends RestartRecord>(root: string, name: Name, value: Records[Name]): void {
-  connection(root).prepare('INSERT INTO restart_records VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET record_json=excluded.record_json').run(name, JSON.stringify(checked(name, value)));
+  Storage.saveRestartRecordJson(root, name, JSON.stringify(checked(name, value)));
 }
 
 export function remove(root: string, name: RestartRecord): void {
-  connection(root).prepare('DELETE FROM restart_records WHERE name=?').run(name);
+  Storage.removeRestartRecord(root, name);
 }
 
 // digest is null while the backup file is still being written.
 export function saveBackup(root: string, id: string, digest: string | null): void {
-  connection(root).prepare('INSERT INTO restart_backups VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest').run(id, digest);
+  Storage.saveRestartBackup(root, id, digest);
 }
 
 export function readBackup(root: string, id: string): { digest: string | null } | null {
-  const row: any = connection(root).prepare('SELECT digest FROM restart_backups WHERE id=?').get(id);
-  return row ? { digest: row.digest ?? null } : null;
+  return Storage.restartBackup(root, id) ?? null;
 }
 
 export function removeBackup(root: string, id: string): void {
-  connection(root).prepare('DELETE FROM restart_backups WHERE id=?').run(id);
+  Storage.removeRestartBackup(root, id);
 }
 
 export function backups(root: string): string[] {
-  return connection(root).prepare('SELECT id FROM restart_backups ORDER BY id').all().map((row: any) => String(row.id));
+  return Storage.restartBackupIds(root);
 }

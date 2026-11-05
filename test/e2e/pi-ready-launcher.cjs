@@ -22,7 +22,7 @@ function run(node, args) {
     return;
   }
   const id = 'piop-e2e-ready-' + randomUUID();
-  let waiting = basename(args[0]) === 'runtime-bridge.cjs' && !args.includes('--print');
+  let waiting = basename(args[0]) === 'runtime-bridge.mjs' && !args.includes('--print');
   let readyTimer, killTimer, failed = false, closing = false;
   let partial = Buffer.alloc(0);
   // Pi saves its chats through the daemon's storage channel, so that descriptor goes to Pi too.

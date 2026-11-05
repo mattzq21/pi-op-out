@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { reserveSessionId, takeSessionId, withSessionIds } from '../../daemon/resources/piop-storage/identities.mjs';
+import { reserveSessionId, takeSessionId, withSessionIds } from '../../daemon/resources/piop-storage/identities.ts';
 import { installBroker } from '../runtime-events-fixture.mjs';
 
 function daemon(t, reply) {

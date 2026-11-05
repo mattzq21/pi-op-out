@@ -7,14 +7,15 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { startDaemon, type TestDaemon } from './harness';
 import { gitRepository } from './agent-chats';
-import * as Git from '../../daemon/src/chat_worktrees';
-import * as Records from '../../daemon/src/chat_worktree_records';
-import * as History from '../../daemon/src/chat_branch_history';
-import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/project_repositories';
+import * as Git from '../../daemon/src/worktrees/worktrees';
+import * as Records from '../../daemon/src/worktrees/records';
+import * as History from '../../daemon/src/host_operations/branch_history';
+import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/projects/repositories';
 
-const database = require('../../daemon/resources/session-database.cjs');
-const newChats = require('../../daemon/resources/piop-storage/new-chats.cjs');
-const goals = require('../../daemon/resources/piop-storage/goals.cjs');
+const database = require('../../daemon/resources/session-database.ts');
+const core = require('../../daemon/resources/session-database/core.ts');
+const newChats = require('../../daemon/resources/piop-storage/new-chats.ts');
+const goals = require('../../daemon/resources/piop-storage/goals.ts');
 
 const daemons: TestDaemon[] = [];
 afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.stop(); }, 60000);
@@ -40,7 +41,7 @@ async function inStorage<T>(profile: string, fn: () => Promise<T>): Promise<T> {
 const branchExists = (repo: string, branch: string) => {
   try { execFileSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/' + branch], { stdio: 'ignore' }); return true; } catch { return false; }
 };
-const objective = (profile: string, id: string): string | undefined => database.connection(profile).prepare('SELECT objective FROM session_goals WHERE session_id=?').get(id)?.objective;
+const objective = (profile: string, id: string): string | undefined => core.connection(profile).prepare('SELECT objective FROM session_goals WHERE session_id=?').get(id)?.objective;
 const warnings = async (daemon: TestDaemon, id: string): Promise<string[]> =>
   (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').warnings.filter((line: string) => line.includes(id));
 

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
 import { daemonDirectory, fakePi, fakeProgram, refreshedUsage, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
-import { recordTools } from '../../daemon/src/tool_inventory';
+import { recordTools } from '../../daemon/src/inventories/tools';
 
 const root = join(import.meta.dir, '../..');
 const CORE_FILES = [
@@ -12,7 +12,7 @@ const CORE_FILES = [
   'session-broker.mjs', 'piop-compaction-timing.mjs', 'plugins/review.mjs', 'plugins/btw.mjs', 'piop-context-window-cap.mjs', 'piop-context-bar.mjs',
   'plugins/cost.mjs', 'plugins/web-search.mjs', 'piop-openai-fast-mode.mjs', 'piop-openai-cache-fork.mjs', 'piop-define-agents.mjs', 'skills.mjs',
 ];
-const PUBLISHED = [...CORE_FILES, 'provider-sdk.mjs', 'runtime-bridge.cjs'].sort();
+const PUBLISHED = [...CORE_FILES, 'provider-sdk.mjs', 'runtime-bridge.mjs'].sort();
 const files = (folder: string): string[] => readdirSync(folder, { recursive: true, withFileTypes: true })
   .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name).slice(folder.length + 1)).sort();
 

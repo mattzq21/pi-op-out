@@ -43,10 +43,10 @@ const BUNDLES = {
   // The app imports this file; see clients/ui/plugins/clientModules.ts.
   'plugin-client': () => ({ format: 'esm', platform: 'browser', target: 'es2022', plugins: [sharedModules, solidJsx] }),
   // Node runs these files itself, so they contain every dependency.
-  'node-program': path => path.endsWith('.cjs') ? { format: 'cjs' } : {
+  'node-program': () => ({
     format: 'esm',
     banner: { js: "import { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);" },
-  },
+  }),
 };
 
 async function bundle(path, kind) {

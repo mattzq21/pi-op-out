@@ -1,17 +1,17 @@
-import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
-import { sessionName } from "../../resources/session-broker/session-names.cjs";
+import * as SessionRecords from "../../resources/piop-storage/session-records.ts";
+import { sessionName } from "../../resources/session-broker/session-names.ts";
 import { randomUUID } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
-import { extname, join, sep } from 'node:path';
-import * as ConversationStorage from '../conversation_storage';
-import * as Registry from '../session_registry';
-import * as SessionLifecycle from '../session_lifecycle';
-import * as ChildIndex from '../../resources/session-broker/session-child-index.cjs';
-import { getProjectRepository } from '../project_repositories';
-import * as StorageLocks from '../../resources/storage-locks.cjs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { extname, join, dirname, sep } from 'node:path';
+import * as ConversationStorage from '../storage';
+import * as SessionTables from '../../resources/session-database.ts';
+import * as ChildIndex from '../../resources/session-broker/session-child-index.ts';
+import { getProjectRepository } from '../projects';
+import * as StorageLocks from '../../resources/storage-locks.ts';
 import { flag } from './json';
 import { readHeaderLine } from './protocol';
 import { errorText } from '../util/sync';
+import * as SessionLifecycle from '../storage/lifecycle.ts';
 
 export function ownershipError(): string { return 'Take ownership of this conversation before changing it'; }
 
@@ -72,8 +72,7 @@ function optionalPath(path: string): string | null {
 }
 
 function registered(root: string, id: string): { path: string; archived: boolean; revision: number } | null {
-  const row: any = Registry.connection(root).prepare('SELECT session_path, archived, revision FROM sessions WHERE session_id=?').get(id);
-  return typeof row?.session_path === 'string' ? { path: row.session_path, archived: row.archived === 1, revision: Number(row.revision) } : null;
+  return SessionTables.savedSessionRevision(root, id);
 }
 
 export class ConversationOwnership {
@@ -288,7 +287,7 @@ export class ConversationOwnership {
   }
 
   removed(id: string): boolean {
-    return !(Registry.connection(this.root).prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?) AS found').get(id) as any).found;
+    return !SessionTables.sessionRowExists(this.root, id);
   }
 
   lookup(id: string): any {

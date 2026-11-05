@@ -1,6 +1,6 @@
-import { storageRoot } from '../../../resources/session-database.cjs';
-import { agentText } from '../../../resources/piop-storage/goal-files.cjs';
-import { bySubmission } from '../../../resources/piop-storage/goals.cjs';
+import { storageRoot } from '../../../resources/session-database.ts';
+import { agentText } from '../../../resources/piop-storage/goal-files.ts';
+import { bySubmission } from '../../../resources/piop-storage/goals.ts';
 
 export interface GoalPlace { file: string; sessionId: string; cwd: string }
 

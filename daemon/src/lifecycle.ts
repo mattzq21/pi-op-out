@@ -1,18 +1,18 @@
 import { recoverChatWorktrees, sweepDeletedSessions } from './archives';
 import { App } from './app';
 import { DEVELOPMENT } from './config';
-import * as daemonEndpoint from './daemon_endpoint';
-import * as daemonStdio from './daemon_stdio';
-import * as daemonRestart from './daemon_restart';
-import * as daemonLog from './daemon_log';
-import * as clientServer from './client_server';
+import * as daemonEndpoint from './service';
+import * as daemonStdio from './service';
+import * as daemonRestart from './restart';
+import * as daemonLog from './service';
+import * as clientServer from './clients';
 import * as peers from './peers';
-import * as providerAuth from './provider_auth';
-import * as piRuntime from './pi_runtime';
+import * as providerAuth from './providers';
+import * as piRuntime from './pi';
 import * as terminals from './terminals';
 import { startLocalHost, stopLocalHost } from './local_host';
 import { resumeInterruptedTasks } from './interrupted_tasks';
-import { stopOrphanedProcesses } from './process_cleanup';
+import { stopOrphanedProcesses } from './process';
 import { loadAppSettings } from './settings';
 import { generatedExtensions, removeUnusedGeneratedExtensions } from './extensions';
 import { errorText } from './util/sync';
@@ -33,11 +33,11 @@ export function installFailureHandlers(): void {
 
 export async function runDaemon(): Promise<void> {
   const first = process.argv[2];
-  if (first === '--daemon-log-writer') return daemonLog.run();
+  if (first === '--daemon-log-writer') return daemonLog.runLogWriter();
   const special = daemonRestart.specialMode();
   if (special) return special;
   if (first === 'start' || first === 'stop') return daemonStdio.control(first);
-  if (first === '--stdio-client') return daemonStdio.run();
+  if (first === '--stdio-client') return daemonStdio.runStdioClient();
   const instance = daemonEndpoint.claim();
   try {
     daemonEndpoint.identity();

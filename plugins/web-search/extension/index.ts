@@ -3,7 +3,7 @@ import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readJson } from "../../../daemon/resources/application-records.cjs";
+import { readJson } from "../../../daemon/resources/application-records.ts";
 import { anthropic } from "./anthropic.ts";
 import { openai } from "./openai.ts";
 import type { Post, RawSource, SearchBackend } from "./interface.ts";

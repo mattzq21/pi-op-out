@@ -4,15 +4,15 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import goals from '../../daemon/resources/piop-storage/goals.cjs';
-import database from '../../daemon/resources/session-database.cjs';
+import * as goals from '../../daemon/resources/piop-storage/goals.ts';
+import { connection } from '../../daemon/resources/session-database/core.ts';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'piop-goal-sql-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'sessions'));
   const file = join(root, 'sessions', 'chat.jsonl');
-  const db = database.connection(root);
+  const db = connection(root);
   db.prepare('INSERT INTO sessions (session_id, session_path) VALUES (?, ?)').run('chat-1', file);
   return { root, file };
 }
@@ -36,7 +36,7 @@ test('goal changes and clearing are saved without transcript entries, and an ope
 test('an opened branch reads that its goal waits for the user\'s first message', t => {
   const f = fixture(t);
   setGoal(f, 'Keep the branch going');
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   db.prepare("INSERT INTO session_extension_state VALUES ('chat-1', 'piop-input-hold', ?)").run(JSON.stringify({ type: 'custom', customType: 'piop-input-hold', data: { held: true } }));
   assert.equal(goals.restore(f.file).waitingForInput, true);
 });
@@ -45,7 +45,7 @@ test('forks copy current goal with independent identity and state', t => {
   const f = fixture(t);
   const goal = setGoal(f, 'First objective');
   const target = join(f.root, 'sessions', 'fork.jsonl');
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   db.prepare('INSERT INTO sessions (session_id, session_path) VALUES (?, ?)').run('chat-2', target);
   goals.copy(f.file, target, 'chat-2');
   const fork = goals.read(target);
@@ -59,7 +59,7 @@ test('forks copy current goal with independent identity and state', t => {
 test('archive and restore keep goals; deletion removes them', t => {
   const f = fixture(t);
   const goal = setGoal(f, 'Keep working');
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   db.prepare('UPDATE sessions SET archived=1 WHERE session_id=?').run('chat-1');
   assert.deepEqual(goals.read(f.file), goal);
   db.prepare('UPDATE sessions SET archived=0 WHERE session_id=?').run('chat-1');

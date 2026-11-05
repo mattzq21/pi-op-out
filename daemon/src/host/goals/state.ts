@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { restore as restoreSaved, write as writeSaved } from '../../../resources/piop-storage/goals.cjs';
+import { restore as restoreSaved, write as writeSaved } from '../../../resources/piop-storage/goals.ts';
 import { goalChangedPrompt, goalPrompt } from './prompts';
 import { agentObjective, type GoalPlace } from './files';
 

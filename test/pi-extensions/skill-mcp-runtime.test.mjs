@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { build } from 'esbuild';
-import { installConnectionEvents, subscribeConnections } from '../../daemon/resources/mcp-connections.cjs';
+import { installConnectionEvents, subscribeConnections } from '../../daemon/resources/mcp-connections.ts';
 import { testPi } from '../pi-install.mjs';
 
 const { root } = await testPi();
