@@ -39,9 +39,9 @@ export function managedGoalReferences(value, root = sessionReferenceRoot()) {
 function goalTextContents(directory, root) {
   const info = storageFs.lstatSync(directory, { bigint: true });
   const identity = `${info.dev}:${info.ino}`;
-  const saved = storageDatabase.connection(root).prepare("SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?").get(directory, identity);
+  const saved = storageDatabase.goalTextContents(root, directory, identity);
 
-  if (saved) return JSON.parse(saved.contents_json);
+  if (saved !== undefined) return JSON.parse(saved);
   throw new Error('Goal text contents are not registered');
 }
 

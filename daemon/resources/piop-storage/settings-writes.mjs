@@ -30,10 +30,9 @@ export const OPERATIONS = {
     const path = absolutePath(request?.path);
     const next = text(request.next, "settings");
     const previous = request.previous === null ? null : text(request.previous, "settings");
-    const db = database.connection(root);
-    return database.transaction(db, "IMMEDIATE", () => {
-      if ((db.prepare("SELECT body FROM sdk_settings WHERE path=?").get(path)?.body ?? null) !== previous) return false;
-      db.prepare("INSERT INTO sdk_settings VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET body=excluded.body").run(path, next);
+    return database.transaction(root, "IMMEDIATE", () => {
+      if (database.sdkSettingBody(root, path) !== previous) return false;
+      database.saveSdkSettingBody(root, path, next);
       return true;
     });
   },
@@ -48,10 +47,9 @@ export const OPERATIONS = {
     const contents = text(request?.contents, "prompt");
     const digest = createHash("sha256").update(contents).digest("hex");
     if (request.digest !== digest) throw new Error("Saved agent prompt contents changed");
-    const db = database.connection(root);
-    database.transaction(db, "IMMEDIATE", () => {
-      db.prepare("INSERT INTO agent_prompt_snapshots VALUES (?, ?) ON CONFLICT(digest) DO UPDATE SET contents=COALESCE(agent_prompt_snapshots.contents, excluded.contents)").run(digest, contents);
-      const saved = db.prepare("SELECT contents FROM agent_prompt_snapshots WHERE digest=?").get(digest)?.contents;
+    database.transaction(root, "IMMEDIATE", () => {
+      database.saveAgentPromptSnapshot(root, digest, contents);
+      const saved = database.agentPromptSnapshot(root, digest);
       if (createHash("sha256").update(String(saved)).digest("hex") !== digest) throw new Error("Saved agent prompt contents changed");
     });
     return null;

@@ -25,9 +25,8 @@ export const OPERATIONS = {
   saveSummary: (root, request) => {
     const path = chatPath(root, request?.path);
     if (!request.value || typeof request.value !== "object") throw new Error("Invalid chat summary");
-    database.connection(root).prepare(`INSERT INTO sdk_session_summaries SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
-      ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, fingerprint=excluded.fingerprint, body=excluded.body`)
-      .run(text(request.stamp, "summary stamp"), JSON.stringify(request.value), text(request.sessionId, "session ID"), path);
+    const stamp = text(request.stamp, "summary stamp");
+    database.saveSdkSessionSummary(root, text(request.sessionId, "session ID"), path, stamp, JSON.stringify(request.value));
     return null;
   },
 };

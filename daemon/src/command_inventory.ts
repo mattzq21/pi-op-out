@@ -1,4 +1,4 @@
-import { connection } from './util/db';
+import { commandInventoryJson, saveCommandInventoryJson } from '../resources/session-database.cjs';
 import { reported } from './pi_discovery';
 
 export interface CommandOption { value: string; label: string; description?: string }
@@ -30,12 +30,12 @@ export function parseCommands(value: unknown): CommandInfo[] {
 
 // The commands that Pi last reported in the storage root, or null before the first report.
 export function savedCommands(root: string): CommandInfo[] | null {
-  const row = connection(root).prepare('SELECT entries_json FROM command_inventory WHERE id=1').get() as { entries_json: string } | undefined;
-  return row ? parseCommands(JSON.parse(row.entries_json)) : null;
+  const entries = commandInventoryJson(root);
+  return entries === undefined ? null : parseCommands(JSON.parse(entries));
 }
 
 export function recordCommands(value: unknown, root: string): void {
   const entries = JSON.stringify(parseCommands(value));
-  connection(root).prepare('INSERT INTO command_inventory VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET entries_json=excluded.entries_json').run(entries);
+  saveCommandInventoryJson(root, entries);
   reported('commands');
 }

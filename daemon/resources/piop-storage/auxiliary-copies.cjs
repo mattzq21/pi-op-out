@@ -143,15 +143,13 @@ function deliveredResults(entries) {
 const copySubagentRuns = onMainThread('auxiliary-copies.copySubagentRuns', (root, plan, parents) => {
   root = fs.realpathSync(root);
   const copiedChildren = new Map(plan.copies.filter(copy => copy.kind === 'subagent').map(copy => [copy.sourceId, copy]));
-  const db = database.connection(root);
 
-  database.transaction(db, 'IMMEDIATE', () => {
+  database.transaction(root, 'IMMEDIATE', () => {
     for (const parent of parents) {
-      const rows = db.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=? ORDER BY started_at, run_id').all(parent.sourceId);
-      const runs = rows.map(row => JSON.parse(row.run_json)).filter(run => copiedChildren.has(run.sessionId));
+      const runs = database.forkSourceSubagentRuns(root, parent.sourceId).filter(run => copiedChildren.has(run.sessionId));
 
       if (!runs.length) continue;
-      db.prepare('INSERT INTO session_subagent_state VALUES (?) ON CONFLICT(session_id) DO NOTHING').run(parent.sessionId);
+      database.markForkSubagentState(root, parent.sessionId);
 
       const results = deliveredResults(parent.entries);
 
@@ -168,8 +166,7 @@ const copySubagentRuns = onMainThread('auxiliary-copies.copySubagentRuns', (root
           delete run.resultNotificationId;
         }
 
-        db.prepare('INSERT INTO session_subagent_runs VALUES (?, ?, ?, ?) ON CONFLICT(session_id, run_id) DO UPDATE SET run_json=excluded.run_json')
-          .run(parent.sessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
+        database.saveForkSubagentRun(root, parent.sessionId, resultNotificationId(run), run.startedAt, run);
       }
     }
   });

@@ -220,7 +220,7 @@ function unregistered(root, id, target) {
 
   if (!tables.databaseExists(root)) return false;
 
-  return !tables.connection(root).prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(id, target);
+  return !tables.isRegistered(root, id, target);
 }
 
 module.exports = { uuid, headerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, holdsTransactionLock, lockName, journalPath, matches, verified, locate, unregistered };

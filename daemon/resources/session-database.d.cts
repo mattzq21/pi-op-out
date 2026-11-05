@@ -1,18 +1,29 @@
-import type { DatabaseSync } from "node:sqlite";
-
-// The shared connection of this process. Never close it.
-export type Connection = Omit<DatabaseSync, "close">;
-
-export const DATABASE_NAME: string;
-export function databaseFile(root: string): string;
+export function isDatabaseChange(name: string): boolean;
 export function databaseExists(root: string): boolean;
 export function readOnlyStorage(): void;
-export function connection(root: string): Connection;
-export function transaction<T>(database: Connection, behavior: "IMMEDIATE" | "DEFERRED" | "EXCLUSIVE", operation: () => T): T;
-export function rollback(database: Connection, error: unknown): unknown;
-export function reserveId(database: Connection): string;
-export function pending(database: Connection, work: "transaction" | "recovery" | "retention"): boolean;
-export function register(database: Connection, sessionId: string, sessionPath: string): void;
-export function storageRoot(file: string): string;
+export function transaction<T>(root: string, behavior: "IMMEDIATE" | "DEFERRED" | "EXCLUSIVE", operation: () => T): T;
+export function reserve(root: string): Promise<string> | string;
+export function reserveId(root: string): string;
+export function pending(root: string, work: "transaction" | "recovery" | "retention"): boolean;
+export function bind(root: string, sessionId: string, sessionPath: string): void;
+export function register(root: string, sessionId: string, sessionPath: string): void;
+export function isRegistered(root: string, sessionId: string, sessionPath: string): boolean;
+export function movePaths(root: string, moves: Array<{ source: string; destination: string }>): unknown;
 export function lookup(root: string, sessionId: string): string | null | undefined;
+export function paths(root: string, directory?: string): string[];
+export function storageRoot(file: string): string;
+export function publication(root: string, id: string): any;
+export function savePublication(root: string, id: string, record: unknown): unknown;
+export function removePublication(root: string, id: string): unknown;
+export function publications(root: string): string[];
 export function markCleanup(root: string, kind: "goal"): void;
+export function cleanupRequest(root: string, kind: string): number | undefined;
+export function finishCleanup(root: string, kind: string, revision: number): unknown;
+export function recoveryRecords(root: string): Array<{ record_id: string; record_json: string }>;
+export function saveRecoveryRecord(root: string, record: { id: string }, reserve?: boolean): unknown;
+export * from "./session-database/registry.cjs";
+export * from "./session-database/storage.cjs";
+export * from "./session-database/goals.cjs";
+export * from "./session-database/queue.cjs";
+export * from "./session-database/transcripts.cjs";
+export * from "./session-database/settings.cjs";

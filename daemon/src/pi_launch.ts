@@ -7,9 +7,8 @@ import { installedPi } from './pi_install';
 import * as Ext from './extensions';
 import * as Contributions from './plugin_contributions';
 import { ensureDesktopSessionsDir, shellQuote } from './process_io';
-import * as Registry from './session_registry';
 import { validateRemoteHost, type AppSettings } from './settings_types';
-import { transaction } from './util/db';
+import * as SessionTables from '../resources/session-database.cjs';
 import type { BrokerRuntime } from './broker';
 import { QUEUE_TOOLS } from './host/goals/commands';
 
@@ -72,28 +71,23 @@ function startsWithPath(path: string, root: string): boolean { return path === r
 
 export function localRegisteredIdentity(path: string): string | undefined {
   const root = join(homeDir(), STORAGE_DIRECTORY);
-  const database = Registry.connection(root);
-  const row = database.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
-  const id = row?.session_id ?? undefined;
+  const id = SessionTables.sessionIdByPath(root, path);
   const canonicalRoot = realpathSync(root);
   if (!id && [root, canonicalRoot].some(directory => ['sessions', 'archived'].some(area => startsWithPath(path, join(directory, area))))) {
     throw new Error('Session path is not registered');
   }
   if (id) return id;
-  return localExternalIdentity(database, path);
+  return localExternalIdentity(root, path);
 }
 
-function localExternalIdentity(database: ReturnType<typeof Registry.connection>, path: string): string | undefined {
-  return transaction(database, 'IMMEDIATE', () => {
+function localExternalIdentity(root: string, path: string): string | undefined {
+  return SessionTables.transaction(root, 'IMMEDIATE', () => {
     const key = createHash('sha256').update(path).digest('hex');
-    const row = database.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?").get(key, path) as { id: string | null } | undefined;
-    if (!row) return undefined;
-    if (row.id === null) {
-      const id = importExternalIdentity(path);
-      database.prepare("UPDATE external_transcripts SET record_json=json_set(record_json, '$.sessionId', ?) WHERE record_id=?").run(id, key);
-      return id;
-    }
-    return row.id;
+    const saved = SessionTables.externalTranscriptIdentity(root, key, path);
+    if (saved !== null) return saved;
+    const id = importExternalIdentity(path);
+    SessionTables.setExternalTranscriptIdentity(root, key, id);
+    return id;
   });
 }
 

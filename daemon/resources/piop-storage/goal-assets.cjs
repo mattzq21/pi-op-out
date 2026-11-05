@@ -317,48 +317,44 @@ function discardPreparation(root, directory, sessionId) {
 function reclamationKey(directory) { return createHash('sha256').update(directory).digest('hex'); }
 
 function reclamationPending(root, directory) {
-  return Boolean(require('../session-database.cjs').connection(root).prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(reclamationKey(directory)));
+  return require('../session-database.cjs').goalReclamation(root, reclamationKey(directory)) !== undefined;
 }
 
-function removeRecoveryRecords(database, directory, expected) {
-  const rows = database.prepare("SELECT directory, record_json FROM goal_directory_recoveries WHERE json_extract(record_json, '$.staging')=? AND json_extract(record_json, '$.current')=?").all(directory, expected);
-
-  for (const row of rows) {
+function removeRecoveryRecords(database, root, directory, expected) {
+  for (const row of database.goalRecoveriesStagedIn(root, directory, expected)) {
     if (exists(row.directory)) continue;
-    database.prepare('DELETE FROM goal_directory_recoveries WHERE directory=? AND record_json=?').run(row.directory, row.record_json);
+    database.removeGoalDirectoryRecovery(root, row.directory, row.record_json);
   }
 }
 
-function removeDirectoryRecords(database, directory, expected) {
+function removeDirectoryRecords(database, root, directory, expected) {
   if (exists(directory)) return;
 
-  for (const table of ['goal_asset_dependencies', 'goal_text_files', 'goal_text_contents', 'goal_preparations', 'goal_ownership']) {
-    database.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
-  }
-
-  database.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
-  removeRecoveryRecords(database, directory, expected);
+  database.removeGoalDependency(root, directory, expected);
+  database.removeGoalTexts(root, directory, expected);
+  database.removeGoalPreparation(root, directory, expected);
+  database.removeGoalOwnership(root, directory, expected);
+  removeRecoveryRecords(database, root, directory, expected);
 }
 
 const updateReclamation = onMainThread('goal-assets.updateReclamation', (root, directory, expected, removing) => {
-  const tables = require('../session-database.cjs');
-  const database = tables.connection(root);
+  const database = require('../session-database.cjs');
   const key = reclamationKey(directory);
 
-  tables.transaction(database, 'IMMEDIATE', () => {
-    const row = database.prepare('SELECT record_json FROM goal_asset_reclamations WHERE record_id=?').get(key);
+  database.transaction(root, 'IMMEDIATE', () => {
+    const text = database.goalReclamation(root, key);
 
-    if (row) {
-      const record = JSON.parse(row.record_json);
+    if (text !== undefined) {
+      const record = JSON.parse(text);
 
       if (record.path !== directory || record.identity !== expected) throw new Error(`Ambiguous goal reclamation retained: ${directory}`);
     }
 
     if (removing) {
-      removeDirectoryRecords(database, directory, expected);
-      database.prepare('DELETE FROM goal_asset_reclamations WHERE record_id=?').run(key);
+      removeDirectoryRecords(database, root, directory, expected);
+      database.removeGoalReclamation(root, key);
     }
-    else if (!row) database.prepare('INSERT INTO goal_asset_reclamations VALUES (?, ?)').run(key, JSON.stringify({ path: directory, identity: expected }));
+    else if (text === undefined) database.saveGoalReclamation(root, key, { path: directory, identity: expected });
   });
 });
 

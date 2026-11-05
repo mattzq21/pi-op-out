@@ -78,30 +78,24 @@ const recordRetention = onMainThread('retention-candidates.recordRetention', (ro
   const file = path.join(directory, id + '.json');
   const origin = createHash('sha256').update(JSON.stringify(pending)).digest('hex');
 
-  const database = tables.connection(root);
+  tables.transaction(root, 'IMMEDIATE', () => {
+    const previous = tables.retentionCandidateBody(root, id);
 
-  tables.transaction(database, 'IMMEDIATE', () => {
-    const previous = database.prepare('SELECT record_json FROM retention_candidates WHERE record_id=?').get(id);
-
-    if (previous) {
-      if (readRecord(root, file, previous.record_json).origin !== origin) throw new Error('Deferred retention identity was reused');
-    } else {
-      database.prepare('INSERT INTO retention_candidates VALUES (?, ?, ?)')
-        .run(id, JSON.stringify({ version: 1, id, origin, pending }), Date.now());
-    }
+    if (previous !== undefined) {
+      if (readRecord(root, file, previous).origin !== origin) throw new Error('Deferred retention identity was reused');
+    } else tables.insertRetentionCandidate(root, id, JSON.stringify({ version: 1, id, origin, pending }));
   });
 });
 
 const retryLater = onMainThread('retention-candidates.retryLater', (root, id) => {
-  tables.connection(root).prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), id);
+  tables.delayRetentionCandidate(root, id);
 });
 
 function pendingRetentions(root, limit = 8) {
   const directory = storage(root);
-  const database = tables.connection(root);
   const records = [];
   const errors = [];
-  const selected = database.prepare('SELECT record_id, record_json FROM retention_candidates ORDER BY retry_at, record_id LIMIT ?').all(limit);
+  const selected = tables.dueRetentionCandidates(root, limit);
 
   for (const row of selected) {
     const file = path.join(directory, row.record_id + '.json');
@@ -177,10 +171,9 @@ function goalStorageProtected(record, candidate, file) {
 
 const finishRecord = onMainThread('retention-candidates.finishRecord', (record, done) => {
   const root = path.dirname(path.dirname(record.file));
-  const database = tables.connection(root);
 
-  if (done) database.prepare('DELETE FROM retention_candidates WHERE record_id=?').run(record.id);
-  else database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), record.id);
+  if (done) tables.removeRetentionCandidate(root, record.id);
+  else tables.delayRetentionCandidate(root, record.id);
 });
 
 module.exports = { validateRetention, describeCandidates, recordRetention, pendingRetentions, cleanupStages, matches, removeCandidate, finishRecord };

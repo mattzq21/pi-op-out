@@ -11,44 +11,36 @@ function validate(goal) {
 }
 
 function access(file, sessionId, operation) {
-  const db = database.connection(database.storageRoot(file));
-  const row = sessionId
-    ? db.prepare('SELECT session_id FROM sessions WHERE session_id=? AND session_path=?').get(sessionId, file)
-    : db.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(file);
-  if (!row) throw new Error('Goal storage requires a registered conversation');
-  return operation(db, row.session_id);
+  const root = database.storageRoot(file);
+  const id = database.goalSessionId(root, file, sessionId);
+  if (!id) throw new Error('Goal storage requires a registered conversation');
+  return operation(root, id);
 }
 
 function read(file, sessionId) {
-  return access(file, sessionId, (db, id) => {
-    const row = db.prepare('SELECT goal_id AS id, session_id AS sessionId, objective, status FROM session_goals WHERE session_id=?').get(id);
-    const goal = row ? { ...row } : null;
+  return access(file, sessionId, (root, id) => {
+    const goal = database.sessionGoal(root, id);
     validate(goal);
     return goal;
   });
 }
 
 function restore(file) {
-  const db = database.connection(database.storageRoot(file));
-  const row = db.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(file);
-  if (!row) return { goal: null, waitingForInput: false };
-  const saved = db.prepare('SELECT goal_id AS id, session_id AS sessionId, objective, status FROM session_goals WHERE session_id=?').get(row.session_id);
-  const goal = saved ? { ...saved } : null;
+  const root = database.storageRoot(file);
+  const id = database.goalSessionId(root, file);
+  if (!id) return { goal: null, waitingForInput: false };
+  const goal = database.sessionGoal(root, id);
   validate(goal);
-  const hold = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-input-hold'").get(row.session_id);
-  return { goal, waitingForInput: hold ? JSON.parse(hold.entry_json)?.data?.held === true : false };
+  const hold = database.goalInputHold(root, id);
+  return { goal, waitingForInput: hold ? JSON.parse(hold)?.data?.held === true : false };
 }
 
 const write = onMainThread('goals.write', (file, sessionId, goal) => {
   validate(goal);
   if (goal && goal.sessionId !== sessionId) throw new Error('Goal belongs to another conversation');
-  access(file, sessionId, (db, id) => {
-    if (!goal) db.prepare('DELETE FROM session_goals WHERE session_id=?').run(id);
-    else database.transaction(db, 'IMMEDIATE', () => {
-      db.prepare('INSERT INTO session_goal_ids VALUES (?, ?) ON CONFLICT(goal_id) DO NOTHING').run(goal.id, id);
-      if (db.prepare('SELECT session_id FROM session_goal_ids WHERE goal_id=?').get(goal.id).session_id !== id) throw new Error('Goal identity belongs to another conversation');
-      db.prepare(`INSERT INTO session_goals VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET goal_id=excluded.goal_id, objective=excluded.objective, status=excluded.status`).run(id, goal.id, goal.objective, goal.status);
-    });
+  access(file, sessionId, (root, id) => {
+    if (!goal) database.removeSessionGoal(root, id);
+    else database.saveSessionGoal(root, id, goal);
   });
 });
 

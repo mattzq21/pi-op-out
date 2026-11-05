@@ -27,28 +27,24 @@ function checked(body) {
 
 function readRecord(root, recordKey) {
   validKey(recordKey);
-  const body = database.connection(root).prepare('SELECT record_json FROM conversation_ownership WHERE record_id=?').get(recordKey)?.record_json;
+  const body = database.conversationOwnershipBody(root, recordKey);
 
   return body === undefined ? null : checked(body);
 }
 
 const writeRecord = onMainThread('conversation-storage.writeRecord', (root, recordKey, body) => {
   validKey(recordKey);
-  database.connection(root).prepare('INSERT INTO conversation_ownership VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json').run(recordKey, checked(body));
+  database.saveConversationOwnership(root, recordKey, checked(body));
 });
-
-function forgetKey(db, recordKey) { db.prepare('DELETE FROM conversation_ownership WHERE record_id=?').run(recordKey); }
 
 const removeRecord = onMainThread('conversation-storage.removeRecord', (root, recordKey) => {
   validKey(recordKey);
-  forgetKey(database.connection(root), recordKey);
+  database.removeConversationOwnership(root, recordKey);
 });
-
-function forget(db, sessionId) { forgetKey(db, key(sessionId)); }
 
 // The ownership record of the conversation sessionId, or null.
 function read(root, sessionId) { return readRecord(root, key(sessionId)); }
 
 function write(root, sessionId, body) { writeRecord(root, key(sessionId), body); }
 
-module.exports = { key, readRecord, writeRecord, removeRecord, forget, read, write };
+module.exports = { key, readRecord, writeRecord, removeRecord, read, write };

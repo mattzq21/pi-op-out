@@ -54,10 +54,10 @@ test('a Pi reads the database that the daemon made, a write that skips the daemo
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const database = fileURLToPath(new URL('../../daemon/resources/session-database.cjs', import.meta.url));
+  const database = fileURLToPath(new URL('../../daemon/resources/session-database/core.cjs', import.meta.url));
   const root = mkdtempSync(join(tmpdir(), 'piop-read-only-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const { connection } = (await import('../../daemon/resources/session-database.cjs')).default;
+  const { connection } = (await import('../../daemon/resources/session-database/core.cjs')).default;
   connection(root).prepare("INSERT INTO application_settings (name, body) VALUES ('daemon', 'saved')").run();
   const { code, output } = await run(`
     const db = require(${JSON.stringify(database)}).connection(${JSON.stringify(root)});

@@ -19,6 +19,7 @@ beforeAll(async () => {
     history: await import('../../daemon/src/chat_branch_history'),
     publication: require('../../daemon/resources/piop-storage/session-publication.cjs'),
     database: require('../../daemon/resources/session-database.cjs'),
+    core: require('../../daemon/resources/session-database/core.cjs'),
     assets: require('../../daemon/resources/piop-storage/goal-assets.cjs'),
     dependencies: require('../../daemon/resources/piop-storage/goal-dependencies.cjs'),
     goals: require('../../daemon/resources/piop-storage/goals.cjs'),
@@ -73,12 +74,11 @@ async function deleteChat(path: string) {
 function owners(directory: string) { return modules.assets.readOwners(root, directory).owners.map((owner: any) => owner.sessionId).sort(); }
 
 function registered(id: string) {
-  const db = modules.database.connection(root);
-  return db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id)?.session_path;
+  return modules.database.lookup(root, id);
 }
 
 function leftovers(id: string, path: string) {
-  const db = modules.database.connection(root);
+  const db = modules.core.connection(root);
   return {
     transcript: existsSync(path),
     registry: Boolean(db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(id)),
@@ -122,13 +122,13 @@ test('a branch copies history through the selected final response, current setti
 test('a publication that fails after claiming resources removes everything it created', async () => {
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
-  const db = modules.database.connection(root);
+  const db = modules.core.connection(root);
   db.exec("CREATE TRIGGER reject_branch_state BEFORE INSERT ON auxiliary_child_state WHEN NEW.session_id='" + sessionId + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
   try {
     await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a3' }))
       .rejects.toThrow(/Could not create the branch: Index write failed/);
   } finally {
-    const cleanup = modules.database.connection(root);
+    const cleanup = modules.core.connection(root);
     cleanup.exec('DROP TRIGGER reject_branch_state');
   }
   const files = readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId));
@@ -173,13 +173,13 @@ test('shared attachments stay while the branch exists after its source is delete
 test('a publication that saves the transcript but cannot finish is removed', async () => {
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
-  const db = modules.database.connection(root);
+  const db = modules.core.connection(root);
   db.exec("CREATE TRIGGER keep_branch_publication BEFORE DELETE ON session_publications WHEN json_extract(OLD.record_json, '$.sessionId')='" + sessionId + "' AND json_extract(OLD.record_json, '$.phase')='linked' BEGIN SELECT RAISE(ABORT, 'Retirement failed'); END");
   try {
     await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' }))
       .rejects.toThrow(/Session was published; durability or cleanup will retry[\s\S]*Cleanup failed: Branch cleanup is incomplete/);
   } finally {
-    const cleanup = modules.database.connection(root);
+    const cleanup = modules.core.connection(root);
     cleanup.exec('DROP TRIGGER keep_branch_publication');
   }
   await modules.history.discardBranchHistory(root, sessionId, null);

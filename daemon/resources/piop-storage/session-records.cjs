@@ -46,10 +46,10 @@ function history(entries, current = isSetting) {
 function stored(entries) { return history(entries).filter(entry => entry.type !== 'custom'); }
 
 function transaction(file, sessionId, operation) {
-  const db = database.connection(database.storageRoot(file));
-  return database.transaction(db, 'IMMEDIATE', () => {
-    database.register(db, sessionId, file);
-    return operation(db);
+  const root = database.storageRoot(file);
+  return database.transaction(root, 'IMMEDIATE', () => {
+    database.register(root, sessionId, file);
+    return operation(root);
   });
 }
 
@@ -65,16 +65,14 @@ function capture(entries) {
 }
 
 const seed = onMainThread('session-records.seed', (file, sessionId, records) => {
-  transaction(file, sessionId, db => {
-    const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
-    const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
+  transaction(file, sessionId, root => {
     for (const { after, entry } of records) {
       if (typeof entry.id !== 'string' || !validRecord(entry)) throw new Error('Invalid session state record');
-      if (isCurrent(entry)) { setCurrent(db, sessionId, entry); continue; }
+      if (isCurrent(entry)) { setCurrent(root, sessionId, entry); continue; }
       const json = JSON.stringify(entry);
-      const saved = previous.get(sessionId, entry.id);
+      const saved = database.sessionStateRecord(root, sessionId, entry.id);
       if (saved && (saved.entry_json !== json || saved.after_id !== after)) throw new Error('Session state record identity was reused');
-      insert.run(sessionId, entry.id, after, json);
+      database.seedSessionStateRecord(root, sessionId, entry.id, after, json);
     }
   });
 });
@@ -87,34 +85,30 @@ function save(file, entries) {
 
 const append = onMainThread('session-records.append', (file, sessionId, after, entry) => {
   if (!validRecord(entry)) throw new Error('Invalid session state record');
-  transaction(file, sessionId, db => {
-    if (isCurrent(entry)) { setCurrent(db, sessionId, entry); return; }
-    db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?)').run(sessionId, entry.id, after, JSON.stringify(entry));
+  transaction(file, sessionId, root => {
+    if (isCurrent(entry)) { setCurrent(root, sessionId, entry); return; }
+    database.appendSessionStateRecord(root, sessionId, entry.id, after, JSON.stringify(entry));
   });
 });
 
-function records(file, sessionId, connection) {
-  const db = connection ?? database.connection(database.storageRoot(file));
-  const history = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? ORDER BY sequence').all(sessionId)
-    .map(row => ({ after: row.after_id, entry: JSON.parse(row.entry_json) }));
-  const current = db.prepare('SELECT entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId)
-    .map(row => ({ after: null, entry: JSON.parse(row.entry_json) }));
+function records(file, sessionId) {
+  const root = database.storageRoot(file);
+  const history = database.sessionStateRecords(root, sessionId).map(row => ({ after: row.after_id, entry: JSON.parse(row.entry_json) }));
+  const current = database.currentSessionStates(root, sessionId).map(row => ({ after: null, entry: JSON.parse(row.entry_json) }));
   return [...current, ...history];
 }
 
-function setCurrent(db, sessionId, entry) {
-  const saved = { ...entry, parentId: null };
-  db.prepare(`INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)
-    ON CONFLICT(session_id, state_key) DO UPDATE SET entry_json=excluded.entry_json`).run(sessionId, stateKey(entry), JSON.stringify(saved));
+function setCurrent(root, sessionId, entry) {
+  database.saveCurrentSessionState(root, sessionId, stateKey(entry), JSON.stringify({ ...entry, parentId: null }));
 }
 
-function merge(file, entries, connection) {
+function merge(file, entries) {
   entries = history(entries, entry => nativeKeys.has(entry.type) || isName(entry));
   const header = entries[0];
   if (header?.type !== 'session') throw new Error('Session state requires its conversation header');
   const known = new Set(entries.map(entry => entry.id));
   const groups = new Map();
-  for (const record of records(file, header.id, connection)) {
+  for (const record of records(file, header.id)) {
     if (known.has(record.entry.id)) continue;
     if (record.after !== null && !known.has(record.after)) continue;
     const group = groups.get(record.after) ?? [];
@@ -125,23 +119,20 @@ function merge(file, entries, connection) {
 }
 
 const selectBranch = onMainThread('session-records.selectBranch', (file, sessionId, tipId, leafId) => {
-  transaction(file, sessionId, db => {
-    db.prepare(`INSERT INTO session_branch_selection (session_id, tip_id, leaf_id) VALUES (?, ?, ?)
-      ON CONFLICT(session_id) DO UPDATE SET tip_id=excluded.tip_id, leaf_id=excluded.leaf_id`).run(sessionId, tipId, leafId);
-  });
+  transaction(file, sessionId, root => database.saveBranchSelection(root, sessionId, tipId, leafId));
 });
 
 function selectedLeaf(file, sessionId, tipId) {
-  const row = database.connection(database.storageRoot(file)).prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
+  const row = database.branchSelection(database.storageRoot(file), sessionId);
   return row && row.tip_id === tipId ? row.leaf_id : tipId;
 }
 
 function revision(file, sessionId) {
-  const db = database.connection(database.storageRoot(file));
-  const sequence = db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision;
-  const current = db.prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId);
-  const branch = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
-  const name = names.nameOf(db, sessionId);
+  const root = database.storageRoot(file);
+  const sequence = database.sessionStateSequence(root, sessionId);
+  const current = database.currentSessionStates(root, sessionId);
+  const branch = database.branchSelection(root, sessionId);
+  const name = names.sessionName(file, sessionId);
   return sequence + ':' + createHash('sha256').update(JSON.stringify({ current, branch, name })).digest('hex');
 }
 
