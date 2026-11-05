@@ -44,7 +44,7 @@ export function createTranscriptCache(background: (transport: NativeTransport) =
     return entry;
   };
 
-  onCleanup(() => { for (const transport of [...entries.keys()]) drop(transport); });
+  onCleanup(() => { for (const transport of entries.keys()) drop(transport); });
 
   return {
     take(transport, draw) { create = draw; const entry = use(transport, draw); entry.users++; trim(); return entry.transcript; },

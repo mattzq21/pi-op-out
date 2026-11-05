@@ -1,7 +1,7 @@
 import type { ChatMessage } from "../types";
 import { z } from "zod";
 
-const INVISIBLE_CHARS = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
+const INVISIBLE_CHARS = /[\u200B\u200C\u2060\uFEFF]|\u200D/g;
 
 export function stripInvisible(value: string) {
   return value.replace(INVISIBLE_CHARS, "");

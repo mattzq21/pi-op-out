@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { createDependencyEffect, createRef, cssPixels, type JSXElement } from "../lib/solid";
 import type { Accessor } from "solid-js";
 
@@ -34,7 +34,7 @@ function observeTurn(root: Element, element: Element, reveal: () => void) {
 
 export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: Accessor<HTMLElement | null | undefined>; eager: boolean; navigationId?: string }) {
   const element = createRef<HTMLDivElement>(null);
-  const [revealed, setRevealed] = createSignal(componentProps.eager);
+  const [revealed, setRevealed] = createSignal(untrack(() => componentProps.eager));
   const [searching, setSearching] = createSignal(false);
   createDependencyEffect(() => {
     const target = element.current;

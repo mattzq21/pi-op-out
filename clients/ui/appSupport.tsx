@@ -78,7 +78,7 @@ function usageWindowsDescription(usage: OpencodeGoUsage): string {
 }
 
 function LimitBadge(componentProps: { label: string; provider: UsageProvider; detail?: string; remainingPercent: number; resetAt?: number; clock?: number; stale?: string; refreshing: boolean; onRefresh: () => void }) {
-  const resetLabel = () => { componentProps.clock;
+  const resetLabel = () => { void componentProps.clock;
 
   return componentProps.resetAt ? formatCodexReset(componentProps.resetAt) : ""; };
 

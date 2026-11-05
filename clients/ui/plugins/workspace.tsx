@@ -59,7 +59,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>) {
   const reconnected = listen("pi://event", ({ payload }) => {
     if (payload.type !== "connection_restored") return;
 
-    for (const target of hosts()) void refreshPlugins(target).catch(reason => setPluginError(target, (reason instanceof Error ? reason.message : String(reason))));
+    for (const target of untrack(hosts)) void refreshPlugins(target).catch(reason => setPluginError(target, (reason instanceof Error ? reason.message : String(reason))));
   }, z.object({ type: z.string().optional() }).passthrough());
 
   onCleanup(() => { void reconnected.then(stop => stop()); });

@@ -5,6 +5,7 @@ import { Check, Save, X } from "lucide-solid";
 import type { AgentProfile, AppSettings, Model, RpcEvent, SessionSummary } from "../types";
 import type { SessionRuntimePool } from "../lib/sessionRuntimePool";
 import { modelSchema } from "../lib/responseSchemas";
+import { createDependencyEffect } from "../lib/solid";
 import { agentProfileSchema } from "../lib/agentSchemas";
 import { DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
 import { hostFastModels, rejectsFastMode } from "../lib/fastModels";
@@ -18,9 +19,11 @@ type ChatAgent = { agent: AgentProfile; systemPrompt: string; agentPrompt: strin
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 
 export function ChatAgentPane(props: { session: SessionSummary; runtimePool: SessionRuntimePool; settings: AppSettings; agentNames: string[]; onActivate: () => void }) {
-  const transport = props.runtimePool.forSession(props.session);
-  const releaseHold = props.runtimePool.hold(transport);
-  const hostId = props.session.hostId ?? "local";
+  const { runtimePool, transport, releaseHold, hostId } = untrack(() => {
+    const transport = props.runtimePool.forSession(props.session);
+
+    return { runtimePool: props.runtimePool, transport, releaseHold: props.runtimePool.hold(transport), hostId: props.session.hostId ?? "local" };
+  });
   const [saved, setSaved] = createSignal<ChatAgent>();
   const [draft, setDraft] = createSignal<ChatAgent>();
   const [hostSettings, setHostSettings] = createSignal<AppSettings>();
@@ -72,13 +75,14 @@ export function ChatAgentPane(props: { session: SessionSummary; runtimePool: Ses
   };
 
   const reload = () => void load(true).catch(reason => setError(`Could not load the agent of this conversation: ${errorText(reason)}`));
-  reload();
 
-  const stop = transport.subscribe((event: RpcEvent) => {
-    if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === DEFINED_AGENTS_STATUS_KEY) { if (!applying()) reload(); }
-  });
+  const [agentsChanged, setAgentsChanged] = createSignal(0);
+  createDependencyEffect(() => transport.subscribe((event: RpcEvent) => {
+    if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === DEFINED_AGENTS_STATUS_KEY) setAgentsChanged(value => value + 1);
+  }), () => []);
+  createDependencyEffect(() => { if (!applying()) reload(); }, () => [agentsChanged()]);
 
-  onCleanup(() => { stop(); releaseHold(); props.runtimePool.detachIdle(transport, () => true); });
+  onCleanup(() => { releaseHold(); runtimePool.detachIdle(transport, () => true); });
 
   const update = (value: Partial<ChatAgent>) => setDraft(current => current && { ...current, ...value });
   const updateAgent = (value: Partial<AgentProfile>) => setDraft(current => current && { ...current, agent: { ...current.agent, ...value } });

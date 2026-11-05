@@ -100,6 +100,7 @@ export function createSidepaneTabs(options: Options) {
   const tabs = createMemo<SidepaneTab[]>(() => [...agents().filter(tab => tab.kind !== "subagent" || pinned().has(tab.key)), ...agentSettingsTabs()]);
 
   const selected = createMemo(() => tabs().find(tab => tab.key === selectedKey()) ?? tabs()[0]);
+  const working = createMemo(() => tabs().some(tab => tab.running));
   const shown = () => open() && tabs().length > 0;
   const show = (key: string) => { setSelectedKey(key); setOpen(true); };
 
@@ -136,7 +137,7 @@ export function createSidepaneTabs(options: Options) {
 
       return options.sessions().some(item => (item.hostId ?? "local") === host && tree.includes(item.id) && options.running(item)) || options.running(session);
     },
-    working: createMemo(() => tabs().some(tab => tab.running)),
+    working,
     select: setSelectedKey,
     openSubagent: (target: SubagentTarget) => {
       const listed = options.sessions().find(session => session.id === target.sessionId && (session.hostId ?? "local") === target.hostId);

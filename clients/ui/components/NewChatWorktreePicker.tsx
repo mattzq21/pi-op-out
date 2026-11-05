@@ -1,4 +1,4 @@
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, untrack } from "solid-js";
 import { ChevronDown, FolderGit2, GitBranch, GitFork } from "lucide-solid";
 import { ContainedPicker } from "./Composer";
 
@@ -8,8 +8,8 @@ export function NewChatWorktreePicker(props: {
   disabled?: boolean;
   onChange: (branch?: string) => void;
 }) {
-  const [mode, setMode] = createSignal(props.value === undefined ? "main" : "new");
-  const [branch, setBranch] = createSignal(props.value ?? props.options.defaultBranch ?? props.options.branches[0] ?? "");
+  const [mode, setMode] = createSignal(untrack(() => props.value === undefined ? "main" : "new"));
+  const [branch, setBranch] = createSignal(untrack(() => props.value ?? props.options.defaultBranch ?? props.options.branches[0] ?? ""));
 
   return <div class="worktree-picker" data-mode={mode()}>
     <ContainedPicker label="Worktree" value={mode()} disabled={props.disabled} anchorLeft menuMinWidth={220} icon={<>{mode() === "main" ? <FolderGit2 size={14} /> : <GitFork size={14} />}<span>{mode() === "main" ? "Main worktree" : "New worktree"}</span><ChevronDown size={12} class="worktree-picker-chevron" aria-hidden="true" /></>} options={[

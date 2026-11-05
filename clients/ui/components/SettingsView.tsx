@@ -68,12 +68,6 @@ const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 
 const firstAgentIndex = (agents: AgentProfile[]) => agents.length ? 0 : -1;
 
-function firstValidationError(checks: Array<() => string | undefined>) {
-  for (const check of checks) { const error = check();
-
-  if (error) return error; }
-}
-
 function mergeSettingsDraft(incoming: AppSettings, baseline: AppSettings, local: AppSettings) {
   const preferenceMerge = mergeClientPreferences(clientPreferences(incoming), clientPreferences(baseline), clientPreferences(local));
   const merged = applyClientPreferences(incoming, preferenceMerge.preferences);
@@ -104,6 +98,17 @@ function settingsViewDefaults({ selectedSection, embedded = false, resourceError
   return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, inheritedAgents, agentScopes, agentScope, onAgentScope, onMoveAgent, sessions, models, loadingModels, onSave, onDirtyChange };
 }
 
+function rankModelChoices<T extends { id: string; name: string }>(modelChoices: T[], words: string[], hiddenModels: Set<string>, aliases: Record<string, string>) {
+  const rank = (id: string) => Number(hiddenModels.has(id)) * 2 + Number(!aliases[id]);
+
+  return modelChoices
+    .filter((model) => {
+      const text = `${aliases[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase();
+      return words.every((word) => text.includes(word));
+    })
+    .sort((left, right) => rank(left.id) - rank(right.id));
+}
+
 export function SettingsView(props: SettingsViewProps) {
   const settingsFields = createMemoFields(() => settingsViewDefaults(props));
   const settingsProps = () => settingsFields;
@@ -120,7 +125,10 @@ export function SettingsView(props: SettingsViewProps) {
   const capabilitiesBeforeSave = createRef({ configuration: settingsProps().incomingConfiguration });
   createComputed(() => { if (!saving()) capabilitiesBeforeSave.current = { configuration: settingsProps().incomingConfiguration }; });
   const agentConfig = createMemo(() => (saving() ? capabilitiesBeforeSave.current.configuration : settingsProps().incomingConfiguration));
-  const [draft, setDraft] = createSignal((() => structuredClone(settingsProps().settings))()); const [agentDrafts, setAgentDrafts] = createSignal((() => structuredClone(agentConfig()?.agents ?? []))()); const [agentIndex, setAgentIndex] = createSignal((() => firstAgentIndex(agentConfig()?.agents ?? []))()); const [section, setSection] = createSignal<Section>(settingsProps().scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
+  const [draft, setDraft] = createSignal(untrack(() => structuredClone(settingsProps().settings)));
+  const [agentDrafts, setAgentDrafts] = createSignal(untrack(() => structuredClone(agentConfig()?.agents ?? [])));
+  const [agentIndex, setAgentIndex] = createSignal(untrack(() => firstAgentIndex(agentConfig()?.agents ?? [])));
+  const [section, setSection] = createSignal<Section>(untrack(() => settingsProps().scope === "client" ? "keybinds" : "general")); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
   const retainedSaveError = createRef(false);
   createEffect(() => { const host = settingsProps().providerHostId ?? "local";
 
@@ -238,7 +246,7 @@ export function SettingsView(props: SettingsViewProps) {
     applyIncomingAgents(capturedAgentConfig);
   }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot(), saving()]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
-  const [contextWindowCapText, setContextWindowCapText] = createSignal(String(draft().contextWindowCap));
+  const [contextWindowCapText, setContextWindowCapText] = createSignal(untrack(() => String(draft().contextWindowCap)));
   createComputed(() => { const value = draft().contextWindowCap; if (Number(untrack(contextWindowCapText)) !== value) setContextWindowCapText(String(value)); });
   const [capErrors, setCapErrors] = createSignal<Record<string, string>>({});
 
@@ -278,7 +286,7 @@ export function SettingsView(props: SettingsViewProps) {
     setSaveError(reason.message);
   };
 
-  const nextAgentSuffixRef = createRef(agentDrafts().length);
+  const nextAgentSuffixRef = createRef(untrack(() => agentDrafts().length));
   const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), enabled: true, name: "New host", target: "", piPath: "piopd" }] }));
   const updateHost = (id: string, value: Partial<RemoteHost>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host) => host.id === id ? { ...host, ...value } : host) }));
   const [hostToRemove, setHostToRemove] = createSignal<RemoteHost>();
@@ -356,7 +364,7 @@ export function SettingsView(props: SettingsViewProps) {
   const modelCatalog = createMemo(() => {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));
     const hiddenModels = new Set(draft().hiddenModels);
-    const modelChoices = [...settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: (model.name || model.id), contextWindow: model.contextWindow }))];
+    const modelChoices = settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: (model.name || model.id), contextWindow: model.contextWindow }));
 
     return { availableModelIds, hiddenModels, modelChoices };
   });
@@ -364,15 +372,8 @@ export function SettingsView(props: SettingsViewProps) {
   const filteredModelChoices = createMemo(() => {
     const words = modelFilter().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     const { modelChoices, hiddenModels } = modelCatalog();
-    const aliases = baselineValue().modelAliases ?? {};
-    const rank = (id: string) => Number(hiddenModels.has(id)) * 2 + Number(!aliases[id]);
 
-    return modelChoices
-      .filter((model) => {
-        const text = `${aliases[model.id] ?? ""} ${model.name} ${model.id}`.toLocaleLowerCase();
-        return words.every((word) => text.includes(word));
-      })
-      .sort((left, right) => rank(left.id) - rank(right.id));
+    return rankModelChoices(modelChoices, words, hiddenModels, baselineValue().modelAliases ?? {});
   });
 
   const validateAgentResources = () => {
@@ -432,26 +433,26 @@ export function SettingsView(props: SettingsViewProps) {
 
   const nameValidation = createMemo(() => (validateSettingsNames()));
 
-  const validationError = createMemo(() => (firstValidationError([
-    () => mcpError(),
-    () => agentValidation().defaultAgentValid ? undefined : "Pick one default agent",
-    () => nameValidation().contextWindowValid ? undefined : capRangeError(draft().contextWindowCap, "General context cap"),
-    () => Object.entries(capErrors()).map(([label, error]) => label + ": " + error)[0],
-    () => draft().hosts.length > 16 ? "At most 16 remote hosts can be configured" : undefined,
-    () => nameValidation().reservedLocalHostName ? "The host name “Local” is reserved for this host" : undefined,
-    () => nameValidation().duplicateHostNames.size ? `Host name “${[...nameValidation().duplicateHostNames][0]}” is used more than once` : undefined,
-    () => agentValidation().invalidHost ? `${required((agentValidation().invalidHost)).name.trim() || "Host"}: name, SSH target, and Pi executable are required` : undefined,
-    () => shortcutValidation().error,
-    () => shortcutValidation().duplicateShortcuts.size ? `Shortcut “${[...shortcutValidation().duplicateShortcuts][0]}” is assigned more than once` : undefined,
-    () => !projectScope() && !agentDrafts().some(isBuiltInAgent) && agentConfig() ? "The built-in general agent is required" : undefined,
-    () => nameValidation().emptyAgent ? "Agent name is required" : undefined,
-    () => nameValidation().globalNameAgent ? `Agent name “${required(nameValidation().globalNameAgent).name}” is already used by a global agent` : undefined,
-    () => nameValidation().duplicateAgentNames.size ? `Agent name “${[...nameValidation().duplicateAgentNames][0]}” is used more than once` : undefined,
-    () => nameValidation().invalidAgentModel ? `${required((nameValidation().invalidAgentModel)).name}: model is unavailable: ${required((nameValidation().invalidAgentModel)).model}` : undefined,
-    () => nameValidation().invalidAgentEffort ? `${required((nameValidation().invalidAgentEffort)).name}: effort is unavailable: ${required((nameValidation().invalidAgentEffort)).effort}` : undefined,
-    () => nameValidation().missingAgentPrompt ? `${required((nameValidation().missingAgentPrompt)).name}: system prompt file is required. Set it in Settings → Agents; for an older profile, restart Piop to migrate its prompt.` : undefined,
-    () => !agentValidation().agentsValid ? "Every agent needs a unique name and valid resources" : undefined
-  ])));
+  const validationError = createMemo(() => (
+    (mcpError())
+    || (agentValidation().defaultAgentValid ? undefined : "Pick one default agent")
+    || (nameValidation().contextWindowValid ? undefined : capRangeError(draft().contextWindowCap, "General context cap"))
+    || (Object.entries(capErrors()).map(([label, error]) => label + ": " + error)[0])
+    || (draft().hosts.length > 16 ? "At most 16 remote hosts can be configured" : undefined)
+    || (nameValidation().reservedLocalHostName ? "The host name “Local” is reserved for this host" : undefined)
+    || (nameValidation().duplicateHostNames.size ? `Host name “${[...nameValidation().duplicateHostNames][0]}” is used more than once` : undefined)
+    || (agentValidation().invalidHost ? `${required((agentValidation().invalidHost)).name.trim() || "Host"}: name, SSH target, and Pi executable are required` : undefined)
+    || (shortcutValidation().error)
+    || (shortcutValidation().duplicateShortcuts.size ? `Shortcut “${[...shortcutValidation().duplicateShortcuts][0]}” is assigned more than once` : undefined)
+    || (!projectScope() && !agentDrafts().some(isBuiltInAgent) && agentConfig() ? "The built-in general agent is required" : undefined)
+    || (nameValidation().emptyAgent ? "Agent name is required" : undefined)
+    || (nameValidation().globalNameAgent ? `Agent name “${required(nameValidation().globalNameAgent).name}” is already used by a global agent` : undefined)
+    || (nameValidation().duplicateAgentNames.size ? `Agent name “${[...nameValidation().duplicateAgentNames][0]}” is used more than once` : undefined)
+    || (nameValidation().invalidAgentModel ? `${required((nameValidation().invalidAgentModel)).name}: model is unavailable: ${required((nameValidation().invalidAgentModel)).model}` : undefined)
+    || (nameValidation().invalidAgentEffort ? `${required((nameValidation().invalidAgentEffort)).name}: effort is unavailable: ${required((nameValidation().invalidAgentEffort)).effort}` : undefined)
+    || (nameValidation().missingAgentPrompt ? `${required((nameValidation().missingAgentPrompt)).name}: system prompt file is required. Set it in Settings → Agents; for an older profile, restart Piop to migrate its prompt.` : undefined)
+    || (!agentValidation().agentsValid ? "Every agent needs a unique name and valid resources" : undefined)
+  ));
 
   const validateForm = () => {
     const invalidFastModeAgent = agentDrafts().find((item) => item.fastMode === true && !supportsFastMode(item.model));
@@ -545,7 +546,7 @@ export function SettingsView(props: SettingsViewProps) {
         <Show when={formValidation().visibleSection === "toasts"}><ToastHistory /></Show>
         {formValidation().visibleSection === "plugins" && <PluginSettings hostId={providerHostId()} onBusyChange={settingsProps().onSavingChange} />}
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
-        {formValidation().visibleSection === "inference" && <div class="segmented-control" role="group" aria-label="Inference view">{(["models", "providers"] as const).map(view => <button type="button" aria-pressed={inferenceView() === view} onClick={() => setInferenceView(view)}>{view === "models" ? "Models" : "Providers"}</button>)}</div>}
+        {formValidation().visibleSection === "inference" && <div class="segmented-control" role="group" aria-label="Inference view"><For each={["models", "providers"] as const}>{view => <button type="button" aria-pressed={inferenceView() === view} onClick={() => setInferenceView(view)}>{view === "models" ? "Models" : "Providers"}</button>}</For></div>}
         {formValidation().visibleSection === "inference" && inferenceView() === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost usage={(settingsProps().providerHostId ?? "local") === "local" ? { hidden: draft().hiddenUsageIndicators, onChange: hiddenUsageIndicators => patch({ hiddenUsageIndicators }) } : undefined} />}</Rerun>}
         {renderGeneral()}
         {renderModels()}

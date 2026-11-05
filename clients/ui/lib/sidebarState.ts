@@ -151,9 +151,8 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   });
 
   const expandProject = (projectKey: string) => {
+    const keys = [projectKey, ...groupAncestors(projectKey)];
     setCollapsedProjects((current) => {
-      const keys = [projectKey, ...groupAncestors(projectKey)];
-
       if (!keys.some(key => current.has(key))) return current;
       const next = new Set(current);
       keys.forEach(key => next.delete(key));
@@ -229,11 +228,13 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName} ${parentName}`.toLowerCase().includes(normalizedQuery());
   })));
 
-  const groupedSessions = createMemo(() => (filtered().reduce<Record<string, SessionSummary[]>>((result, session) => {
-    (result[visualProjectKey(session)] ??= []).push(session);
+  const groupedSessions = createMemo(() => {
+    const result: Record<string, SessionSummary[]> = {};
+
+    for (const session of filtered()) (result[visualProjectKey(session)] ??= []).push(session);
 
     return result;
-  }, {})));
+  });
 
   const recentSessions = createMemo(() => (orderedSessions(RECENT_KEY, groupedSessions()[RECENT_KEY] ?? [], sessionOrders())));
   const recentKeys = createMemo(() => (recentSessions().map(sessionKey).join("\n")));

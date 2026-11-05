@@ -313,9 +313,11 @@ export function createConversationDrafts(reportStorageError: (message: string) =
 
     if (JSON.stringify(previous.destination) !== JSON.stringify(destination)) update(resolved, record => ({ ...record, destination }));
     publishUploads();
-    bindDraftStaging(owner, payload => stage(owner, payload));
+    const stageOwned = (payload: DraftSubmissionPayload) => stage(owner, payload);
+    const releaseOwner = () => { owners.delete(owner); publishUploads(); };
+    bindDraftStaging(owner, stageOwned);
 
-    if (!bound) owner.onDispose(() => { owners.delete(owner); publishUploads(); });
+    if (!bound) owner.onDispose(releaseOwner);
   };
 
   const keyForTransport = (transport: NativeTransport) => {

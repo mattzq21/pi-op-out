@@ -132,14 +132,15 @@ export function useProviderAuth(hostId: Accessor<string>) {
 
   createDependencyEffect(() => { const capturedFlow = flow(); const capturedWorking = working(); const capturedHostId = hostId();
 
-    if (!capturedFlow || (capturedFlow).status !== "pending" || capturedWorking) return;
+    if (!capturedFlow || capturedFlow.status !== "pending" || capturedWorking) return;
+    const flowId = capturedFlow.flowId;
     let cancelled = false;
     let failures = 0;
     let timer: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
       try {
-        const next = await call(capturedHostId, { action: "poll", flowId: (capturedFlow).flowId }, authFlowSchema);
+        const next = await call(capturedHostId, { action: "poll", flowId }, authFlowSchema);
 
         if (cancelled) return;
         setError(undefined); receive(next);
@@ -153,7 +154,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
         const lost = failures >= 2 && !reasonText.includes(TRANSIENT_HINT);
 
         if (lost) {
-          void cancelFlow(capturedHostId, (capturedFlow).flowId).catch(cancelFailed);
+          void cancelFlow(capturedHostId, flowId).catch(cancelFailed);
           active.current = undefined;
           setFlow(undefined);
           setRevision((value) => value + 1);

@@ -17,8 +17,7 @@ export const chatSubmission = (owner?: NativeTransport) => submissions().find(su
 export const isChatSubmissionActive = (id: string) => submissions().some(submission => submission.durable.id === id);
 
 export function updateChatPreparation(owner: NativeTransport, status: string) {
-  if (chatSubmission(owner)?.status === status) return;
-  setSubmissions(current => current.map(item => item.owner === owner ? { ...item, status } : item));
+  setSubmissions(current => current.some(item => item.owner === owner && item.status !== status) ? current.map(item => item.owner === owner ? { ...item, status } : item) : current);
 }
 
 export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], durable: DraftSubmissionHandle, work: () => Promise<T>, initialStatus = "Sending message…", behavior?: "steer" | "followUp") {

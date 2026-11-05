@@ -220,7 +220,7 @@ export class RemoteClient {
   private failPending() {
     const wasReady = this.ready;
     this.ready = false;
-    for (const hostId of [...this.logStatuses.keys()]) this.receive({ event: "pi://daemon-log-status", payload: { hostId, failure: null } });
+    for (const hostId of Array.from(this.logStatuses.keys())) this.receive({ event: "pi://daemon-log-status", payload: { hostId, failure: null } });
     this.logStatuses.clear();
 
     if (wasReady) this.receive({ event: "pi://event", payload: { type: "disconnected" } });

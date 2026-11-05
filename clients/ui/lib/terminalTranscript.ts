@@ -29,7 +29,7 @@ const controlOpeners = new Map<string, ControlState>([
 ]);
 
 const plain: TerminalRendition = {};
-const zeroWidth = /^[\p{M}\u200b-\u200f\u2060\ufe00-\ufe0f]$/u;
+const zeroWidth = /^[\p{M}\u200b-\u200f\u2060]$/u;
 const wide = /^[\p{Extended_Pictographic}\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]$/u;
 const simpleText = /^[\x20-\x7e]*$/;
 
@@ -222,7 +222,7 @@ export function createTerminalTranscript() {
     else if (char === "\n") { lineFeed(); column = 0; }
     else if (char === "\b") column = Math.max(0, onScreen() - 1);
     else if (char === "\t") column = Math.min(width - 1, (Math.floor(column / 8) + 1) * 8);
-    else if (!/[\u0000-\u001f\u007f-\u009f]/.test(char)) write(char);
+    else if (!/\p{Cc}/u.test(char)) write(char);
   };
 
   const consume = (char: string) => {

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, on, onCleanup, type Accessor, type JSX } from "solid-js";
+import { createEffect, createMemo, on, onCleanup, untrack, type Accessor, type JSX } from "solid-js";
 import { z } from "zod";
 
 export type StateUpdate<T> = T | ((previous: T) => T);
@@ -29,7 +29,7 @@ export function cssPixels(value: string | number | undefined) {
 
 export function createMemoFields<T extends object>(source: Accessor<T>): T {
   const value = createMemo(source);
-  const fields = { ...value() };
+  const fields = untrack(() => ({ ...value() }));
 
   for (const key in fields) {
     const field = createMemo(() => value()[key]);

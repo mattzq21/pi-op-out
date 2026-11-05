@@ -1,4 +1,4 @@
-import { createSignal, createUniqueId, Show } from "solid-js";
+import { createSignal, createUniqueId, Show, untrack } from "solid-js";
 import { exportAgents, parseAgentsImport } from "../lib/agentTransfer";
 import { copyText } from "../lib/clipboard";
 import { createDependencyEffect, createRef } from "../lib/solid";
@@ -8,7 +8,7 @@ export function AgentTransferDialog(props: { mode: "export" | "import"; agents: 
   const dialogRef = createRef<HTMLDialogElement>(null);
   const fileRef = createRef<HTMLInputElement>(null);
   const titleId = createUniqueId();
-  const [text, setText] = createSignal(props.mode === "export" ? exportAgents(props.agents) : "");
+  const [text, setText] = createSignal(untrack(() => props.mode === "export" ? exportAgents(props.agents) : ""));
   const [error, setError] = createSignal<string>();
   const [copied, setCopied] = createSignal(false);
 
@@ -47,7 +47,7 @@ export function AgentTransferDialog(props: { mode: "export" | "import"; agents: 
         <input ref={element => { fileRef.current = element; }} type="file" accept=".json,application/json" hidden onChange={event => { void openFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
         <button type="button" class="browse-directory" onClick={() => fileRef.current?.click()}>Open file</button>
       </Show>
-      <button type="button" onClick={props.onClose}>{props.mode === "export" ? "Close" : "Cancel"}</button>
+      <button type="button" onClick={() => props.onClose()}>{props.mode === "export" ? "Close" : "Cancel"}</button>
       <Show when={props.mode === "export"} fallback={<button type="button" class="primary-button" disabled={!text().trim()} onClick={confirmImport}>Import</button>}>
         <button type="button" class="primary-button" autofocus onClick={() => void copy()}>{copied() ? "Copied" : "Copy"}</button>
       </Show>

@@ -1,4 +1,4 @@
-import { createSignal, createUniqueId, Index, onCleanup, Show } from "solid-js";
+import { createSignal, createUniqueId, Index, onCleanup, Show, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import type { PromptPreview } from "../lib/hostAgents";
 import { ContextCopyButton } from "./PromptContextBar";
@@ -19,7 +19,7 @@ export function PromptPreviewDialog(props: { agent: string; build: () => Promise
 
     return () => { dialog?.close(); returnFocus?.focus(); };
   }, () => []);
-  props.build().then(value => { if (open) setPreview(value); }, reason => { if (open) setError(reason instanceof Error ? reason.message : String(reason)); });
+  untrack(() => props.build()).then(value => { if (open) setPreview(value); }, reason => { if (open) setError(reason instanceof Error ? reason.message : String(reason)); });
 
   return <dialog ref={(element) => { dialogRef.current = element; }} class="extension-dialog prompt-preview-dialog" aria-labelledby={titleId} aria-busy={!preview() && !error()} onCancel={(event) => { event.preventDefault(); props.onClose(); }}>
     <h2 id={titleId}>First prompt of “{props.agent}”</h2>
@@ -35,6 +35,6 @@ export function PromptPreviewDialog(props: { agent: string; build: () => Promise
         <pre>{tools().json}</pre>
       </section>}</Index>
     </>}</Show>
-    <div class="dialog-actions"><button autofocus onClick={props.onClose}>Close</button></div>
+    <div class="dialog-actions"><button autofocus onClick={() => props.onClose()}>Close</button></div>
   </dialog>;
 }

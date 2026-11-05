@@ -105,7 +105,8 @@ export function MobileApp() {
   createComputed(() => { connectRef.current = connect; });
   createDependencyEffect(() => {
     let disposed = false;
-    remoteClient.onDisconnect = (reason) => { setConnected(false); setError(reason); scheduleReconnect(); };
+    const handleDisconnect = (reason: string) => { setConnected(false); setError(reason); scheduleReconnect(); };
+    remoteClient.onDisconnect = handleDisconnect;
 
     const restarting = () => {
       if (intentionalDisconnect.current || forgetting()) return;
@@ -114,9 +115,8 @@ export function MobileApp() {
       restartGraceTimer.current = setTimeout(() => setRestartGrace(false), 5000);
     };
 
-    const restartListener = remoteClient.listen("pi://daemon-restarting", ({ payload }) => {
-      if (payload.hostId === "local") restarting();
-    }, z.object({ hostId: z.string() }));
+    const handleDaemonRestarting = ({ payload }: { payload: { hostId: string } }) => { if (payload.hostId === "local") restarting(); };
+    const restartListener = remoteClient.listen("pi://daemon-restarting", handleDaemonRestarting, z.object({ hostId: z.string() }));
 
     window.addEventListener("piop-daemon-restarting", restarting);
 

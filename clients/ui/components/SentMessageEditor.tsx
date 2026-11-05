@@ -1,4 +1,4 @@
-import { createSignal, For, Show, onMount } from "solid-js";
+import { createSignal, For, Show, onMount, untrack } from "solid-js";
 import { FileText, X } from "lucide-solid";
 import type { ChatMessage } from "../types";
 import { sentSkillPrompt, splitAttachedFiles, type AttachedFile } from "../lib/composerPrompt";
@@ -12,8 +12,8 @@ export type EditSentMessage = (message: ChatMessage, edit: SentEdit) => Promise<
 const shownImage = (part: { data?: string; mimeType?: string }) => Boolean(part.data && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType ?? ""));
 
 export function SentMessageEditor(props: { message: ChatMessage; text: string; onSave?: EditSentMessage; onClose: () => void }) {
-  const initial = splitAttachedFiles(sentSkillPrompt(props.text)?.text ?? props.text);
-  const images = (Array.isArray(props.message.content) ? props.message.content.flatMap(part => part.type === "image" ? [part] : []) : []).map((part, index) => ({ part, index }));
+  const initial = untrack(() => splitAttachedFiles(sentSkillPrompt(props.text)?.text ?? props.text));
+  const images = untrack(() => (Array.isArray(props.message.content) ? props.message.content.flatMap(part => part.type === "image" ? [part] : []) : []).map((part, index) => ({ part, index })));
   const [prompt, setPrompt] = createSignal(initial.prompt);
   const [files, setFiles] = createSignal(initial.files);
   const [keep, setKeep] = createSignal(images.map(image => image.index));

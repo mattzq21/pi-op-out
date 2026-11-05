@@ -1,6 +1,6 @@
 import { Rerun } from "@solid-primitives/keyed";
 import { PanelRight } from "lucide-solid";
-import { createComponent, createMemo, lazy, onCleanup, Show } from "solid-js";
+import { createComponent, createMemo, lazy, onCleanup, Show, untrack } from "solid-js";
 import type { AppConversations } from "./appConversations";
 import { splitConversationKey } from "./appSupport";
 import { AgentsPill } from "./components/AuxiliaryAgents";
@@ -39,15 +39,15 @@ const SubagentPane = lazy(() => import("./components/SubagentPane").then(module 
 
 // The chat area: the main conversation, the side pane with side chats and subagents, and the terminal panel.
 export function ChatWorkspace(props: { app: Omit<AppConversations, "usage">; transcriptCache: TranscriptCache; pluginPane: PluginWorkspace }) {
-  const { transcriptCache, pluginPane } = props;
-  const { transport, runtimePool, registerCommandRunner, chatAgentProps, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkEntryId, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, modelVisibility } = props.app.conversation;
-  const { sessions, archiveSession, isArchiving, setArchivesOpen, selectSession } = props.app.sessions;
-  const { view, setPanelOpen, setActivePane } = props.app.layout;
-  const { settings } = props.app.settings;
-  const { addNotice } = props.app.notices;
-  const { queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs } = props.app.dialogs;
-  const { sidepane, splitPane, subagentPane, agentPane, openChatAgentRequest, respondToSplitRequest, closeSplitPane, releaseSplitTransport, splitComposerFocusRequest, splitQueueHoldRequest } = props.app.side;
-  const { terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, terminalViewKey, toggleComposerTerminal } = props.app.terminal;
+  const { transcriptCache, pluginPane, app } = untrack(() => ({ transcriptCache: props.transcriptCache, pluginPane: props.pluginPane, app: props.app }));
+  const { transport, runtimePool, registerCommandRunner, chatAgentProps, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkEntryId, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, modelVisibility } = app.conversation;
+  const { sessions, archiveSession, isArchiving, setArchivesOpen, selectSession } = app.sessions;
+  const { view, setPanelOpen, setActivePane } = app.layout;
+  const { settings } = app.settings;
+  const { addNotice } = app.notices;
+  const { queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs } = app.dialogs;
+  const { sidepane, splitPane, subagentPane, agentPane, openChatAgentRequest, respondToSplitRequest, closeSplitPane, releaseSplitTransport, splitComposerFocusRequest, splitQueueHoldRequest } = app.side;
+  const { terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, terminalViewKey, toggleComposerTerminal } = app.terminal;
 
   const closeTab = async (tab: SidepaneTab) => {
     if (tab.kind === "subagent" || tab.kind === "agent") { sidepane.forget(tab.key); return; }

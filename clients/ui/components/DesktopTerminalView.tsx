@@ -1,6 +1,6 @@
 import { reportBackgroundError } from "../lib/backgroundErrors";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type CSSProperties } from "../lib/solid";
 
 import { FitAddon } from "@xterm/addon-fit";
@@ -29,7 +29,6 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
   const queueOutput = createRef<((data: string, end: number, reset: boolean, transcript: string) => void) | undefined>(undefined);
   const resizeToHost = createRef<(() => void) | undefined>(undefined);
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
-  const callbacks = createRef({ onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
 
   createDependencyEffect(() => { const capturedCwd0 = componentProps.cwd; const capturedSnapshot1 = componentProps.snapshot; const capturedSnapshotEnd2 = componentProps.snapshotEnd;
     const saveSnapshot = componentProps.onSnapshot;
@@ -132,7 +131,8 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     const mouseInput = () => { if (instance.modes.mouseTrackingMode !== 'none') markUserInput(); };
     const mouseEvents = ['mousedown', 'mouseup', 'mousemove', 'wheel'] as const;
     for (const event of mouseEvents) inputHost.addEventListener(event, mouseInput, true);
-    const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value, false, userInput.current); });
+    const forwardData = (value: string) => { if (!componentProps.ownershipRequired) componentProps.onData(value, false, userInput.current); };
+    const data = instance.onData(forwardData);
     let cursorFrame: number | undefined;
 
     const positionDraft = () => {
@@ -220,7 +220,7 @@ export function DesktopTerminalView(componentProps: TerminalViewProps) {
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
 
     if (componentProps.ownershipRequired) instance.blur();
-    else if (componentProps.visible !== false && !componentProps.started && !componentProps.exited) { userInput.current = false; callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows); }
+    else if (componentProps.visible !== false && !componentProps.started && !componentProps.exited) { userInput.current = false; componentProps.onStart(componentProps.activeId, instance.cols, instance.rows); }
     resizeToHost.current?.();
   }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired, componentProps.started, componentProps.exited, componentProps.visible]);
 

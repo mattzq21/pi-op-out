@@ -4,7 +4,7 @@ import { required } from "../lib/required";
 import DOMPurify from "dompurify";
 import { Copy, FolderOpen } from "lucide-solid";
 import { Marked, Renderer, type MarkedExtension, type TokenizerAndRendererExtension } from "marked";
-import { createEffect, createMemo, createSignal, onCleanup, Show, useContext } from "solid-js";
+import { createEffect, createMemo, createSignal, on, onCleanup, Show, useContext } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { fileReference, type FileProject } from "../lib/projectFiles";
@@ -167,10 +167,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
   onCleanup(() => timers.forEach(clearTimeout));
   const close = (restoreFocus = false) => { if (restoreFocus) menu()?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined); };
 
-  createEffect(() => {
-    const current = menu();
-    const element = menuElement();
-
+  createEffect(on([menu, menuElement], ([current, element]) => {
     if (!current || !element) return;
     const bounds = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(current.x, window.innerWidth - bounds.width - 8))}px`;
@@ -206,7 +203,7 @@ export function Markdown(props: { children: string; streaming?: boolean; imagePr
       window.removeEventListener("resize", dismiss);
       window.removeEventListener("blur", dismiss);
     });
-  });
+  }));
 
   const copyBlock = async (button: HTMLButtonElement, block: HTMLElement, text: string, kind: "code" | "table") => {
     const name = kind === "code" ? "Code" : "Table";

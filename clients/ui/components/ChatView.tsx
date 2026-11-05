@@ -69,7 +69,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   });
   const ownsConversation = () => transcript().ownsConversation();
   const pins = () => transcript().pins();
-  const [terminalAvailable, setTerminalAvailable] = createSignal((() => props.transport?.hasSentMessage() ?? false)());
+  const [terminalAvailable, setTerminalAvailable] = createSignal(untrack(() => props.transport?.hasSentMessage() ?? false));
   const [takingOwnership, setTakingOwnership] = createSignal(false);
   const [ownershipError, setOwnershipError] = createSignal<string>();
   createDependencyEffect(() => { const capturedTransport0 = props.transport;
@@ -77,13 +77,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     setOwnershipError(undefined);
 
     const unsubscribe = capturedTransport0?.subscribe((event) => {
+      if ((event.type === "connection_restored" || event.type === "pi_started") && olderRetry.current === capturedTransport0) { olderRetry.current = undefined; loadOlder(); }
+
       if (event.type === "pinned_messages") return;
       setTerminalAvailable(capturedTransport0.hasSentMessage());
 
       if (event.type === "ownership_acquired") setOwnershipError(undefined);
     });
 
-    return () => { unsubscribe?.(); };
+    return () => { unsubscribe?.(); if (olderRetry.current === capturedTransport0) olderRetry.current = undefined; };
   }, () => [props.transport]);
 
   const takeOwnership = async () => { const capturedTransport0 = props.transport;
@@ -153,28 +155,15 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
   const older = createMemo(() => olderHistory(props.messages));
   const olderAnchor = createRef<number | undefined>(undefined);
 
-  const olderRetry = createRef<{ transport: NativeTransport; stop: () => void } | undefined>(undefined);
-  onCleanup(() => olderRetry.current?.stop());
-
-  const retryOlderAfterReconnect = (transport: NativeTransport) => {
-    if (olderRetry.current?.transport === transport) return;
-    olderRetry.current?.stop();
-    const stop = transport.subscribe(event => {
-      if (event.type !== "connection_restored" && event.type !== "pi_started") return;
-      stop();
-      if (olderRetry.current?.transport === transport) olderRetry.current = undefined;
-      if (props.transport === transport) loadOlder();
-    });
-    olderRetry.current = { transport, stop };
-  };
+  const olderRetry = createRef<NativeTransport | undefined>(undefined);
 
   const loadOlder = (through?: string) => {
     const element = messagesRef.current; const transport = props.transport;
 
-    if (!element || !transport || !older() || olderAnchor.current !== undefined || olderRetry.current?.transport === transport) return;
+    if (!element || !transport || !older() || olderAnchor.current !== undefined || olderRetry.current === transport) return;
     olderAnchor.current = element.scrollHeight - element.scrollTop;
     loadOlderHistory(transport, through).catch(reason => {
-      if (!transport.isConnected() || isDaemonRefusal(reason)) retryOlderAfterReconnect(transport);
+      if (!transport.isConnected() || isDaemonRefusal(reason)) { if (props.transport === transport) olderRetry.current = transport; }
       else { restoring.current = undefined; setRequestedResponse(undefined); props.onNotice?.("Could not load older messages", reason instanceof Error ? reason.message : String(reason)); }
     }).finally(() => requestAnimationFrame(() => {
       const anchor = olderAnchor.current; olderAnchor.current = undefined;
@@ -311,7 +300,12 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return trackChatSubmission(durable.owner(), text, images, durable, () => Promise.resolve(capturedOnSend(text, queued, images, durable)), props.controlsDisabled ? "Getting ready..." : "Sending message…", shown);
   };
 
-  onCleanup(props.registerCommandRunner?.(text => Promise.resolve(send(text))) ?? (() => undefined));
+  untrack(() => {
+    const register = props.registerCommandRunner;
+    const unregister = register?.(text => Promise.resolve(send(text)));
+
+    if (unregister) onCleanup(unregister);
+  });
 
   const [pinReveal, setPinReveal] = createSignal<string>();
 
@@ -328,7 +322,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return status ?? (known?.model === model ? known?.status : undefined);
   });
-  const [settling, setSettling] = createSignal((() => Boolean(props.controlsDisabled))());
+  const [settling, setSettling] = createSignal(untrack(() => Boolean(props.controlsDisabled)));
   createDependencyEffect(() => {
     if (!props.controlsDisabled) { setSettling(false); return; }
     setSettling(true);

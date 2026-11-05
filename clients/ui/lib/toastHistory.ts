@@ -62,7 +62,7 @@ function recordToast(source: string, notice: { title: string; message: string })
   refreshHistory();
 }
 
-export function trackToastNotices(source: string, notices: Accessor<Notice[]>) {
+export function createToastNoticeTracker(source: string, notices: Accessor<Notice[]>) {
   let previous = new Map<string, string>();
   const text = (notice: Notice) => JSON.stringify([notice.title, notice.message]);
   createEffect(() => {
@@ -74,7 +74,7 @@ export function trackToastNotices(source: string, notices: Accessor<Notice[]>) {
   });
 }
 
-export function trackToastMessage(source: string, title: string, message: Accessor<string | undefined>) {
+export function createToastMessageTracker(source: string, title: string, message: Accessor<string | undefined>) {
   let previous: string | undefined;
   createEffect(() => {
     const current = message();

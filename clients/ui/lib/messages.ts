@@ -14,13 +14,6 @@ export type PiEntry = { type: string; id: string; parentId: string | null; messa
 
 const entryIdentitySchema = z.object({ id: z.string() });
 
-function replaceMessage(messages: ChatMessage[], index: number, message: ChatMessage, inPlace: boolean) {
-  const result = inPlace ? messages : messages.slice();
-  result[index] = message;
-
-  return result;
-}
-
 export const isPromptMessage = (message: ChatMessage) => message.role === "user" || (message.role === "custom" && (message.customType === "piop-agent-message" || message.customType === "piop-subagent-result" || message.customType === GOAL_PROMPT));
 
 export const promptContextAnchors = (message: ChatMessage, context: { userTimestamp?: number; agentNotificationId?: string }) => message.role === "user"

@@ -1,6 +1,6 @@
 import type { Accessor, Component, JSX } from "solid-js";
 import type { LucideProps } from "lucide-solid";
-import type { AgentProfile, AgentState, AppSettings, ChatMessage, ImageAttachment, Model, RpcCommand, SessionSummary } from "../types";
+import type { AgentProfile, ChatMessage, ImageAttachment, Model } from "../types";
 
 export interface PluginConversation { title: string; hostId: string; sessionId: string; messageCount?: number; messages: ChatMessage[]; follow?: () => Accessor<PluginConversation>; readMessages?: () => ChatMessage[]; selected?: { text: string; source: string } }
 

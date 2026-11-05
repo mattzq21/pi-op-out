@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, type Accessor, type Setter } from "solid-js";
 import type { AgentState, Model, RpcCommand } from "../types";
 
 type Selection = { model?: Model | null; thinkingLevel?: string; fastMode?: boolean };
@@ -23,33 +23,41 @@ export function clampEffort(level: string, model?: Model) {
 }
 
 export class PromptControls {
-  private selection = createSignal<Selection>({});
-  private effectiveModel = createSignal<Model | null | undefined>();
+  private readonly selection: Accessor<Selection>;
+  private readonly setSelection: Setter<Selection>;
+  private readonly effectiveModel: Accessor<Model | null | undefined>;
+  private readonly setEffectiveModel: Setter<Model | null | undefined>;
   private applied?: Selection;
   private applying = false;
+  constructor() {
+    const [selection, setSelection] = createSignal<Selection>({});
+    const [effectiveModel, setEffectiveModel] = createSignal<Model | null | undefined>();
+    this.selection = selection; this.setSelection = setSelection;
+    this.effectiveModel = effectiveModel; this.setEffectiveModel = setEffectiveModel;
+  }
   isApplying() { return this.applying; }
   hasPending() {
-    const selected = this.selection[0]();
+    const selected = this.selection();
 
     return selected !== this.applied && (Boolean(selected.model) || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
   }
-  reset() { this.selection[1]({}); this.applied = undefined; }
+  reset() { this.setSelection({}); this.applied = undefined; }
   // True when the user chose no model, effort or fast mode. A null model only marks that the host has no model.
-  untouched() { const selected = this.selection[0](); return !selected.model && selected.thinkingLevel === undefined && selected.fastMode === undefined; }
-  clearModel() { this.effectiveModel[1](null); this.selection[1](current => ({ ...current, model: null })); }
-  useEffectiveModel(model: Model | null) { this.effectiveModel[1](model); if (model && this.selection[0]().model === null) this.selection[1](current => ({ ...current, model: undefined })); }
-  missingModel() { const selected = this.selection[0]().model; return (selected === undefined ? this.effectiveModel[0]() : selected) == null; }
-  model(model: Model, thinkingLevel?: string) { this.selection[1](current => ({ ...current, model, thinkingLevel: clampEffort(thinkingLevel ?? current.thinkingLevel ?? "medium", model) })); }
-  thinking(thinkingLevel: string) { this.selection[1](current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model ?? undefined) })); }
-  fast(fastMode: boolean) { this.selection[1](current => ({ ...current, fastMode })); }
-  copyTo(target: PromptControls) { target.selection[1](current => ({ ...current, ...this.selection[0]() })); }
-  levels(fallback: string[]) { const selected = this.selection[0]().model;
-    const model = selected === undefined ? this.effectiveModel[0]() : selected;
+  untouched() { const selected = this.selection(); return !selected.model && selected.thinkingLevel === undefined && selected.fastMode === undefined; }
+  clearModel() { this.setEffectiveModel(null); this.setSelection(current => ({ ...current, model: null })); }
+  useEffectiveModel(model: Model | null) { this.setEffectiveModel(model); if (model && this.selection().model === null) this.setSelection(current => ({ ...current, model: undefined })); }
+  missingModel() { const selected = this.selection().model; return (selected === undefined ? this.effectiveModel() : selected) == null; }
+  model(model: Model, thinkingLevel?: string) { this.setSelection(current => ({ ...current, model, thinkingLevel: clampEffort(thinkingLevel ?? current.thinkingLevel ?? "medium", model) })); }
+  thinking(thinkingLevel: string) { this.setSelection(current => ({ ...current, thinkingLevel: clampEffort(thinkingLevel, current.model ?? undefined) })); }
+  fast(fastMode: boolean) { this.setSelection(current => ({ ...current, fastMode })); }
+  copyTo(target: PromptControls) { target.setSelection(current => ({ ...current, ...this.selection() })); }
+  levels(fallback: string[]) { const selected = this.selection().model;
+    const model = selected === undefined ? this.effectiveModel() : selected;
 
   return model ? modelLevels(model) : model === null ? ["off"] : fallback; }
   state(state: AgentState): AgentState {
-    const selected = this.selection[0]();
-    const model = selected.model === undefined ? this.effectiveModel[0]() : selected.model;
+    const selected = this.selection();
+    const model = selected.model === undefined ? this.effectiveModel() : selected.model;
 
     if ((model === undefined || model === state.model) && selected.thinkingLevel === undefined) return state;
 
@@ -59,7 +67,7 @@ export class PromptControls {
     const { [fastKey]: status, ...rest } = statuses;
 
     if (!model || !fastModels?.includes(model.provider + "/" + model.id)) return rest;
-    const enabled = this.selection[0]().fastMode ?? (status === "Fast mode on" ? true : status === "Fast mode off" ? false : undefined);
+    const enabled = this.selection().fastMode ?? (status === "Fast mode on" ? true : status === "Fast mode off" ? false : undefined);
 
     return enabled === undefined ? rest : { ...rest, [fastKey]: enabled ? "Fast mode on" : "Fast mode off" };
   }
@@ -67,18 +75,18 @@ export class PromptControls {
 
   return Promise.resolve(); }
   acknowledge(state: AgentState) {
-    this.effectiveModel[1](state.model);
+    this.setEffectiveModel(state.model);
     const applied = this.applied;
 
-    if (!applied || this.selection[0]() !== applied) return;
+    if (!applied || this.selection() !== applied) return;
 
     if (applied.model && (state.model?.id !== applied.model.id || state.model?.provider !== applied.model.provider)) return;
 
     if (applied.thinkingLevel !== undefined && state.thinkingLevel !== applied.thinkingLevel) return;
-    this.selection[1]({}); this.applied = undefined;
+    this.setSelection({}); this.applied = undefined;
   }
   async flush<T>(command: (value: RpcCommand) => Promise<T>, fast: (enabled: boolean) => Promise<void>) {
-    const selected = this.selection[0]();
+    const selected = this.selection();
 
     if (!this.hasPending()) return;
     this.applying = true;
