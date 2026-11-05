@@ -1,6 +1,5 @@
-import { locateSessionFile } from './archives';
-import { sessionIdentity } from './pi_launch';
 import { localHost } from './local_host';
+import * as SessionLifecycle from './session_lifecycle';
 import type { Host, MutationRequest } from './host/index';
 import type { App } from './app';
 
@@ -10,11 +9,13 @@ export class MutationGuard {
 
   private constructor(private host: Host, private token: string, private app: App) {}
 
-  static async acquire(app: App, path: string, clientId: string, archived: boolean, operation: MutationRequest['operation']): Promise<MutationGuard> {
-    const file = await locateSessionFile(path, archived);
-    const sessionId = await sessionIdentity(file);
+  // Holds the saved chat sessionId for one change, so no client or runtime changes it meanwhile.
+  static async acquire(app: App, sessionId: string, clientId: string, operation: MutationRequest['operation']): Promise<MutationGuard> {
+    const saved = SessionLifecycle.session(sessionId);
+    if (!saved) throw new Error('This conversation has been deleted');
+    if (operation !== 'delete' && saved.archived !== (operation === 'restore')) throw new Error(saved.archived ? 'This conversation has been deleted or archived' : 'This conversation is not archived');
     const host = localHost(app).host;
-    const result = await host.beginMutation({ sessionId, sessionPath: file, clientId, archived, operation });
+    const result = await host.beginMutation({ sessionId, sessionPath: saved.sessionPath, clientId, archived: saved.archived, operation });
     if (typeof result?.token !== 'string') throw new Error('Conversation mutation token missing');
     return new MutationGuard(host, result.token, app);
   }
@@ -23,13 +24,6 @@ export class MutationGuard {
     this.committed = true;
     await this.host.endMutation({ token: this.token, success: true });
     this.finished = true;
-  }
-
-  async finishCommitted(): Promise<void> { this.committed = true; await this.finish(); }
-
-  async finishRestore(path: string): Promise<void> {
-    this.finished = true;
-    await this.host.endMutation({ token: this.token, success: true, restoredPath: path });
   }
 
   async release(): Promise<void> {

@@ -6,8 +6,7 @@ import { DeleteArchivesDialog } from "./DeleteArchivesDialog";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Archive, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
-import { deleteArchivedConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
-import { storageFailureText } from "../lib/storageFailure";
+import { deleteConversations, loadStorageReport, openGroupDirectory } from "../lib/nativeTransport";
 import { formatDateTime } from "../lib/dateTime";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport } from "../types";
 
@@ -86,7 +85,7 @@ function formatDate(timestamp: number) {
   return formatDateTime(date);
 }
 
-function archiveKey(host: HostStorage, archive: ArchivedConversation) { return `${host.hostId}:${archive.path}`; }
+function archiveKey(host: HostStorage, archive: ArchivedConversation) { return `${host.hostId}:${archive.id}`; }
 
 function directoryTitle(hostId: string, directories: string[]) {
   if (hostId !== "local") return "Remote directories cannot be opened in the local file manager";
@@ -138,10 +137,10 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     let failure: string | undefined;
     const removed = new Set<string>();
 
-    try { for (const path of await deleteArchivedConversations(archives.map(archive => archive.path), host.hostId)) removed.add(path); }
-    catch (reason) { failure = storageFailureText("delete", reason, archives.length); }
+    try { for (const id of await deleteConversations(archives.map(archive => archive.id), host.hostId)) removed.add(id); }
+    catch (reason) { failure = `Could not delete ${archives.length === 1 ? "conversation" : "conversations"}. ${reason instanceof Error ? reason.message : String(reason)}`; }
 
-    if (removed.size) setReport((current) => current ? { hosts: current.hosts.map((candidate) => candidate.hostId === host.hostId ? { ...candidate, archives: candidate.archives.filter((archive) => !removed.has(archive.path)) } : candidate) } : current);
+    if (removed.size) setReport((current) => current ? { hosts: current.hosts.map((candidate) => candidate.hostId === host.hostId ? { ...candidate, archives: candidate.archives.filter((archive) => !removed.has(archive.id)) } : candidate) } : current);
     setDeleting((current) => { const next = new Set(current); keys.forEach((key) => next.delete(key));
 
       return next; });
@@ -220,7 +219,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
             {renderCategories(categories())}
             {section.title === "Archived sessions" && <>
               <div class="archive-heading"><span><strong>Archived conversations</strong><small>{host().archives.length ? `${host().archives.length} stored on ${host().hostName}` : `No archives on ${host().hostName}`}</small></span>{deletableArchives().length > 1 && <button class="storage-delete-all" disabled={deleting().size > 0 || loading()} onClick={() => deleteAll(host())}><Trash2 size={13} />{deletableArchives().length === host().archives.length ? "Delete all" : "Delete available"}</button>}</div>
-              {host().archives.length > 0 && <div class="archive-list">{<Key each={host().archives} by={archive => archive.path}>{(archive, _index) => {
+              {host().archives.length > 0 && <div class="archive-list">{<Key each={host().archives} by={archive => archive.id}>{(archive, _index) => {
                 if (!z.object({ path: z.string() }).safeParse(archive()).success) return null;
                 const name = createMemo(() => (z.string().catch(archive().path).parse(archive().name)));
                 const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));

@@ -8,3 +8,8 @@ export class CommandRefusedError extends Error {
 }
 
 export const refusalText = (message: string, by: Refuser) => 'piop-refused:' + by + '\n' + message;
+
+export function responseErrorText(error: unknown): string {
+  if (error instanceof CommandRefusedError) return refusalText(error.message, error.by);
+  return error instanceof Error ? error.message : String(error);
+}

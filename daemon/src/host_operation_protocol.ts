@@ -1,7 +1,7 @@
 export type HostOperationName =
-  | 'session-descendants' | 'index-sessions' | 'storage-inventory' | 'recover-missing-session' | 'relocate-session'
+  | 'index-sessions' | 'storage-inventory' | 'recover-missing-session' | 'relocate-session'
   | 'chat-branch-history' | 'discard-chat-branch'
-  | 'record-session-directory' | 'storage-transaction' | 'temporary-chat' | 'goal-text' | 'agent-definitions' | 'save-agent-definitions' | 'move-agent';
+  | 'record-session-directory' | 'session-storage' | 'temporary-chat' | 'goal-text' | 'agent-definitions' | 'save-agent-definitions' | 'move-agent';
 
 export const QUEUED = 0;
 export const STARTED = 1;
@@ -17,5 +17,5 @@ export interface WorkerJob {
 
 export type WorkerReply =
   | { id: number; ok: true; result: unknown; cancelled?: boolean }
-  | { id: number; ok: false; error: string; state?: string; warning?: string }
+  | { id: number; ok: false; error: string }
   | { fatal: string };

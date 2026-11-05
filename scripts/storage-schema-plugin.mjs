@@ -27,8 +27,8 @@ const canonicalModules = new Set([
   "external-transcripts.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
   "session-database.cjs", "temporary-chat.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
 
-  "archive-plan.cjs", "storage-transaction.cjs", "deletion-retention.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
-  "restore-receipts.cjs", "restore-plan.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "reference-publication-lock.cjs",
+  "session-lifecycle.cjs", "deletion-retention.cjs", "goal-asset-cleanup.cjs",
+  "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "reference-publication-lock.cjs",
   "transcript-identity.cjs", "storage-channel.cjs", "main-thread.cjs", "application-records.cjs",
   "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "session-names.cjs", "goal-assets.cjs",
 ]);

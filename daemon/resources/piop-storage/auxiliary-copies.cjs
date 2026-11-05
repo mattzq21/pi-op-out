@@ -74,7 +74,7 @@ function rewrite(value, replacements) {
 function activeChild(root, child) {
   const located = io.locate(root, child.sessionId);
 
-  return located && io.inside(path.join(root, 'sessions'), located.path) ? located.path : undefined;
+  return located && database.connection(root).prepare('SELECT archived FROM sessions WHERE session_id=?').get(child.sessionId)?.archived === 0 ? located.path : undefined;
 }
 
 function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {

@@ -25,7 +25,7 @@ beforeAll(async () => {
     records: require('../../daemon/resources/piop-storage/session-records.cjs'),
     names: require('../../daemon/resources/session-broker/session-names.cjs'),
     lock: require('../../daemon/resources/piop-storage/reference-publication-lock.cjs'),
-    operation: require('../../daemon/resources/storage-operation.cjs'),
+    lifecycle: require('../../daemon/resources/session-lifecycle.cjs'),
     locks: require('../../daemon/resources/storage-locks.cjs'),
   };
 });
@@ -67,7 +67,7 @@ async function sourceChat() {
 }
 
 async function deleteChat(path: string) {
-  return await modules.locks.withinFlow(() => modules.operation.runStorageTransaction({ root, begin: () => true }, { action: 'delete', targets: [{ area: 'sessions', path }], activeSessionIds: [] }));
+  return modules.locks.withinFlow(() => modules.lifecycle.run({ root, begin: () => true }, { action: 'delete', sessionIds: [modules.lifecycle.idOf(root, path)] }));
 }
 
 function owners(directory: string) { return modules.assets.readOwners(root, directory).owners.map((owner: any) => owner.sessionId).sort(); }
@@ -160,13 +160,12 @@ test('shared attachments stay while the branch exists after its source is delete
   const branch = await modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' });
   const remove = (path: string) => deleteChat(path);
 
-  const removed = await remove(source.path);
-  expect(removed).toMatchObject({ state: 'committed' });
+  expect(await remove(source.path)).toEqual({});
   expect(existsSync(source.path)).toBe(false);
   expect(readFileSync(join(source.attachment, 'goal-objective.md'), 'utf8')).toBe('Ship it');
   expect(owners(source.attachment)).toEqual([sessionId]);
 
-  expect((await remove(branch.sessionPath)).state).toBe('committed');
+  expect(await remove(branch.sessionPath)).toEqual({});
   expect(existsSync(source.attachment)).toBe(false);
 });
 

@@ -50,7 +50,7 @@ const registerExternalTranscript = onMainThread('session-registry.registerExtern
   const file = path.resolve(transcript);
   const relative = path.relative(root, file);
 
-  if (["sessions", "archived"].some(area => relative.startsWith(area + path.sep))) return;
+  if (relative.startsWith('sessions' + path.sep)) return;
   sessionTables.connection(root).prepare("INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=json_patch(external_transcripts.record_json, excluded.record_json)")
     .run(createHash("sha256").update(file).digest("hex"), JSON.stringify({ path: file, sessionId }));
 });

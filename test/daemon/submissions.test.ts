@@ -20,7 +20,7 @@ function session(root: string, id: string, transcript?: string) {
   const path = join(root, id + '.jsonl');
   if (transcript !== undefined) writeFileSync(path, transcript);
   const db = Registry.connection(root);
-  db.prepare('INSERT INTO sessions VALUES (?, ?)').run(id, path);
+  db.prepare('INSERT INTO sessions (session_id, session_path) VALUES (?, ?)').run(id, path);
 }
 
 const settled = () => Promise.resolve();

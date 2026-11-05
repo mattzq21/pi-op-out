@@ -94,7 +94,7 @@ function registerTranscript(root, sessionPath, body) {
 async function initialize(sessionPath, sessionId, fresh) {
   const root = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'));
 
-  if (!['sessions', 'archived'].some(area => io.inside(path.join(root, area), sessionPath)) || !io.canonical(path.dirname(sessionPath))) throw new Error('Conversation child index is outside Piop-controlled storage');
+  if (!io.inside(path.join(root, 'sessions'), sessionPath) || !io.canonical(path.dirname(sessionPath))) throw new Error('Conversation child index is outside Piop-controlled storage');
 
   return io.lockedAsync(root, () => {
     if (fresh || read(root, sessionId)) ensure(root, sessionId, sessionPath, fresh);

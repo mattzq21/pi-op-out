@@ -4,11 +4,10 @@ const { Check } = require('typebox/value');
 const database = require('./session-database.cjs');
 const { onMainThread } = require('./main-thread.cjs');
 
-// The ownership record of each conversation: the client that owns it (null when none does), the daemon run that wrote
-// it, if it was archived or deleted, its transcript, and the client that owned it last.
+// The ownership record of each active conversation: the client that owns it (null when none does), the daemon run
+// that wrote it, and the client that owned it last.
 const recordSchema = Type.Object({
-  client: Type.Union([Type.String(), Type.Null()]), token: Type.String(), deleted: Type.Boolean(),
-  path: Type.Optional(Type.String()), previousClient: Type.Optional(Type.String()),
+  client: Type.Union([Type.String(), Type.Null()]), token: Type.String(), previousClient: Type.Optional(Type.String()),
 }, { additionalProperties: false });
 
 function key(sessionId) { return createHash('sha256').update(sessionId.toLowerCase()).digest('hex').slice(0, 40); }

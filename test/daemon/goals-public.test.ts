@@ -116,11 +116,11 @@ test('a long goal is saved to a file the agent reads, which stays while any chat
   const answer = (await chat.command({ type: 'get_entries' })).entries.find((entry: any) => entry.type === 'message' && text(entry.message) === 'Brief done.');
   await chat.command({ type: 'fork_after', entryId: answer.id });
   const fork = await chat.command({ type: 'get_state' });
-  const remove = (sessionPath: string) => agents.daemon.invoke('delete_session', { sessionPath, hostId: 'local', clientId: 'laptop' });
-  await remove(original.sessionFile);
+  const remove = (sessionId: string) => agents.daemon.invoke('delete_sessions', { sessionIds: [sessionId], hostId: 'local', clientId: 'laptop' });
+  await remove(original.sessionId);
   expect(JSON.stringify(await chat.command({ type: 'get_entries' }))).toContain(file);
   expect(readFileSync(file, 'utf8').trim()).toBe(objective.trim());
-  await remove(fork.sessionFile);
+  await remove(fork.sessionId);
   expect(existsSync(file)).toBe(false);
 }, 120000);
 

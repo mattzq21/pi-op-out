@@ -42,19 +42,17 @@ function valueReferences(root: string, values: any[]): Set<string> {
 
 function textReferences(root: string, text: string, found: Set<string>): void {
   const rootPrefix = root + '/';
-  for (const area of ['sessions', 'archived']) {
-    const prefix = root + '/' + area + '/';
-    let start = text.indexOf(prefix);
-    while (start >= 0) {
-      const remainder = text.slice(start);
-      const offset = remainder.slice(prefix.length).indexOf(rootPrefix);
-      const next = offset < 0 ? remainder.length : prefix.length + offset;
-      const segment = remainder.slice(0, next);
-      const newline = segment.search(/[\r\n]/);
-      const path = managedGoalPath(segment.slice(0, newline < 0 ? segment.length : newline));
-      if (path) found.add(path);
-      start = text.indexOf(prefix, start + prefix.length);
-    }
+  const prefix = root + '/sessions/';
+  let start = text.indexOf(prefix);
+  while (start >= 0) {
+    const remainder = text.slice(start);
+    const offset = remainder.slice(prefix.length).indexOf(rootPrefix);
+    const next = offset < 0 ? remainder.length : prefix.length + offset;
+    const segment = remainder.slice(0, next);
+    const newline = segment.search(/[\r\n]/);
+    const path = managedGoalPath(segment.slice(0, newline < 0 ? segment.length : newline));
+    if (path) found.add(path);
+    start = text.indexOf(prefix, start + prefix.length);
   }
 }
 

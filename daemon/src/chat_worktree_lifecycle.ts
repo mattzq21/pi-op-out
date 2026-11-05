@@ -1,8 +1,9 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { readHeaderLine } from './host/protocol';
 import * as SessionTables from '../resources/session-database.cjs';
+import * as SessionLifecycle from './session_lifecycle';
 import { archivedCommit, archiveRef, deleteChatWorktree, planRestore, protectArchive, releaseArchive, removeArchivedWorktree, removeRestoredWorktree, restoreWorktree, type ChatArchive, type ChatWorktree } from './chat_worktrees';
 import * as Worktrees from './chat_worktree_records';
 import * as Records from '../resources/chat-worktree-records.cjs';
@@ -10,8 +11,8 @@ import type { ChatWorktreeRecord } from './chat_worktree_records';
 import { homeDir } from './environment';
 import { profileRoot } from './host_operations';
 import { forgetProjectRepository, rememberProjectRepository } from './project_repositories';
-import * as storageTransactions from './storage_transactions';
-import type { FolderMove } from './storage_transactions';
+
+export interface FolderMove { from: string; to: string }
 
 function errorText(error: any): string { return error?.message ?? String(error); }
 
@@ -54,7 +55,7 @@ function canonicalFolder(folder: string): string {
 function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree, excludeArchivedChildren = false): boolean {
   const db = SessionTables.connection(root);
   const children = new Set<string>();
-  const sessions = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as Array<{ session_id: string; session_path: string }>;
+  const sessions = db.prepare('SELECT session_id, session_path, archived FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as Array<{ session_id: string; session_path: string; archived: number }>;
   if (excludeArchivedChildren) {
     const descendants = db.prepare(`WITH RECURSIVE descendants(id) AS (
       SELECT child_id FROM auxiliary_children WHERE parent_id=?
@@ -64,7 +65,7 @@ function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.
   }
   const target = canonicalFolder(folder);
   for (const session of sessions) {
-    if (children.has(session.session_id) && session.session_path.startsWith(join(root, 'archived') + sep)) continue;
+    if (children.has(session.session_id) && session.archived === 1) continue;
     let header: any;
     try { header = JSON.parse(readHeaderLine(session.session_path)); }
     catch (error: any) { if (error.code === 'ENOENT') continue; throw error; }
@@ -237,14 +238,12 @@ export function pendingWarnings(root = profileRoot()): string[] {
 }
 
 function transcriptArea(root: string, chatId: string): Area {
-  const path = SessionTables.lookup(root, chatId);
-  if (typeof path !== 'string' || !existsSync(path)) return 'missing';
-  for (const area of ['sessions', 'archived'] as const) if (path.startsWith(join(root, area) + sep)) return area;
-  throw new Error(`Transcript of chat ${chatId} is outside Piop storage: ${path}`);
+  const saved = SessionLifecycle.session(chatId, root);
+  if (!saved || !existsSync(saved.sessionPath)) return 'missing';
+  return saved.archived ? 'archived' : 'sessions';
 }
 
 export async function recover(root = profileRoot()): Promise<void> {
-  await storageTransactions.recover({ root });
   const failures = await Worktrees.recoverPreparing(root);
   for (const record of Worktrees.list(root)) {
     if (record.state === 'preparing') continue;

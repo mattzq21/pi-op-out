@@ -76,7 +76,7 @@ export function localRegisteredIdentity(path: string): string | undefined {
   const row = database.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
   const id = row?.session_id ?? undefined;
   const canonicalRoot = realpathSync(root);
-  if (!id && [root, canonicalRoot].some(directory => ['sessions', 'archived'].some(area => startsWithPath(path, join(directory, area))))) {
+  if (!id && [root, canonicalRoot].some(directory => startsWithPath(path, join(directory, 'sessions')))) {
     throw new Error('Session path is not registered');
   }
   if (id) return id;

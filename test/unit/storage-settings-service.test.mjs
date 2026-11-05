@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { appendFileSync, chmodSync, statSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { installDom, renderComponent, act, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
@@ -29,7 +28,7 @@ async function storagePanel(t, offline = false, archiveNames = [], options = {})
     const { name, hostId } = typeof archive === 'string' ? { name: archive, hostId: 'local' } : archive;
     const home = await daemon.invoke('home_directory', { hostId });
     const chat = await publish({ home, content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' });
-    await daemon.invoke('archive_session', { hostId, sessionPath: chat.path, terminalIds: [], clientId: 'storage-ui-test' });
+    await daemon.invoke('archive_session', { hostId, sessionId: chat.id, terminalIds: [], clientId: 'storage-ui-test' });
   }
   if (offline) await daemon.disconnect();
   mockWindows('main');
@@ -186,21 +185,16 @@ test('a failed bulk deletion reports the error and keeps the archived chats visi
   const { daemon, view, settle } = await storagePanel(t, false, ['First chat', 'Second chat']);
   await settle();
   const report = await daemon.invoke('storage_report');
-  const archive = report.hosts.find(host => host.hostId === 'local').archives[0];
-  const directory = dirname(archive.path);
-  const mode = statSync(directory).mode & 0o777;
+  const first = report.hosts.find(host => host.hostId === 'local').archives.find(chat => chat.name === 'First chat');
   const button = text => [...view.container.querySelectorAll('button')].find(button => button.textContent === text);
   await act(() => button('Delete all').click());
-  chmodSync(directory, 0o500);
-  try {
-    await act(() => view.container.querySelector('dialog button.primary-button').click());
-    await settle();
-    assert.match(view.container.querySelector('[role="alert"]').textContent, /EACCES|Permission denied/);
-    assert.ok(view.container.querySelector('[aria-label="Permanently delete First chat"]'));
-    assert.ok(view.container.querySelector('[aria-label="Permanently delete Second chat"]'));
-    const after = await daemon.invoke('storage_report');
-    assert.deepEqual(after.hosts.find(host => host.hostId === 'local').archives.map(chat => chat.name).sort(), ['First chat', 'Second chat']);
-  } finally { chmodSync(directory, mode); }
+  await daemon.invoke('delete_sessions', { sessionIds: [first.id], hostId: 'local', clientId: 'other-client' });
+  await act(() => view.container.querySelector('dialog button.primary-button').click());
+  await settle();
+  assert.match(view.container.querySelector('[role="alert"]').textContent, /^Could not delete conversations\. This conversation has been deleted/);
+  assert.ok(view.container.querySelector('[aria-label="Permanently delete Second chat"]'));
+  const after = await daemon.invoke('storage_report');
+  assert.deepEqual(after.hosts.find(host => host.hostId === 'local').archives.map(chat => chat.name), ['Second chat']);
 });
 
 

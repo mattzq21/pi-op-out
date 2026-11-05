@@ -32,7 +32,7 @@ function candidatePath(root, file) {
   if (path.resolve(file) !== file) return false;
   const relative = path.relative(root, file).split(path.sep);
 
-  const goal = ['sessions', 'archived'].includes(relative[0])
+  const goal = relative[0] === 'sessions'
     && relative.at(-2) === 'attachments' && /^goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})$/.test(relative.at(-1));
 
   return goal;

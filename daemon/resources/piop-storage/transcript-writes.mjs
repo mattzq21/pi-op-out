@@ -48,7 +48,7 @@ function header(entries) {
 
 function registerManaged(root, path, sessionId, saved) {
   const area = storagePath.relative(root, storagePath.resolve(path)).split(storagePath.sep)[0];
-  if (["sessions", "archived"].includes(area)) registry.recordTranscript(root, sessionId, storagePath.resolve(path), saved);
+  if (area === "sessions") registry.recordTranscript(root, sessionId, storagePath.resolve(path), saved);
 }
 
 function temporaryPath(path) {

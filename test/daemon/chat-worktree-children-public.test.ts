@@ -23,16 +23,16 @@ test('archiving a worktree chat and its child releases its worktree', async () =
   const child=(await agents.daemon.invoke('list_sessions')).find((s:any)=>s.auxiliaryParentId===branch.sessionId);
   expect(child).toBeTruthy();
   writeFileSync(join(branch.cwd,'dirty.txt'),'after last commit');
-  await agents.daemon.invoke('archive_session',{sessionPath:branch.sessionFile,hostId:'local',clientId:'laptop',terminalIds:[]});
+  await agents.daemon.invoke('archive_session',{sessionId:branch.sessionId,hostId:'local',clientId:'laptop',terminalIds:[]});
   const report=await agents.daemon.invoke('storage_report');
   const archives=report.hosts.flatMap((h:any)=>h.archives);
   expect(archives.some((a:any)=>a.id===child.id)).toBe(true);
   const childArchive=archives.find((a:any)=>a.id===child.id);
   expect(childArchive.restorable).toBe(false);
-  await expect(agents.daemon.invoke('restore_archived_session',{sessionPath:childArchive.path,hostId:'local',clientId:'laptop'})).rejects.toThrow('Auxiliary sessions can only be restored with their root session');
+  await expect(agents.daemon.invoke('restore_session',{sessionId:childArchive.id,hostId:'local',clientId:'laptop'})).rejects.toThrow('Auxiliary sessions can only be restored with their root session');
   expect(existsSync(branch.cwd)).toBe(false);
   const archived=archives.find((a:any)=>a.id===branch.sessionId);
-  await agents.daemon.invoke('restore_archived_session',{sessionPath:archived.path,hostId:'local',clientId:'laptop'});
+  await agents.daemon.invoke('restore_session',{sessionId:archived.id,hostId:'local',clientId:'laptop'});
   expect(readFileSync(join(branch.cwd,'dirty.txt'),'utf8')).toBe('after last commit');
   expect((await agents.daemon.invoke('list_sessions')).some((s:any)=>s.id===child.id)).toBe(true);
  } finally {await agents.close();}

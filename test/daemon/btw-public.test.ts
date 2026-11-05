@@ -119,19 +119,19 @@ test.concurrent('a side chat archived alone, and one archived with its main chat
   const chat = await answeredChat('Plan the archive');
   const closed = await sideChat(chat, '/btw First side question');
   const open = await sideChat(chat, '/btw Second side question');
-  const archive = (sessionPath: string) => agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath, terminalIds: [], clientId: 'btw-test' });
-  await archive(closed.sessionPath);
+  const archive = (sessionId: string) => agents.daemon.invoke('archive_session', { hostId: 'local', sessionId, terminalIds: [], clientId: 'btw-test' });
+  await archive(closed.sessionId);
   expect(await listed(closed.sessionId)).toBeUndefined();
   expect(await listed(open.sessionId)).toMatchObject({ auxiliaryParentId: chat.sessionId });
 
-  await archive((await listed(chat.sessionId)).path);
+  await archive(chat.sessionId);
   const archives = (await agents.daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').archives;
   const archived = (id: string) => archives.find((item: any) => item.id === id);
   expect([archived(chat.sessionId)?.restorable, archived(closed.sessionId)?.restorable, archived(open.sessionId)?.restorable]).toEqual([true, false, false]);
   const locate = (sessionId: string) => agents.daemon.invoke('broker_request', { hostId: 'local', path: '/orchestration', body: { action: 'locate', sessionId, hostId: 'local' } });
   expect([(await locate(chat.sessionId)).auxiliary, (await locate(closed.sessionId)).auxiliary, (await locate(open.sessionId)).auxiliary]).toEqual([false, true, true]);
 
-  await agents.daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archived(chat.sessionId).path, clientId: 'btw-test' });
+  await agents.daemon.invoke('restore_session', { hostId: 'local', sessionId: chat.sessionId, clientId: 'btw-test' });
   expect(await listed(chat.sessionId)).toBeDefined();
   expect([await listed(closed.sessionId), await listed(open.sessionId)]).toEqual([undefined, undefined]);
 }, 60000);

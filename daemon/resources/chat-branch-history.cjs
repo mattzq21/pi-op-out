@@ -184,7 +184,7 @@ function forget(root, sessionId, target) {
     return;
   }
   if (row.session_path !== target) throw new Error('This branch identity belongs to another conversation: ' + row.session_path);
-  require('./registry-deletion.cjs').forget(root, [{ sessionId, path: target }]);
+  require('./session-lifecycle.cjs').forget(root, [sessionId]);
 }
 
 async function discardBranchHistory(root, sessionId, sessionPath) {

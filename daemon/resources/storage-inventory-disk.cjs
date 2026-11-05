@@ -3,10 +3,12 @@ const path = require('node:path');
 const { validGoalPath } = require('./storage-inventory-owners.cjs');
 const { goalOwner } = require('./storage-inventory-goals.cjs');
 
-const localCategories = { sessions: 'active-conversations', archived: 'archived-conversations', tmp: 'temporary-chats', worktrees: 'chat-worktrees', recovery: 'unattributed-recovery-storage' };
+const localCategories = { sessions: 'active-conversations', tmp: 'temporary-chats', worktrees: 'chat-worktrees', recovery: 'unattributed-recovery-storage' };
 
 function specialCategory(target, category, metadata, discovery) {
   category = queuedCategory(target, category, metadata, discovery);
+
+  if (category === 'active-conversations' && discovery.archived?.has(target)) return 'archived-conversations';
 
   if (!metadata.isDirectory()) return category;
 

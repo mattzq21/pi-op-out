@@ -17,7 +17,6 @@ function started(operation: (input: any) => Promise<unknown> | unknown): Handler
 const handlers: Record<HostOperationName, Handler> = {
   'chat-branch-history': started(async input => (await import('./chat_branch_history')).publishBranchHistory(input)),
   'discard-chat-branch': started(async input => (await import('./chat_branch_history')).discardBranchHistory(input.root, input.sessionId, input.sessionPath)),
-  'session-descendants': started(async input => (await import('../resources/session-descendants.cjs')).sessionDescendants(input)),
   'index-sessions': started(async input => (await import('../resources/index-sessions.cjs')).indexSessions(input)),
   'storage-inventory': started(async input => (await import('../resources/storage-inventory.cjs')).storageInventory(input)),
   'recover-missing-session': started(async input => (await import('../resources/recover-missing-session.cjs')).recoverMissingSession(input)),
@@ -28,19 +27,15 @@ const handlers: Record<HostOperationName, Handler> = {
   'agent-definitions': started(async input => (await import('piop-agent-loader')).loadAgentDefinitions(input)),
   'save-agent-definitions': started(async input => (await import('piop-agent-loader')).saveAgentDefinitions(input)),
   'move-agent': started(async input => (await import('piop-agent-loader')).moveAgent(input)),
-  'storage-transaction': async (input, context) => {
-    if (!context.storage) throw new Error('Storage transaction has no storage locks');
-    const { runStorageTransaction } = await import('../resources/storage-operation.cjs');
-    const outcome = await runStorageTransaction({ ...context.storage, begin: context.begin }, input);
-    return outcome?.state === 'cancelled' ? CANCELLED_RESULT : outcome;
+  'session-storage': async (input, context) => {
+    if (!context.storage) throw new Error('Session storage change has no storage root');
+    const answer = (await import('../resources/session-lifecycle.cjs')).run({ root: context.storage.root, begin: context.begin }, input);
+    return answer.cancelled ? CANCELLED_RESULT : answer;
   },
 };
 
 function failure(id: number, error: any): WorkerReply {
-  const reply: WorkerReply = { id, ok: false, error: error instanceof Error ? error.message : String(error) };
-  if (typeof error?.state === 'string') reply.state = error.state;
-  if (typeof error?.warning === 'string') reply.warning = error.warning;
-  return reply;
+  return { id, ok: false, error: error instanceof Error ? error.message : String(error) };
 }
 
 async function run(port: MessagePort, job: WorkerJob): Promise<void> {

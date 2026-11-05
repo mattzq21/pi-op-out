@@ -4,22 +4,25 @@ const { randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 
-function relocateSession(profile, sessionPath, requestedReplacement) {
+function relocateSession(profile, sessionPath, requestedReplacement, from) {
   const release = acquireReferencePublicationLock(profile, true);
 
   try {
     const replacement = fs.realpathSync(requestedReplacement);
 
     if (!fs.statSync(replacement).isDirectory()) throw new Error('Project directory does not exist');
-    rewriteHeader(sessionPath, replacement);
+    rewriteHeader(sessionPath, replacement, from);
   } finally { release(); }
 }
 
-function rewriteHeader(sessionPath, replacement) {
+// Writes the transcript again with cwd replacement, at the same path. With from, only a transcript that works in from.
+function rewriteHeader(sessionPath, replacement, from) {
   const lines = fs.readFileSync(sessionPath, 'utf8').split('\n');
   const header = JSON.parse(lines[0]);
 
   if (header.type !== 'session') throw new Error('Invalid session header');
+
+  if (from !== undefined && header.cwd !== from) return;
   header.cwd = replacement;
   lines[0] = JSON.stringify(header);
   const temporary = `${sessionPath}.${randomUUID()}.tmp`;
@@ -43,7 +46,7 @@ function rewriteHeader(sessionPath, replacement) {
 }
 
 function checkedRelocation(request) {
-  if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string' || typeof request.cwd !== 'string') throw new Error('Invalid relocation request');
+  if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string' || typeof request.cwd !== 'string' || (request.from !== undefined && typeof request.from !== 'string')) throw new Error('Invalid relocation request');
   let root, source;
 
   try { root = fs.realpathSync(join(request.profile, 'sessions')); } catch (error) { throw new Error(`Could not locate piop sessions: ${error.message}`); }
@@ -58,7 +61,7 @@ function checkedRelocation(request) {
   catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw new Error(`Could not check project directory ${replacement}: ${error.message}`); }
 
   if (!directory) throw new Error(`Project directory does not exist: ${replacement}`);
-  relocateSession(request.profile, source, replacement);
+  relocateSession(request.profile, source, replacement, request.from);
 
   return null;
 }

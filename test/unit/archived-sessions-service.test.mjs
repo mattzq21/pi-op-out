@@ -19,7 +19,7 @@ async function archivePanel(t) {
   for (const project of ['alpha', 'beta']) {
     const cwd = join(home, 'work', project); mkdirSync(cwd, { recursive: true });
     const chat = await publish({ home, cwd, folder: project, content: JSON.stringify({ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Work on ' + project, timestamp: 1 } }) + '\n' });
-    await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'archive-test' });
+    await daemon.invoke('archive_session', { sessionId: chat.id, hostId: 'local', terminalIds: [], clientId: 'archive-test' });
     archived[project] = { ...chat, cwd };
   }
   mockWindows('main');
@@ -52,11 +52,10 @@ test('archived chats can be searched by project and restored to the chat list', 
 
 test('a restore that fails says why, and the panel then shows the archive as it is now', async t => {
   const { daemon, archived, rows } = await archivePanel(t);
-  const path = (await daemon.invoke('storage_report')).hosts[0].archives.find(archive => archive.cwd === archived.alpha.cwd).path;
-  await daemon.invoke('delete_archived_session', { sessionPath: path, hostId: 'local', clientId: 'other-client' });
+  await daemon.invoke('delete_sessions', { sessionIds: [archived.alpha.id], hostId: 'local', clientId: 'other-client' });
   const row = [...document.querySelectorAll('.session-item')].find(item => item.textContent.includes(archived.alpha.cwd));
   await act(async () => row.querySelector('button').click());
   await untilDom(() => document.querySelector('.session-scroll [role="alert"]'), 10000);
-  assert.match(document.querySelector('.session-scroll [role="alert"]').textContent, /^Could not restore conversation. Could not locate archived conversation/);
+  assert.match(document.querySelector('.session-scroll [role="alert"]').textContent, /^Could not restore conversation. This conversation has been deleted/);
   assert.deepEqual(rows(), [archived.beta.cwd]);
 });

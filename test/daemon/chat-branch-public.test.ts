@@ -64,7 +64,7 @@ test('branch copies selected history and committed files, archive keeps a snapsh
     await settled(after);
     expect(git(branch.cwd, 'rev-parse', 'HEAD')).toBe(base);
     expect(git(branch.cwd, 'status', '--porcelain')).toBe('M tracked.txt');
-    await agents.daemon.invoke('archive_session', { sessionPath: branch.sessionFile, hostId: 'local', clientId: 'laptop', terminalIds: [] });
+    await agents.daemon.invoke('archive_session', { sessionId: branch.sessionId, hostId: 'local', clientId: 'laptop', terminalIds: [] });
     expect(existsSync(branch.cwd)).toBe(false);
     expect(existsSync(cwd)).toBe(true);
     expect(git(cwd, 'rev-parse', 'refs/piop/archives/' + branch.sessionId + '^@')).toBe(base);
@@ -72,7 +72,7 @@ test('branch copies selected history and committed files, archive keeps a snapsh
     const report = await agents.daemon.invoke('storage_report');
     const archived = report.hosts.flatMap((h: any) => h.archives).find((a: any) => a.sessionId === branch.sessionId || a.id === branch.sessionId);
     expect(archived).toBeTruthy();
-    await agents.daemon.invoke('restore_archived_session', { sessionPath: archived.sessionPath ?? archived.path, hostId: 'local', clientId: 'laptop' });
+    await agents.daemon.invoke('restore_session', { sessionId: branch.sessionId, hostId: 'local', clientId: 'laptop' });
     const restored = (await agents.daemon.invoke('list_sessions')).find((s: any) => s.id === branch.sessionId);
     expect(restored).toBeTruthy();
     expect(readFileSync(join(restored.cwd, 'tracked.txt'), 'utf8')).toBe('branch work');

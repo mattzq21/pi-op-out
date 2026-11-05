@@ -145,7 +145,7 @@ describe("Conversation acceptance", () => {
       "pi_command:get_state": { ...connectedSessionResponses("retry-session")["pi_command:get_state"], sessionFile: "/tmp/retry-session.jsonl" },
       "pi_command:get_entries": history,
       "pi_command:retry_response": null,
-      delete_session: {},
+      delete_sessions: [],
       list_sessions: [],
     });
 
@@ -158,7 +158,7 @@ describe("Conversation acceptance", () => {
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => args.command?.type === "retry_response"));
       expect((await backendCalls()).filter(({ args }) => args.command?.type === "retry_response").map(({ args }) => args.command)).toMatchObject([{ type: "retry_response", entryId: "retry-assistant" }]);
       expect((await backendCalls()).some(({ args }) => isUserPrompt(args.command))).toBe(false);
-      expect((await backendCalls()).some(({ command }) => command === "delete_session")).toBe(false);
+      expect((await backendCalls()).some(({ command }) => command === "delete_sessions")).toBe(false);
     } finally {
       await updateBackendResponse("pi_command:get_entries", { entries: [], leafId: null });
       await emitPiEvent({ type: "session_switched" });

@@ -90,8 +90,6 @@ function sessionKind(file, profile) {
 
   if (relative[0] === 'sessions') return 'active';
 
-  if (relative[0] === 'archived') return 'archived';
-
   return 'referenced';
 }
 

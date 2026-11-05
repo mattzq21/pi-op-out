@@ -189,15 +189,13 @@ test('a branch of a branch survives archiving its parent and restores from share
     git(child.cwd, 'add', '.'); git(child.cwd, 'commit', '--quiet', '-m', 'Child work');
     const saved = git(child.cwd, 'rev-parse', 'HEAD');
 
-    await agents.daemon.invoke('archive_session', { sessionPath: parent.sessionFile, hostId: 'local', clientId: 'laptop', terminalIds: [] });
+    await agents.daemon.invoke('archive_session', { sessionId: parent.sessionId, hostId: 'local', clientId: 'laptop', terminalIds: [] });
     expect(existsSync(parent.cwd)).toBe(false);
-    await agents.daemon.invoke('archive_session', { sessionPath: child.sessionFile, hostId: 'local', clientId: 'laptop', terminalIds: [] });
+    await agents.daemon.invoke('archive_session', { sessionId: child.sessionId, hostId: 'local', clientId: 'laptop', terminalIds: [] });
     expect(existsSync(child.cwd)).toBe(false);
     expect(git(cwd, 'rev-parse', 'refs/piop/archives/' + child.sessionId)).toBe(saved);
 
-    const report = await agents.daemon.invoke('storage_report');
-    const archived = report.hosts.flatMap((host: any) => host.archives).find((archive: any) => archive.sessionId === child.sessionId || archive.id === child.sessionId);
-    await agents.daemon.invoke('restore_archived_session', { sessionPath: archived.sessionPath ?? archived.path, hostId: 'local', clientId: 'laptop' });
+    await agents.daemon.invoke('restore_session', { sessionId: child.sessionId, hostId: 'local', clientId: 'laptop' });
     const restored = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === child.sessionId);
     expect(git(restored.cwd, 'rev-parse', 'HEAD')).toBe(saved);
     expect(readFileSync(join(restored.cwd, 'child.txt'), 'utf8')).toBe('from child');

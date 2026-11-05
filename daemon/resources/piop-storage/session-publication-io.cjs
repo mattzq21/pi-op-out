@@ -209,7 +209,7 @@ function locate(root, id, nonce) {
 
   if (!file) return;
 
-  if (!inside(path.join(root, 'sessions'), file) && !inside(path.join(root, 'archived'), file)) throw new Error('Conversation database path is outside session storage');
+  if (!inside(path.join(root, 'sessions'), file)) throw new Error('Conversation database path is outside session storage');
   const value = header(file);
 
   if (value?.id === id && (!nonce || value.piopPublicationId === nonce)) return { path: file, header: value };

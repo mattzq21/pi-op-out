@@ -39,13 +39,13 @@ test('archiving a chat while its agent runs a command ends the command, and the 
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Archived job' });
   await job.started();
-  const { sessionFile } = await chat.command({ type: 'get_state' });
-  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: sessionFile, terminalIds: [], clientId: 'laptop' });
+  const { sessionId } = await chat.command({ type: 'get_state' });
+  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionId, terminalIds: [], clientId: 'laptop' });
   await job.stopped();
   expect(existsSync(join(chat.cwd, 'late.txt'))).toBe(false);
   expect(agents.model.requests.filter(request => text(request.messages[1]) === 'Archived job')).toHaveLength(1);
   const archive = (await agents.daemon.invoke('storage_report')).hosts[0].archives.find((item: any) => item.id === chat.sessionId);
-  await agents.daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archive.path, clientId: 'laptop' });
+  await agents.daemon.invoke('restore_session', { hostId: 'local', sessionId: archive.id, clientId: 'laptop' });
   const restored = (await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === chat.sessionId);
   await agents.daemon.invoke('start_pi', { runtimeId: 'restored-job', clientId: 'laptop', cwd: restored.cwd, sessionPath: restored.path });
   await agents.daemon.invoke('pi_command', { runtimeId: 'restored-job', command: { type: 'prompt', message: 'Carry on after the restore' } });
@@ -76,8 +76,8 @@ test('deleting a running chat stops its worker before removing its saved data', 
   const chat = await agents.rootChat();
   await chat.command({ type: 'prompt', message: 'Busy before deletion' });
   await job.started();
-  const { sessionFile } = await chat.command({ type: 'get_state' });
-  await agents.daemon.invoke('delete_session', { hostId: 'local', sessionPath: sessionFile, clientId: 'laptop' });
+  const { sessionFile, sessionId } = await chat.command({ type: 'get_state' });
+  await agents.daemon.invoke('delete_sessions', { hostId: 'local', sessionIds: [sessionId], clientId: 'laptop' });
   await job.stopped();
   expect(existsSync(join(chat.cwd, 'deleted-late.txt'))).toBe(false);
   expect(existsSync(sessionFile)).toBe(false);

@@ -15,8 +15,6 @@ export class HostOperationError extends Error {
   constructor(
     public readonly kind: HostOperationFailure,
     message: string,
-    public readonly state?: string,
-    public readonly warning?: string,
   ) {
     super(message);
     this.name = 'HostOperationError';
@@ -160,7 +158,7 @@ class WorkerLane {
         } catch (error) { settle(job, new HostOperationError('unknown', 'Host operation ' + job.operation.name + ' gave an invalid result (' + errorMessage(error) + ')')); }
       }
     } else {
-      const failure = new HostOperationError('failed', reply.error, reply.state, reply.warning);
+      const failure = new HostOperationError('failed', reply.error);
       if (job.settled) console.error('Host operation ' + job.operation.name + ' failed after its caller stopped waiting: ' + reply.error);
       else settle(job, failure);
     }

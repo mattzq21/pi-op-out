@@ -1,4 +1,4 @@
-import { recoverChatWorktrees } from './archives';
+import { recoverChatWorktrees, sweepDeletedSessions } from './archives';
 import { App } from './app';
 import { DEVELOPMENT } from './config';
 import * as daemonEndpoint from './daemon_endpoint';
@@ -58,6 +58,7 @@ async function runBackend(): Promise<void> {
     let orphansStopped = false;
     await step(async () => { orphansStopped = await stopOrphanedProcesses(); });
     await step(() => daemonRestart.adoptCandidatePlan());
+    await step(() => sweepDeletedSessions(app));
     await step(() => recoverChatWorktrees(app));
     await step(async () => { settings = await loadAppSettings(app); });
     await step(() => startLocalHost(app, settings!));

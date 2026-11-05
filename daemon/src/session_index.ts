@@ -147,7 +147,7 @@ function localSessionCandidates(root: string, cache: Map<string, CachedSession>)
   const prefix = root.replace(/\/+$/, '') + sep;
   let resolved = prefix;
   try { resolved = realpathSync(root) + sep; } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-  const rows = database.prepare(`SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size, n.name AS name, b.session_id AS branch_session, b.tip_id AS branch_tip, b.leaf_id AS branch_leaf FROM sessions s LEFT JOIN session_branch_selection b ON b.session_id=s.session_id LEFT JOIN session_names n ON n.session_id=s.session_id LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1 OR substr(s.session_path, 1, length(?2))=?2`).all(prefix, resolved) as any[];
+  const rows = database.prepare(`SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size, n.name AS name, b.session_id AS branch_session, b.tip_id AS branch_tip, b.leaf_id AS branch_leaf FROM sessions s LEFT JOIN session_branch_selection b ON b.session_id=s.session_id LEFT JOIN session_names n ON n.session_id=s.session_id LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE s.archived=0 AND (substr(s.session_path, 1, length(?1))=?1 OR substr(s.session_path, 1, length(?2))=?2)`).all(prefix, resolved) as any[];
   for (const row of rows) {
     const path: string = row.path;
     const saved = row.modified !== null && row.modified !== undefined && row.size !== null && row.size !== undefined ? [String(row.modified), Number(row.size)] as const : undefined;

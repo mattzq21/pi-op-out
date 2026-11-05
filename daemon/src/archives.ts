@@ -1,21 +1,21 @@
-import { realpathSync, statSync } from 'node:fs';
-import { extname, join, sep } from 'node:path';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { extname, sep } from 'node:path';
 import { z } from 'zod';
 import { archivedConversationSchema, hostStorageSchema, storageCategorySchema } from '../../protocol/results';
-import { STORAGE_DIRECTORY } from './config';
+import { isAuxiliary, records } from '../resources/piop-storage/session-records.cjs';
 import { homeDir } from './environment';
 import { sessionIdentity } from './pi_launch';
 import { desktopSessionsDir } from './process_io';
 import { DEFAULT_TIMEOUT, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
-import * as storageTransactions from './storage_transactions';
-import { StorageTransactionError } from './storage_transactions';
+import * as SessionLifecycle from './session_lifecycle';
+import type { SavedSession } from './session_lifecycle';
 import * as chatWorktrees from './chat_worktree_lifecycle';
-import { assertRootRestore, restoreSessionTree } from './restore';
+import type { FolderMove } from './chat_worktree_lifecycle';
+import { readHeaderLine } from './host/protocol';
 import { MutationGuard } from './conversation_ownership';
 import * as sessionGroups from './session_groups';
 import * as terminalSessions from './terminal_sessions';
 import { stopTerminals } from './terminals';
-import type { PiRuntime } from './pi_runtime';
 import type { TerminalRuntime } from './terminals';
 import type { App } from './app';
 
@@ -45,38 +45,24 @@ function within(path: string, root: string): boolean { return path.startsWith(ro
 
 function isFile(path: string): boolean { try { return statSync(path).isFile(); } catch { return false; } }
 
-export function localDesktopSessionFileAt(home: string, sessionPath: string): string {
+// The transcript at sessionPath, when it is a saved chat that is archived, or not.
+export function locateSessionFile(sessionPath: string, archived: boolean): string {
   let root: string; let source: string;
-  try { root = realpathSync(desktopSessionsDir(home)); } catch (error: any) { throw new Error(`Could not locate piop sessions: ${error.message}`); }
-  try { source = realpathSync(sessionPath); } catch (error: any) { throw new Error(`Could not locate session file: ${error.message}`); }
-  if (!within(source, root) || extname(source) !== '.jsonl' || !isFile(source)) throw new Error('Only piop session files can be accessed');
+  try { root = realpathSync(desktopSessionsDir(homeDir())); } catch (error: any) { throw new Error(`Could not locate piop sessions: ${error.message}`); }
+  try { source = realpathSync(sessionPath); } catch (error: any) { throw new Error(`Could not locate ${archived ? 'archived conversation' : 'session file'}: ${error.message}`); }
+  const saved = within(source, root) && extname(source) === '.jsonl' && isFile(source) ? registered(source) : undefined;
+  if (saved?.archived !== archived) throw new Error(archived ? 'Only archived piop conversations can be accessed' : 'Only piop session files can be accessed');
   return source;
 }
 
-export function localArchivedSessionFileAt(home: string, sessionPath: string): string {
-  let root: string; let source: string;
-  try { root = realpathSync(join(home, STORAGE_DIRECTORY, 'archived')); } catch (error: any) { throw new Error(`Could not locate piop archives: ${error.message}`); }
-  try { source = realpathSync(sessionPath); } catch (error: any) { throw new Error(`Could not locate archived conversation: ${error.message}`); }
-  if (!within(source, root) || extname(source) !== '.jsonl' || !isFile(source)) throw new Error('Only archived piop conversations can be accessed');
-  return source;
-}
-
-export async function locateSessionFile(path: string, archived: boolean): Promise<string> {
-  const locate = () => (archived ? localArchivedSessionFileAt : localDesktopSessionFileAt)(homeDir(), path);
-  return locate();
-}
-
-async function retireArchivedSession(client: PiRuntime, sessionPath: string): Promise<void> {
-  const local = client.host;
-  if (!local?.alive) return;
-  const path = await locateSessionFile(sessionPath, false);
-  const key = await sessionIdentity(path);
-  if (local.alive) await local.host.retire(key, path, true);
+function registered(path: string): SavedSession | undefined {
+  try {
+    const id = SessionLifecycle.idOf(path);
+    return id === undefined ? undefined : SessionLifecycle.session(id);
+  } catch { return undefined; }
 }
 
 async function releaseAll(guards: MutationGuard[]): Promise<void> { for (const guard of guards) await guard.release(); }
-
-function maybeCommitted(error: unknown): boolean { return error instanceof StorageTransactionError && error.state !== 'rolled-back'; }
 
 function reportWarnings(app: App, warnings: string[]): void {
   if (!warnings.length) return;
@@ -86,161 +72,147 @@ function reportWarnings(app: App, warnings: string[]): void {
 }
 
 async function undoAfter(error: unknown, undo: () => Promise<void>): Promise<never> {
-  if (maybeCommitted(error)) throw error;
   try { await undo(); }
   catch (cleanup: any) { throw new Error(`${(error as any)?.message ?? error}\nWorktree cleanup failed: ${cleanup?.message ?? cleanup}`); }
   throw error;
 }
 
-async function archiveSessionPaths(app: App, client: PiRuntime, sessionPath: string, clientId: string, mutations: MutationGuard[]): Promise<string[]> {
-  mutations.push(await MutationGuard.acquire(app, sessionPath, clientId, false, 'archive'));
-  await retireArchivedSession(client, sessionPath);
-  const paths = [sessionPath];
-  for (;;) {
-    const descendants = (await sessionDescendants(sessionPath, false, false)).map(([path]) => path).filter(path => !paths.includes(path));
-    if (!descendants.length) break;
-    for (const path of descendants) {
-      mutations.push(await MutationGuard.acquire(app, path, clientId, false, 'archive'));
-      await retireArchivedSession(client, path);
-      paths.push(path);
-    }
+async function finishAll(guards: MutationGuard[], tree: SavedSession[], action: string, warnings: string[]): Promise<void> {
+  for (const [index, guard] of guards.entries()) {
+    try { await guard.finish(); }
+    catch (error: any) { warnings.push(`${action} committed, but ownership cleanup failed for ${tree[index]!.sessionPath}: ${error?.message ?? error}`); }
   }
-  return paths;
 }
 
-export async function archiveSession(app: App, runtime: TerminalRuntime, sessionPath: string, terminalIds: string[], clientId: string): Promise<void> {
-  const client = app.pi;
-  await client.lifecycle.run(async () => {
-    const mutations: MutationGuard[] = [];
+// Holds sessionId and the active chats under it, and stops their runtimes. New chats under them are held too.
+async function holdArchiveTree(app: App, sessionId: string, clientId: string, guards: MutationGuard[]): Promise<SavedSession[]> {
+  const tree: SavedSession[] = [];
+  const hold = async (id: string) => {
+    guards.push(await MutationGuard.acquire(app, id, clientId, 'archive'));
+    const saved = SessionLifecycle.session(id)!;
+    const local = app.pi.host;
+    if (local?.alive) await local.host.retire(id, saved.sessionPath, true);
+    tree.push(saved);
+  };
+  await hold(sessionId);
+  for (;;) {
+    const added = SessionLifecycle.descendants(sessionId, { archived: false }).filter(child => !tree.some(saved => saved.sessionId === child.sessionId));
+    if (!added.length) return tree;
+    for (const child of added) await hold(child.sessionId);
+  }
+}
+
+export async function archiveSession(app: App, runtime: TerminalRuntime, sessionId: string, terminalIds: string[], clientId: string): Promise<void> {
+  await app.pi.lifecycle.run(async () => {
+    const guards: MutationGuard[] = [];
     try {
-      const paths = await archiveSessionPaths(app, client, sessionPath, clientId, mutations);
-      const sessionIds: string[] = [];
-      for (const path of paths) sessionIds.push(await sessionIdentity(path));
-      terminalIds.push(...terminalSessions.sessionTerminals(runtime, sessionIds));
-      await stopTerminals(runtime, terminalIds);
-      const archiving = await chatWorktrees.beginArchive(sessionIds);
+      const tree = await holdArchiveTree(app, sessionId, clientId, guards);
+      const ids = tree.map(saved => saved.sessionId);
+      await stopTerminals(runtime, [...terminalIds, ...terminalSessions.sessionTerminals(runtime, ids)]);
+      const archiving = await chatWorktrees.beginArchive(ids);
       const invalidate = app.sessionIndex.projects.invalidateAfter('local');
-      try { await storageTransactions.archive(paths); }
+      try { SessionLifecycle.archive(ids); }
       catch (error) { chatWorktrees.stopped(archiving); await undoAfter(error, () => chatWorktrees.rollbackArchive(archiving)); }
       finally { invalidate(); }
       const warnings = await chatWorktrees.finishArchive(archiving);
-      for (let index = 0; index < paths.length; index++) {
-        try { await mutations[index]!.finishCommitted(); }
-        catch (error: any) { warnings.push(`Archive committed, but ownership cleanup failed for ${paths[index]}: ${error?.message ?? error}`); }
-        app.emit('pi://session-removed', { hostId: 'local', sessionPath: paths[index], sessionId: sessionIds[index] });
-      }
+      await finishAll(guards, tree, 'Archive', warnings);
+      for (const saved of tree) app.emit('pi://session-removed', { hostId: 'local', sessionPath: saved.sessionPath, sessionId: saved.sessionId });
       reportWarnings(app, warnings);
-    } finally { await releaseAll(mutations); }
+    } finally { await releaseAll(guards); }
   });
 }
 
-type DescendantsRequest = { path: string; root: string; archived: boolean; includeOtherArea: boolean; kinds?: string[] };
-
-// Paths, or path and archived pairs when the request includes the other area.
-const descendantsSchema = z.array(z.union([z.string(), z.tuple([z.string(), z.boolean()])]));
-
-const descendantsOperation = hostOperation<DescendantsRequest, z.output<typeof descendantsSchema>>('session-descendants', 'general', STORAGE_TIMEOUT, descendantsSchema);
+// Deletes the chats sessionIds, archived or not, and every chat under them. Gives the IDs of the deleted chats.
+export function deleteSessions(app: App, sessionIds: string[], clientId: string): Promise<string[]> {
+  return app.pi.lifecycle.run(async () => {
+    if (!sessionIds.length) throw new Error('Select at least one conversation to delete');
+    const guards: MutationGuard[] = [];
+    const tree: SavedSession[] = [];
+    const hold = async (id: string) => {
+      if (tree.some(saved => saved.sessionId === id)) return false;
+      guards.push(await MutationGuard.acquire(app, id, clientId, 'delete'));
+      tree.push(SessionLifecycle.session(id)!);
+      return true;
+    };
+    try {
+      for (const id of sessionIds) await hold(id);
+      for (let added = true; added;) {
+        added = false;
+        for (const saved of [...tree]) for (const child of SessionLifecycle.descendants(saved.sessionId)) added = await hold(child.sessionId) || added;
+      }
+      const ids = tree.map(saved => saved.sessionId);
+      await stopTerminals(app.terminals, terminalSessions.sessionTerminals(app.terminals, ids));
+      await SessionLifecycle.deleteSessions(ids);
+      const warnings = await chatWorktrees.releaseDeleted(ids);
+      await finishAll(guards, tree, 'Deletion', warnings);
+      for (const saved of tree) app.emit('pi://session-removed', { hostId: 'local', sessionPath: saved.sessionPath, sessionId: saved.sessionId });
+      reportWarnings(app, warnings);
+      try { await sessionGroups.refreshDeletions(app); }
+      catch (error: any) { console.error(`Committed deletion group cleanup will retry: ${error.message ?? error}`); }
+      return ids;
+    } finally { await releaseAll(guards); }
+  });
+}
 
 export const RESTORED_KINDS = ['subagent'];
 
-export async function sessionDescendants(sessionPath: string, archived: boolean, includeOtherArea: boolean, kinds?: string[]): Promise<Array<[string, boolean]>> {
-  const root = join(profileRoot(), archived ? 'archived' : 'sessions');
-  let value: z.output<typeof descendantsSchema>;
-  try { value = await runHostOperation(descendantsOperation, { path: sessionPath, root, archived, includeOtherArea, kinds }); }
-  catch (error: any) { throw new Error(`Could not find subagent conversations: ${error?.message ?? error}`); }
-  return value.map(item => typeof item === 'string' ? [item, archived] : [item[0], item[1]]);
-}
-
-async function deletionTargets(paths: Array<[string, boolean]>): Promise<storageTransactions.DeletionTarget[]> {
-  const targets: storageTransactions.DeletionTarget[] = [];
-  for (const [path, archived] of paths) {
-    const file = await locateSessionFile(path, archived);
-    targets.push({ path: file, area: archived ? 'archived' : 'sessions' });
-  }
-  return targets;
-}
-
-async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: string[], archived: boolean, clientId: string): Promise<string[]> {
-  return runtime.lifecycle.run(async () => {
-    if (!sessionPaths.length) throw new Error('Select at least one conversation to delete');
-    const mutations: MutationGuard[] = [];
-    try {
-      const paths: Array<[string, boolean]> = [];
-      for (const sessionPath of sessionPaths) {
-        const path = await locateSessionFile(sessionPath, archived);
-        if (paths.some(([existing]) => existing === path)) continue;
-        mutations.push(await MutationGuard.acquire(app, path, clientId, archived, 'delete'));
-        paths.push([path, archived]);
-      }
-      const roots = [...paths];
-      for (;;) {
-        const children: Array<[string, boolean]> = [];
-        for (const [path, isArchived] of roots) children.push(...await sessionDescendants(path, isArchived, true));
-        let added = false;
-        for (const [child, childArchived] of children) {
-          if (paths.some(([path]) => path === child)) continue;
-          mutations.push(await MutationGuard.acquire(app, child, clientId, childArchived, 'delete'));
-          paths.push([child, childArchived]);
-          added = true;
-        }
-        if (!added) break;
-      }
-      const targets = await deletionTargets(paths);
-      const sessionIds: string[] = [];
-      for (const [path] of paths) sessionIds.push(await sessionIdentity(path));
-      await stopTerminals(app.terminals, terminalSessions.sessionTerminals(app.terminals, sessionIds));
-      await storageTransactions.deleteSessions(targets, []);
-      reportWarnings(app, await chatWorktrees.releaseDeleted(sessionIds));
-      for (let index = 0; index < paths.length; index++) {
-        try { await mutations[index]!.finishCommitted(); }
-        catch (error: any) { console.error(`Conversation deletion committed, but ownership cleanup failed for ${paths[index]![0]}: ${error.message ?? error}`); }
-        app.emit('pi://session-removed', { hostId: 'local', sessionPath: paths[index]![0], sessionId: sessionIds[index] });
-      }
-      try { await sessionGroups.refreshDeletions(app); }
-      catch (error: any) { console.error(`Committed deletion group cleanup will retry: ${error.message ?? error}`); }
-      return paths.map(([path]) => path);
-    } finally { await releaseAll(mutations); }
-  });
-}
-
-export function deleteSession(app: App, runtime: PiRuntime, sessionPath: string, clientId: string): Promise<string[]> {
-  return deleteStoredSessions(app, runtime, [sessionPath], false, clientId);
-}
-
-export function deleteArchivedSession(app: App, runtime: PiRuntime, sessionPath: string, sessionPaths: string[] | undefined | null, clientId: string): Promise<string[]> {
-  return deleteStoredSessions(app, runtime, [...(sessionPaths ?? []), sessionPath], true, clientId);
-}
-
 const restores = new Map<string, Promise<void>>();
 
-export function restoreArchivedSession(app: App, sessionPath: string, clientId: string): Promise<void> {
-  const running = restores.get(sessionPath);
+export function restoreSession(app: App, sessionId: string, clientId: string): Promise<void> {
+  const running = restores.get(sessionId);
   if (running) return running;
-  const restore = app.pi.lifecycle.run(() => restoreTree(app, sessionPath, clientId)).finally(() => restores.delete(sessionPath));
-  restores.set(sessionPath, restore);
+  const restore = app.pi.lifecycle.run(() => restoreTree(app, sessionId, clientId)).finally(() => restores.delete(sessionId));
+  restores.set(sessionId, restore);
   return restore;
 }
 
-async function restoreTree(app: App, sessionPath: string, clientId: string): Promise<void> {
-  const restoring = await beginTreeRestore(sessionPath);
-  let result: Awaited<ReturnType<typeof restoreSessionTree>>;
-  try { result = await restoreSessionTree(sessionPath, path => MutationGuard.acquire(app, path, clientId, true, 'restore'), chatWorktrees.folderMoves(restoring)); }
-  catch (error) { chatWorktrees.stopped(restoring); return undoAfter(error, () => chatWorktrees.rollbackRestore(restoring)); }
-  try { await chatWorktrees.finishRestore(restoring); }
-  catch (error: any) { reportWarnings(app, [`Restore committed; releasing the archive reference will retry: ${error?.message ?? error}`]); }
-  for (const session of result.sessions) app.emit('pi://session-restored', { hostId: 'local', sessionId: session.sessionId, sessionPath: session.sessionPath });
-  app.emit('pi://sessions-changed', {});
+// Restores sessionId with its archived subagents. Their worktrees come back first; when one comes back in another
+// folder, the chats that worked in the old folder are moved to it after the commit.
+async function restoreTree(app: App, sessionId: string, clientId: string): Promise<void> {
+  const root = SessionLifecycle.session(sessionId);
+  if (!root) throw new Error('This conversation has been deleted');
+  if (!root.archived) throw new Error('This conversation is not archived');
+  assertRootRestore(root);
+  const tree = [root, ...SessionLifecycle.descendants(sessionId, { archived: true, kinds: RESTORED_KINDS })];
+  const ids = tree.map(saved => saved.sessionId);
+  const guards: MutationGuard[] = [];
+  try {
+    for (const id of ids) guards.push(await MutationGuard.acquire(app, id, clientId, 'restore'));
+    const restoring = await chatWorktrees.beginRestore(ids);
+    try { SessionLifecycle.restore(ids); }
+    catch (error) { chatWorktrees.stopped(restoring); await undoAfter(error, () => chatWorktrees.rollbackRestore(restoring)); }
+    const warnings = await moveFolders(tree, chatWorktrees.folderMoves(restoring));
+    try { await chatWorktrees.finishRestore(restoring); }
+    catch (error: any) { warnings.push(`Restore committed; releasing the archive reference will retry: ${error?.message ?? error}`); }
+    await finishAll(guards, tree, 'Restore', warnings);
+    reportWarnings(app, warnings);
+    for (const saved of tree) app.emit('pi://session-restored', { hostId: 'local', sessionId: saved.sessionId, sessionPath: saved.sessionPath });
+    app.emit('pi://sessions-changed', {});
+  } finally { await releaseAll(guards); }
 }
 
-async function beginTreeRestore(sessionPath: string): Promise<Awaited<ReturnType<typeof chatWorktrees.beginRestore>>> {
-  let source: string;
-  try { source = localArchivedSessionFileAt(homeDir(), sessionPath); }
-  catch { return []; }
-  assertRootRestore(source);
-  const tree = [source, ...(await sessionDescendants(source, true, false, RESTORED_KINDS)).map(([path]) => path)];
-  const chatIds: string[] = [];
-  for (const path of tree) chatIds.push(await sessionIdentity(path));
-  return chatWorktrees.beginRestore(chatIds);
+function assertRootRestore(saved: SavedSession): void {
+  const entries = readFileSync(saved.sessionPath, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+  if (isAuxiliary([...entries, ...records(saved.sessionPath, saved.sessionId).map((record: any) => record.entry)])) throw new Error('Auxiliary sessions can only be restored with their root session');
+}
+
+async function moveFolders(tree: SavedSession[], moves: FolderMove[]): Promise<string[]> {
+  const warnings: string[] = [];
+  if (!moves.length) return warnings;
+  for (const saved of tree) {
+    try {
+      const cwd = JSON.parse(readHeaderLine(saved.sessionPath))?.cwd;
+      const move = moves.find(item => item.from === cwd);
+      if (move) await runHostOperation(relocateOperation, { profile: profileRoot(), sessionPath: saved.sessionPath, cwd: move.to, from: move.from });
+    } catch (error: any) { warnings.push(`Restore committed, but ${saved.sessionPath} still works in its old folder: ${error?.message ?? error}`); }
+  }
+  return warnings;
+}
+
+// Removes the files of chats that were deleted while the daemon stopped.
+export function sweepDeletedSessions(app: App): void {
+  try { reportWarnings(app, SessionLifecycle.sweep()); }
+  catch (error: any) { reportWarnings(app, [`Could not remove the files of deleted conversations: ${error?.message ?? error}`]); }
 }
 
 export async function recoverChatWorktrees(app: App): Promise<void> {
@@ -250,7 +222,7 @@ export async function recoverChatWorktrees(app: App): Promise<void> {
 
 export async function relocateSession(app: App, sessionPath: string, cwd: string, clientId: string): Promise<void> {
   await app.pi.lifecycle.run(async () => {
-    const mutation = await MutationGuard.acquire(app, sessionPath, clientId, false, 'relocate');
+    const mutation = await MutationGuard.acquire(app, await sessionIdentity(locateSessionFile(sessionPath, false)), clientId, 'relocate');
     try {
       try { await runHostOperation(relocateOperation, { profile: profileRoot(), sessionPath, cwd }); }
       catch (error: any) { throw new Error(`Could not relocate conversation: ${error?.message ?? error}`); }
@@ -259,7 +231,7 @@ export async function relocateSession(app: App, sessionPath: string, cwd: string
   });
 }
 
-const relocateOperation = hostOperation<{ profile: string; sessionPath: string; cwd: string }, null>('relocate-session', 'general', DEFAULT_TIMEOUT, z.unknown().transform(() => null));
+const relocateOperation = hostOperation<{ profile: string; sessionPath: string; cwd: string; from?: string }, null>('relocate-session', 'general', DEFAULT_TIMEOUT, z.unknown().transform(() => null));
 
 const recoverySchema = z.object({ cwd: z.string(), recovery: z.unknown(), warnings: z.array(z.string()) });
 
@@ -270,8 +242,8 @@ const recoverOperation = hostOperation<{ action: 'empty'; profile: string; sessi
 export async function recoverMissingSession(app: App, sessionPath: string, action: string, clientId: string): Promise<any> {
   if (action !== 'empty') throw new Error('Unknown recovery action');
   return app.pi.lifecycle.run(async () => {
-    const path = await locateSessionFile(sessionPath, false);
-    const mutation = await MutationGuard.acquire(app, path, clientId, false, 'relocate');
+    const path = locateSessionFile(sessionPath, false);
+    const mutation = await MutationGuard.acquire(app, await sessionIdentity(path), clientId, 'relocate');
     try {
       let value: Recovery;
       try { value = await runHostOperation(recoverOperation, { action: 'empty', profile: profileRoot(), sessionPath: path }); }

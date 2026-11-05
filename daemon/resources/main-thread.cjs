@@ -39,7 +39,7 @@ let caller;
 
 function currentCaller() { return caller; }
 
-const FAILURE_FIELDS = ['code', 'state', 'warning', 'damaged', 'publicationPending', 'dependenciesRetained'];
+const FAILURE_FIELDS = ['code', 'damaged', 'publicationPending', 'dependenciesRetained'];
 
 // In a worker thread: sends each change on port, and waits on signal until the main thread has answered.
 function connectWorker(port, signal) {

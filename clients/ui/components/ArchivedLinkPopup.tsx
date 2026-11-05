@@ -1,9 +1,8 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
-import { restoreArchivedConversation } from "../lib/nativeTransport";
-import { storageFailureText } from "../lib/storageFailure";
+import { restoreConversation } from "../lib/nativeTransport";
 
-export type ArchivedLink = { hostId: string; sessionId: string; sessionPath: string; name: string; anchor: HTMLElement };
+export type ArchivedLink = { hostId: string; sessionId: string; name: string; anchor: HTMLElement };
 
 const margin = 8;
 
@@ -19,8 +18,8 @@ export function ArchivedLinkPopup(props: { link: ArchivedLink; onClose: () => vo
   const restore = async () => {
     setRestoring(true); setError(undefined);
 
-    try { await restoreArchivedConversation(props.link.sessionPath, props.link.hostId); props.onRestored(); }
-    catch (reason) { setError(storageFailureText("restore", reason)); }
+    try { await restoreConversation(props.link.sessionId, props.link.hostId); props.onRestored(); }
+    catch (reason) { setError(`Could not restore conversation. ${reason instanceof Error ? reason.message : String(reason)}`); }
     finally { setRestoring(false); }
   };
 

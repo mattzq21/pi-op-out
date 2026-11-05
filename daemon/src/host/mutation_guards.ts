@@ -31,7 +31,8 @@ export class MutationGuards {
     if (!entry) return null;
     const [guard, operation] = entry;
     if (operation === 'restore') {
-      await guard.restoreFinished(host.ownership(), typeof packet.restoredPath === 'string' ? packet.restoredPath : null);
+      if (flag(packet, 'success')) guard.restoreFinished(host.ownership(), null);
+      else guard.release(host.ownership(), false);
       return null;
     }
     const deletedId = operation === 'delete' && flag(packet, 'success') && typeof guard.saved?.header?.id === 'string' ? guard.saved.header.id : undefined;

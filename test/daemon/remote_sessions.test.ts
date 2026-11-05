@@ -179,21 +179,11 @@ const onServer = (command: string, args: any) => daemon.invoke(command, { ...arg
 const serverFailure = (command: string, args: any) => daemon.failure(command, { ...args, hostId: 'server', clientId: 'test-client' });
 
 
-test('remote session commands accept only transcripts inside the matching storage area and keep literal names', async () => {
+test('remote deletion takes saved chat IDs and keeps literal names', async () => {
   const outside = join(server.home, 'outside.jsonl'); writeFileSync(outside, 'precious');
-  for (const [area, command, expected] of [['sessions', 'delete_session', 'Only piop session files'], ['archived', 'delete_archived_session', 'Only archived piop conversations']] as const) {
-    const root = join(server.home, '.piop', area, 'checks'); mkdirSync(root, { recursive: true });
-    const wrong = join(root, 'wrong.json'); writeFileSync(wrong, 'keep');
-    const folder = join(root, 'directory.jsonl'); mkdirSync(folder, { recursive: true });
-    const escape = join(root, 'escape.jsonl'); symlinkSync(outside, escape);
-    for (const path of [outside, wrong, folder, escape]) expect(await serverFailure(command, { sessionPath: path })).toStartWith(expected);
-    expect(await serverFailure(command, { sessionPath: join(root, 'missing.jsonl') })).toStartWith('Could not locate');
-    expect(readFileSync(wrong, 'utf8')).toBe('keep');
-  }
+  expect(await serverFailure('delete_sessions', { sessionIds: [crypto.randomUUID()] })).toBe('This conversation has been deleted');
   const literal = publicSession(server.home, { cwd: server.home, folder: "nested ' $(touch injected) 日本語" });
-  expect(await serverFailure('delete_archived_session', { sessionPath: literal.path })).toStartWith('Only archived');
-  const alias = join(dirname(literal.path), 'alias.jsonl'); symlinkSync(literal.path, alias);
-  expect(await onServer('delete_session', { sessionPath: alias })).toEqual([literal.path]);
+  expect(await onServer('delete_sessions', { sessionIds: [literal.id] })).toEqual([literal.id]);
   expect(existsSync(literal.path)).toBe(false);
   expect(readFileSync(outside, 'utf8')).toBe('precious');
   expect(existsSync(join(server.home, 'injected'))).toBe(false);

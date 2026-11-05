@@ -1,9 +1,6 @@
 import stateRecords from '../daemon/resources/piop-storage/session-records.cjs';
 import sessionNames from '../daemon/resources/session-broker/session-names.cjs';
 import { reserve, bind, connection } from "../daemon/resources/session-database.cjs";
-import { createRequire } from 'node:module';
-import { openSync, closeSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -82,21 +79,5 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
     traceReader({ registerTool(value) { tool = value; } });
     if (tool?.name !== 'read_trace') throw new Error('Trace tool was not registered');
   }
-  const archive = async (sourcePath = path) => {
-    const entry = join(buildDirectory, 'archive-command.cjs');
-    await build({ entryPoints: ['daemon/resources/storage-transaction-command.cjs'], outfile: entry, bundle: true, platform: 'node', format: 'iife', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()] });
-    const { scriptLoader } = createRequire(import.meta.url)('../daemon/resources/host-script.cjs');
-    const descriptor = openSync(entry, 'r');
-    let reply;
-    try {
-      reply = JSON.parse(execFileSync('bun', ['-e', scriptLoader, '--', '/proc/self/fd/3'], {
-        input: JSON.stringify({ action: 'archive', paths: [sourcePath], root: join(home, '.piop') }),
-        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe', descriptor], timeout: 30000,
-        env: { ...process.env, BUN_BE_BUN: '1' },
-      }));
-    } finally { closeSync(descriptor); }
-    if (!reply.ok || reply.result?.state !== 'committed') throw new Error(JSON.stringify(reply));
-    return reply.result.result.sessions[0].sessionPath;
-  };
-  return { home, path, id: identities.get(path), publish, archive, read: (query = path) => tool.execute(randomUUID(), { query }, undefined, undefined, { cwd: home }) };
+  return { home, path, id: identities.get(path), publish, read: (query = path) => tool.execute(randomUUID(), { query }, undefined, undefined, { cwd: home }) };
 }

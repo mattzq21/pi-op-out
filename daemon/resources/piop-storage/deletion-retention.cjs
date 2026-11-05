@@ -16,9 +16,7 @@ function metadata(file) {
 
 function registeredGoals(root, inventory) {
   for (const directory of require('./goal-ownership.cjs').directories(root)) {
-    const area = path.relative(root, directory).split(path.sep)[0];
-
-    if (!['sessions', 'archived'].includes(area)
+    if (path.relative(root, directory).split(path.sep)[0] !== 'sessions'
       || path.basename(path.dirname(directory)) !== 'attachments' || !/^goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})$/.test(path.basename(directory))) continue;
     const info = metadata(directory);
 
@@ -177,7 +175,7 @@ function survivingSession(root, file, id, excluded, connection) {
 }
 
 function collectRetention(root, sources, savedFiles, deferred = { directories: [], sessionIds: [] }, unpublishedGoals = false) {
-  const inventory = { warnings: [], goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: require('../storage-transaction.cjs').pending(root) };
+  const inventory = { warnings: [], goals: new Set(), transcripts: [], sessionIds: new Set(), uncertain: false };
 
   registeredGoals(root, inventory);
   registeredTranscripts(root, inventory);

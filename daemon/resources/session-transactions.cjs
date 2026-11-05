@@ -1,7 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 
 const inside = (parent, child) => path.isAbsolute(child) && path.resolve(child) === child && (child === parent || child.startsWith(parent + path.sep));
 
@@ -15,39 +14,6 @@ function sync(file) {
 
   try { fs.fsyncSync(descriptor); }
   finally { fs.closeSync(descriptor); }
-}
-
-function syncTree(file) {
-  const metadata = fs.lstatSync(file);
-
-  if (metadata.isSymbolicLink()) return;
-
-  if (metadata.isDirectory()) for (const name of fs.readdirSync(file)) syncTree(path.join(file, name));
-  sync(file);
-}
-
-function mkdir(directory) {
-  if (exists(directory)) {
-    if (!fs.lstatSync(directory).isDirectory()) throw new Error(`Transaction storage is not a regular directory: ${directory}`);
-
-    return;
-  }
-
-  mkdir(path.dirname(directory));
-  fs.mkdirSync(directory, { mode: 0o700 });
-  sync(path.dirname(directory));
-}
-
-function write(file, body) {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-
-  const descriptor = fs.openSync(temporary, 'wx', 0o600);
-
-  try { fs.writeFileSync(descriptor, body); fs.fsyncSync(descriptor); }
-  finally { fs.closeSync(descriptor); }
-
-  fs.renameSync(temporary, file);
-  sync(path.dirname(file));
 }
 
 function identity(file) {
@@ -114,48 +80,6 @@ function matches(file, expected, contents = true) {
   return !contents || describe(file, expected.excluded).digest === expected.digest;
 }
 
-function sameContents(file, expected) {
-  return Boolean(exists(file)) && describe(file, expected.excluded).digest === expected.digest;
-}
-
-function move(item) {
-  if (matches(item.destination, item.identity) && !exists(item.source)) {
-
-    return;
-  }
-
-  if (!matches(item.source, item.identity)) throw new Error(`Transaction source changed: ${item.source}`);
-
-  if (exists(item.destination)) {
-    if (!item.identity.directory && matches(item.destination, item.identity)) {
-      fs.unlinkSync(item.source);
-      sync(path.dirname(item.source));
-
-      return;
-    }
-
-    throw new Error(`Transaction destination already exists: ${item.destination}`);
-  }
-
-  if (item.identity.directory) execFileSync('mv', ['--no-clobber', '--no-copy', '--no-target-directory', '--', item.source, item.destination], { stdio: ['ignore', 'pipe', 'pipe', 3, 4, 5, 6] });
-  else {
-    fs.linkSync(item.source, item.destination);
-    sync(path.dirname(item.destination));
-    fs.unlinkSync(item.source);
-  }
-
-  sync(path.dirname(item.destination));
-  sync(path.dirname(item.source));
-
-  if (!matches(item.destination, item.identity) || exists(item.source)) throw new Error(`Transaction move could not be verified: ${item.source}`);
-}
-
-function undo(item) {
-  if (matches(item.source, item.identity) && !exists(item.destination)) return;
-
-  move({ source: item.destination, destination: item.source, identity: item.identity });
-}
-
 function removalPlan(root, relative = '', entries = []) {
   const file = path.join(root, relative);
   const metadata = fs.lstatSync(file);
@@ -196,23 +120,4 @@ function removeOwned(root, entries) {
   }
 }
 
-function recover(root) {
-  const failures = [];
-
-  for (const replay of [recoverPublications, require('./storage-transaction.cjs').recoverJournals, require('./restore-receipts.cjs').prune]) {
-    try { replay(root); }
-    catch (error) { failures.push(error.message); }
-  }
-
-  if (failures.length) throw new Error(`Session transaction recovery is pending:\n${failures.join('\n')}`);
-}
-
-function recoverPublications(root) {
-  const result = require('./piop-storage/session-publication.cjs').recover(root);
-
-  for (const warning of result.warnings) console.error(`Session publication recovery retained: ${warning}`);
-
-  for (const retained of result.quarantined) console.error(`Session publication retained: ${retained.path}: ${retained.reason}`);
-}
-
-module.exports = { inside, exists, sync, syncTree, mkdir, write, identity, describe, matches, sameContents, move, undo, removalPlan, removeOwned, recover };
+module.exports = { inside, exists, sync, identity, describe, matches, removalPlan, removeOwned };

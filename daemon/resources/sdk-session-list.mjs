@@ -20,7 +20,9 @@ function managedDirectory(directory, root) {
   try { canonical = realpathSync(path); }
   catch (error) { if (error.code !== "ENOENT") throw error; canonical = path; }
 
-  return ["sessions", "archived"].some(area => canonical === join(root, area) || canonical.startsWith(join(root, area) + sep)) ? canonical : undefined;
+  const sessions = join(root, "sessions");
+
+  return canonical === sessions || canonical.startsWith(sessions + sep) ? canonical : undefined;
 }
 
 function candidates(db, directory, recursive) {
@@ -29,7 +31,7 @@ function candidates(db, directory, recursive) {
   const rows = db.prepare(`SELECT s.session_id, s.session_path, m.modified_ns, m.size, c.fingerprint, c.body
     FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path
     LEFT JOIN sdk_session_summaries c ON c.session_id=s.session_id AND c.session_path=s.session_path
-    WHERE substr(s.session_path, 1, length(?))=?
+    WHERE s.archived=0 AND substr(s.session_path, 1, length(?))=?
     AND (? OR instr(substr(s.session_path, length(?) + 1), ?)=0)`)
     .all(prefix, prefix, Number(recursive), prefix, sep);
 

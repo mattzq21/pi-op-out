@@ -29,7 +29,7 @@ test('session list shows new transcripts, refreshes changed ones and drops delet
   });
   const [updated] = await listed(path);
   expect(updated).toMatchObject({ id, name: 'New question', cwdExists: true, messageCount: 1, hostId: 'local', hostName: 'Local' });
-  expect(await daemon.invoke('delete_session', { sessionPath: path, hostId: 'local', clientId: 'test-client' })).toEqual([path]);
+  expect(await daemon.invoke('delete_sessions', { sessionIds: [id], hostId: 'local', clientId: 'test-client' })).toEqual([id]);
   expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === path)).toEqual({ hostId: 'local', sessionPath: path, sessionId: id });
   expect(existsSync(path)).toBe(false);
   expect(await listed(path)).toEqual([]);
@@ -37,42 +37,33 @@ test('session list shows new transcripts, refreshes changed ones and drops delet
 
 const ls = async () => (await daemon.invoke('list_sessions')) as any[];
 const client = 'test-client';
-const deleteError = (sessionPath: string) => daemon.failure('delete_session', { sessionPath, hostId: 'local', clientId: client });
-const deleteArchivedError = (sessionPath: string) => daemon.failure('delete_archived_session', { sessionPath, hostId: 'local', clientId: client });
+const relocateError = (sessionPath: string) => daemon.failure('relocate_session', { sessionPath, cwd: daemon.home, hostId: 'local', clientId: client });
 
-test('session commands accept only transcript files inside the matching storage area', async () => {
-  const root = join(daemon.home, '.piop');
+test('path commands accept only saved active transcripts inside the sessions folder', async () => {
+  const directory = join(daemon.home, '.piop/sessions/validation'); mkdirSync(directory, { recursive: true });
   const outside = join(daemon.home, 'outside.jsonl'); writeFileSync(outside, 'outside');
-  for (const [area, fail] of [['sessions', deleteError], ['archived', deleteArchivedError]] as const) {
-    const directory = join(root, area, 'validation'); mkdirSync(directory, { recursive: true });
-    const wrongType = join(directory, 'chat.json'); writeFileSync(wrongType, '{}');
-    const folder = join(directory, 'directory.jsonl'); mkdirSync(folder, { recursive: true });
-    for (const path of [wrongType, folder, outside]) expect(await fail(path)).toStartWith('Only ');
-    expect(await fail(join(directory, 'missing.jsonl'))).toStartWith('Could not locate');
-    expect(readFileSync(wrongType, 'utf8')).toBe('{}');
-  }
-  expect(readFileSync(outside, 'utf8')).toBe('outside');
-  const active = publicSession(daemon.home, { cwd: daemon.home, folder: 'validation-active' });
-  expect(await deleteArchivedError(active.path)).toStartWith('Only archived');
+  const wrongType = join(directory, 'chat.json'); writeFileSync(wrongType, '{}');
+  const folder = join(directory, 'directory.jsonl'); mkdirSync(folder, { recursive: true });
+  const escape = join(directory, 'escape.jsonl'); symlinkSync(outside, escape);
+  for (const path of [wrongType, folder, outside, escape]) expect(await relocateError(path)).toStartWith('Only ');
+  expect(await relocateError(join(directory, 'missing.jsonl'))).toStartWith('Could not locate');
   const toArchive = publicSession(daemon.home, { cwd: daemon.home, folder: 'validation-archived' });
-  await archive(toArchive.path);
-  const report = await daemon.invoke('storage_report');
-  const archived = report.hosts.find((host: any) => host.hostId === 'local').archives.find((chat: any) => chat.id === toArchive.id);
-  expect(archived).toBeDefined();
-  expect(await deleteError(archived.path)).toStartWith('Only piop session files');
-  expect(existsSync(active.path) && existsSync(archived.path)).toBe(true);
+  await archive(toArchive.id);
+  expect(await relocateError(toArchive.path)).toBe('Only piop session files can be accessed');
+  expect(await daemon.failure('delete_sessions', { sessionIds: [crypto.randomUUID()], hostId: 'local', clientId: client })).toBe('This conversation has been deleted');
+  expect([readFileSync(outside, 'utf8'), readFileSync(wrongType, 'utf8'), existsSync(toArchive.path)]).toEqual(['outside', '{}', true]);
 });
 
-test('session commands resolve symbolic links before they check the storage area', async () => {
-  const session = publicSession(daemon.home, { cwd: daemon.home, folder: 'links' });
-  const directory = join(daemon.home, '.piop/sessions/links');
-  const outside = join(daemon.home, 'outside-link-target.jsonl'); writeFileSync(outside, 'outside');
-  const escape = join(directory, 'escape.jsonl'); symlinkSync(outside, escape);
-  expect(await deleteError(escape)).toBe('Only piop session files can be accessed');
-  expect(readFileSync(outside, 'utf8')).toBe('outside');
-  const alias = join(directory, 'alias.jsonl'); symlinkSync(session.path, alias);
-  expect(await daemon.invoke('delete_session', { sessionPath: alias, hostId: 'local', clientId: client })).toEqual([session.path]);
-  expect(existsSync(session.path)).toBe(false);
+const archive = (sessionId: string) => daemon.invoke('archive_session', { sessionId, hostId: 'local', terminalIds: [], clientId: client });
+
+test('archiving keeps conversations where they are and takes them off the session list', async () => {
+  const first = publicSession(daemon.home, { cwd: daemon.home, folder: 'archive-a', entries: [{ type: 'message', message: { role: 'user', content: 'first conversation' } }] });
+  await archive(first.id);
+  expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionId === first.id)).toMatchObject({ sessionPath: first.path });
+  expect(readFileSync(first.path, 'utf8')).toContain('first conversation');
+  expect((await ls()).some(session => session.id === first.id)).toBe(false);
+  const archives = (await daemon.invoke('storage_report', { archivesOnly: true })).hosts[0].archives;
+  expect(archives.find((row: any) => row.id === first.id)).toMatchObject({ path: first.path, name: 'first conversation' });
 });
 
 const settings = async (args: any = {}) => daemon.invoke('load_app_settings', args);
@@ -173,38 +164,6 @@ test('invalid relocations leave the original session untouched and a corrected r
   const outside = join(daemon.home, 'outside-relocate.jsonl'); writeFileSync(outside, '{"type":"session"}');
   await expect(relocate(outside, daemon.home)).rejects.toThrow();
   expect(readFileSync(outside, 'utf8')).toBe('{"type":"session"}');
-});
-
-const archive = (sessionPath: string) => daemon.invoke('archive_session', { sessionPath, hostId: 'local', terminalIds: [], clientId: client });
-const archivedFiles = () => readdirSync(join(daemon.home, '.piop/archived'), { recursive: true }).map(String).filter(name => name.endsWith('.jsonl')).map(name => join(daemon.home, '.piop/archived', name));
-
-test('archiving moves conversations without overwriting earlier archives', async () => {
-  mkdirSync(join(daemon.home, '.piop/archived'), { recursive: true });
-  const before = new Set(archivedFiles());
-  const first = publicSession(daemon.home, { cwd: daemon.home, folder: 'archive-a', entries: [{ type: 'message', message: { role: 'user', content: 'first conversation' } }] });
-  await archive(first.path);
-  expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === first.path)).toMatchObject({ sessionId: first.id });
-  expect(existsSync(first.path)).toBe(false);
-  const second = publicSession(daemon.home, { cwd: daemon.home, folder: 'archive-b', entries: [{ type: 'message', message: { role: 'user', content: 'second conversation' } }] });
-  await archive(second.path);
-  const added = archivedFiles().filter(path => !before.has(path));
-  expect(added).toHaveLength(2);
-  expect(added.map(path => readFileSync(path, 'utf8').includes('first conversation') ? 'first' : 'second').sort()).toEqual(['first', 'second']);
-  expect((await ls()).some(session => session.id === first.id || session.id === second.id)).toBe(false);
-});
-
-test('archiving keeps the source when the archive directory cannot be written', async () => {
-  const session = publicSession(daemon.home, { cwd: daemon.home, folder: 'archive-blocked' });
-  const archived = join(daemon.home, '.piop/archived'); mkdirSync(archived, { recursive: true });
-  const before = archivedFiles();
-  chmodSync(archived, 0o500);
-  try { await expect(archive(session.path)).rejects.toThrow(); }
-  finally { chmodSync(archived, 0o700); }
-  expect(existsSync(session.path)).toBe(true);
-  expect(archivedFiles()).toEqual(before);
-  const outside = join(daemon.home, 'outside-archive.jsonl'); writeFileSync(outside, 'outside');
-  await expect(archive(outside)).rejects.toThrow();
-  expect(readFileSync(outside, 'utf8')).toBe('outside');
 });
 
 const settingsDatabase = () => join(daemon.home, '.piop/sessions.sqlite');

@@ -58,22 +58,11 @@ function observeRegistered(root, record, observation, deleted) {
   observe(root, record.session_path, observation);
 }
 
-function stagedFiles(root, observation) {
-  for (const staged of require('../storage-transaction.cjs').stagedTranscripts(root)) {
-    if (staged.state !== 'prepared') continue;
-
-    if (path.dirname(staged.file) !== staged.staging) throw new Error('Ambiguous goal asset transaction references retained');
-
-    if (assets.exists(staged.file)) observe(root, staged.file, observation, false);
-  }
-}
-
 function surviving(root, deleted) {
   const observation = { files: new Map(), sessions: new Set(), directories: new Set() };
   registered(root, observation, deleted);
   queued(root, observation, deleted);
   external(root, observation);
-  stagedFiles(root, observation);
   publicationDiagnostics(root, observation);
 
   return observation;

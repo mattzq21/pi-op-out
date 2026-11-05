@@ -12,7 +12,7 @@ export function sessionReferenceRoot() {
 
 function textGoalReferences(text, root, found) {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^${escaped}/(?:sessions|archived)/(?:[^\\r\\n]*?/)?attachments/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})(?![A-Za-z0-9_-])`);
+  const pattern = new RegExp(`^${escaped}/sessions/(?:[^\\r\\n]*?/)?attachments/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})(?![A-Za-z0-9_-])`);
   const prefix = root + "/";
   let start = text.indexOf(prefix);
 

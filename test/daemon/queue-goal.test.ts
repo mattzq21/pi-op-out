@@ -17,7 +17,7 @@ function chat(status: 'active' | null, pending: any[] = [], extra: { held?: bool
   const file = join(root, 'sessions', sessionId + '.jsonl');
   writeFileSync(file, '');
   const db = database.connection(root);
-  db.prepare('INSERT INTO sessions VALUES (?, ?)').run(sessionId, file);
+  db.prepare('INSERT INTO sessions (session_id, session_path) VALUES (?, ?)').run(sessionId, file);
   if (extra.waiting) db.prepare("INSERT INTO session_extension_state VALUES (?, 'piop-input-hold', ?)").run(sessionId, JSON.stringify({ type: 'custom', customType: 'piop-input-hold', data: { held: true } }));
   if (status) goals.write(file, sessionId, { id: 'goal-' + sessionId, sessionId, objective: 'Build', status });
   const commands: any[] = [];

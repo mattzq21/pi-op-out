@@ -5,7 +5,7 @@ import { ownershipError } from './ownership';
 import { isUuid } from './protocol';
 import { attach } from './attachment';
 import { queueCommand } from './session_commands';
-import * as storageTransactions from '../storage_transactions';
+import * as SessionLifecycle from '../session_lifecycle';
 import * as Worktrees from '../chat_worktree_records';
 import * as Registry from '../session_registry';
 import { detectRepository } from '../chat_worktrees';
@@ -262,7 +262,7 @@ export class Orchestration {
     if (session && !session.closed()) { await session.stop(); this.host.maintenance(session.key); }
     const root = this.host.storageRoot();
     if (Worktrees.read(id, root)) await Worktrees.abandonCreation(id, path, root);
-    else await storageTransactions.deleteBlank({ path, id });
+    else await SessionLifecycle.deleteBlank({ path, id });
   }
 
   private async branchOff(id: string): Promise<{ sessionId: string; sessionPath: string }> {

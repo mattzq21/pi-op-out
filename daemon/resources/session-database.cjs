@@ -16,16 +16,16 @@ function rollback(db, error) {
   return error;
 }
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 // The whole storage schema. Only this module creates or changes tables.
-const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
+const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1))); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_branch_selection (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, tip_id TEXT, leaf_id TEXT);
       CREATE TABLE IF NOT EXISTS session_extension_state (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, state_key TEXT NOT NULL, entry_json TEXT NOT NULL, PRIMARY KEY(session_id, state_key));
       CREATE TABLE IF NOT EXISTS session_extension_records (sequence INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, entry_id TEXT NOT NULL, after_id TEXT, entry_json TEXT NOT NULL, UNIQUE(session_id, entry_id)); CREATE INDEX IF NOT EXISTS session_extension_records_order ON session_extension_records(session_id, sequence);
       CREATE TABLE IF NOT EXISTS session_goals (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, goal_id TEXT NOT NULL UNIQUE, objective TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active', 'complete')));
       CREATE TABLE IF NOT EXISTS session_goal_ids (goal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE);
-      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE); CREATE TRIGGER IF NOT EXISTS session_file_metadata_moved AFTER UPDATE ON sessions WHEN OLD.session_path IS NOT NEW.session_path BEGIN DELETE FROM session_file_metadata WHERE session_id=OLD.session_id; END;
+      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
         fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
@@ -61,7 +61,6 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE TABLE IF NOT EXISTS session_group_orders (scope TEXT NOT NULL, owner TEXT NOT NULL, position INTEGER NOT NULL, token TEXT NOT NULL, PRIMARY KEY(scope, owner, position));
       CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS conversation_ownership (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS session_restore_receipts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS retention_candidates (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, retry_at REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS retention_retry_order ON retention_candidates(retry_at, record_id);
       CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
@@ -94,25 +93,16 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
         media_type TEXT NOT NULL, data BLOB NOT NULL, details_json TEXT NOT NULL,
         UNIQUE(queue_item_id, attachment_position));
       CREATE TABLE IF NOT EXISTS session_directories (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, cwd TEXT NOT NULL, checked_at INTEGER NOT NULL, directory_exists INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS storage_transactions (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('archive', 'delete', 'restore')), state TEXT NOT NULL CHECK(state IN ('prepared', 'committed')), journal_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS chat_worktrees (chat_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS submission_outcomes (submission_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('received', 'accepted', 'rejected')), error TEXT, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS session_names (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS running_tasks (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS storage_transcript_summaries (session_path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, body BLOB NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS storage_transcript_summaries_moved AFTER UPDATE OF session_path ON sessions
-        WHEN OLD.session_path IS NOT NEW.session_path BEGIN
-          DELETE FROM storage_transcript_summaries WHERE session_path=OLD.session_path;
-        END;
       CREATE TRIGGER IF NOT EXISTS storage_transcript_summaries_deleted AFTER DELETE ON sessions BEGIN
         DELETE FROM storage_transcript_summaries WHERE session_path=OLD.session_path;
       END;
       CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS transcript_references_moved AFTER UPDATE OF session_path ON sessions
-        WHEN OLD.session_path IS NOT NEW.session_path BEGIN
-          DELETE FROM transcript_references WHERE session_path=OLD.session_path AND session_id=lower(OLD.session_id);
-        END;
       CREATE TRIGGER IF NOT EXISTS transcript_references_deleted AFTER DELETE ON sessions BEGIN
         DELETE FROM transcript_references WHERE session_path=OLD.session_path AND session_id=lower(OLD.session_id);
       END;
@@ -257,27 +247,12 @@ function directoryQuery(_db, columns, suffix = '') {
   return `SELECT ${fields} FROM session_directories r JOIN sessions s USING(session_id)${suffix}`;
 }
 
-const movePaths = onMainThread('session-database.movePaths', (root, moves) => {
-  if (!fs.existsSync(path.join(root, 'sessions.sqlite'))) return;
-  const db = connection(root);
-
-  transaction(db, 'IMMEDIATE', () => {
-    const move = db.prepare('UPDATE sessions SET session_path = ? WHERE session_path = ?');
-    const clear = db.prepare('DELETE FROM session_sidebar WHERE session_id IN (SELECT session_id FROM sessions WHERE session_path = ?)');
-
-    for (const item of moves) {
-      clear.run(item.source);
-      move.run(item.destination, item.source);
-    }
-  });
-});
-
 const reserve = onMainThread('session-database.reserve', (root) => {
   return reserveId(connection(root));
 });
 
 function reserveId(db) {
-  const insert = db.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
+  const insert = db.prepare('INSERT INTO sessions (session_id) VALUES (?) ON CONFLICT(session_id) DO NOTHING');
 
   for (;;) {
     const id = require('node:crypto').randomUUID();
@@ -287,9 +262,8 @@ function reserveId(db) {
 }
 
 const pendingTables = {
-  transaction: ['storage_transactions'],
-  recovery: ['session_publications', 'session_restore_receipts', 'storage_transactions'],
-  retention: ['retention_candidates', 'cleanup_requests', 'storage_transactions'],
+  recovery: ['session_publications'],
+  retention: ['retention_candidates', 'cleanup_requests'],
 };
 
 function pending(db, work) {
@@ -403,12 +377,12 @@ function storageRoot(file) {
   let directory = path.dirname(file);
 
   while (path.dirname(directory) !== directory) {
-    if (['sessions', 'archived'].includes(path.basename(directory))) return path.dirname(directory);
+    if (path.basename(directory) === 'sessions') return path.dirname(directory);
     directory = path.dirname(directory);
   }
 
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

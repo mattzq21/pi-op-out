@@ -165,12 +165,11 @@ const COMMANDS: Handlers = {
   read_image_file: (_app, _owner, args) => projectFiles.readImage(args.cwd, args.path),
   archive_session: async (app, owner, args) => {
     const terminalIds = args.terminalIds.filter(id => app.terminals.ownedByConnection(id, owner));
-    await archives.archiveSession(app, app.terminals, args.sessionPath, terminalIds, args.clientId);
+    await archives.archiveSession(app, app.terminals, args.sessionId, terminalIds, args.clientId);
     return null;
   },
-  delete_session: (app, _owner, args) => archives.deleteSession(app, app.pi, args.sessionPath, args.clientId),
-  delete_archived_session: (app, _owner, args) => archives.deleteArchivedSession(app, app.pi, args.sessionPath, args.sessionPaths, args.clientId),
-  restore_archived_session: async (app, _owner, args) => { await archives.restoreArchivedSession(app, args.sessionPath, args.clientId); return null; },
+  delete_sessions: (app, _owner, args) => archives.deleteSessions(app, args.sessionIds, args.clientId),
+  restore_session: async (app, _owner, args) => { await archives.restoreSession(app, args.sessionId, args.clientId); return null; },
   relocate_session: async (app, _owner, args) => { await archives.relocateSession(app, args.sessionPath, args.cwd, args.clientId); return null; },
   recover_missing_session: (app, _owner, args) => archives.recoverMissingSession(app, args.sessionPath, args.action, args.clientId),
   load_app_settings: (app, _owner, args) => loadSettings(app, args),

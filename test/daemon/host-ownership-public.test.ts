@@ -12,7 +12,7 @@ test('ended archive leases and completed deletes cannot authorize terminal reass
       encoding: 'utf8', timeout: 30000,
       input: JSON.stringify({ home: daemon.home, content: '' }),
     }));
-    await daemon.invoke('archive_session', { hostId: 'local', sessionPath: chat.path, terminalIds: [], clientId: 'archive-setup' });
+    await daemon.invoke('archive_session', { hostId: 'local', sessionId: chat.id, terminalIds: [], clientId: 'archive-setup' });
     const report = await daemon.invoke('storage_report');
     const archived = report.hosts.find((value: any) => value.hostId === 'local').archives.find((value: any) => value.id === chat.id);
     expect(archived).toBeDefined();

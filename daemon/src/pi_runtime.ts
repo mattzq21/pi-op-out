@@ -12,7 +12,7 @@ import { buildPiCommand, sessionIdentity } from './pi_launch';
 import { installedPi } from './pi_install';
 import { validateSessionWorkingDirectory } from './session_index';
 import { loadAppSettings } from './settings';
-import * as storageTransactions from './storage_transactions';
+import * as SessionLifecycle from './session_lifecycle';
 import * as Registry from './session_registry';
 import { Mutex, observedElsewhere } from './util/sync';
 import { ActiveAgents } from './active_agents';
@@ -68,7 +68,7 @@ export function reserveSessionId(): string {
 export async function cleanupBlankSession(target: BlankSessionCleanup): Promise<void> {
   if (target.submitted) return;
   try {
-    await storageTransactions.deleteBlank({ path: target.path, id: target.id });
+    await SessionLifecycle.deleteBlank({ path: target.path, id: target.id });
   } catch (error: any) { console.error('Could not clean up blank session: ' + (error?.message ?? error)); }
   if (target.id !== undefined) {
     try {

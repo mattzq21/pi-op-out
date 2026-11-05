@@ -5,38 +5,29 @@ import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction } from '../util/db';
 import { errorText } from '../util/sync';
-import * as StorageLocks from '../../resources/storage-locks.cjs';
 import { readHeaderLine } from './protocol';
 import { ConversationOwnership, within } from './ownership';
 import { QueueStorage } from './queue_storage';
 
-export interface Recovery { errors: string[]; recovered: boolean; retry: boolean; transactionsPending: boolean; waiting?: Promise<void> }
+export interface Recovery { errors: string[]; recovered: boolean }
 
-function empty(): Recovery { return { errors: [], recovered: false, retry: false, transactionsPending: false }; }
+function empty(): Recovery { return { errors: [], recovered: false }; }
 
 export function recoverMissingTranscripts(root: string, ownership: ConversationOwnership): Recovery {
   try { return recoverStorage(root, ownership); } catch (error) { return { ...empty(), errors: [errorText(error)] }; }
 }
 
 function recoverStorage(root: string, ownership: ConversationOwnership): Recovery {
-  // An archive, restore or delete that runs now moves chats; the recovery waits for it.
-  const restore = StorageLocks.lockSync('restore:' + root, { wait: false });
-  if (!restore) return { ...empty(), retry: true, waiting: StorageLocks.lock('restore:' + root).then(release => release?.()) };
-  try {
-    if (Registry.pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
-    const entries = (Registry.connection(root).prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id));
-    const recovery = empty();
-    const waiting: Promise<void>[] = [];
-    for (const entry of entries) {
-      try { recovery.recovered = recoverJournal(root, ownership, join(root, 'queued-input', entry + '.json'), waiting) || recovery.recovered; }
-      catch (error) { recovery.errors.push(errorText(error)); }
-    }
-    if (waiting.length) { recovery.retry = true; recovery.waiting = Promise.race(waiting); }
-    return recovery;
-  } finally { restore(); }
+  const entries = (Registry.connection(root).prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id));
+  const recovery = empty();
+  for (const entry of entries) {
+    try { recovery.recovered = recoverJournal(root, ownership, join(root, 'queued-input', entry + '.json')) || recovery.recovered; }
+    catch (error) { recovery.errors.push(errorText(error)); }
+  }
+  return recovery;
 }
 
-function recoverJournal(root: string, ownership: ConversationOwnership, path: string, waiting: Promise<void>[]): boolean {
+function recoverJournal(root: string, ownership: ConversationOwnership, path: string): boolean {
   if (extname(path) !== '.json') return false;
   const id = basename(path, '.json');
   // A conversation that a client holds is not left over from an earlier run; the client's runtime takes its queue.
@@ -73,7 +64,7 @@ function registeredSessionPath(root: string, id: string): string | null {
 function transcriptExists(root: string, id: string): boolean {
   const path = registeredSessionPath(root, id);
   if (path === null) return false;
-  if (!within(path, join(root, 'sessions')) && !within(path, join(root, 'archived'))) throw new Error('Saved session path is outside session storage');
+  if (!within(path, join(root, 'sessions'))) throw new Error('Saved session path is outside session storage');
   if (!existsSync(path)) return false;
   return matchingHeader(path, id);
 }
