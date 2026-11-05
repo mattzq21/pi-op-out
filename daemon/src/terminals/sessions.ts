@@ -1,4 +1,4 @@
-import { localHost } from '../local_host';
+import { localHost } from '../pi';
 import { launchTerminalForOwner, queueInput, resizeProcess, stopTerminalProcess, type TerminalProcess, type TerminalRuntime } from './terminals';
 import type { App } from '../app';
 

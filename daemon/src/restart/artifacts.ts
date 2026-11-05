@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
 import { closeSync, copyFileSync, chmodSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync, constants } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
-import { homeDir } from '../environment';
-import { ensurePrivateDir, setPrivateFilePermissions } from '../private_fs';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
+import { ensurePrivateDir, setPrivateFilePermissions } from '../util/private_fs';
 import * as endpoint from '../service';
-import * as restartStorage from '../restart_storage';
+import * as restartStorage from './storage';
 import { daemonScript } from '../service';
 import { lockPath, lockPathSync, type FileLock } from '../util/flock';
 

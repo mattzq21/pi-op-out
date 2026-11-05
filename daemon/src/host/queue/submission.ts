@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { clone, text } from '../json';
-import { CommandRefusedError } from '../../pi_rejection';
+import { CommandRefusedError } from '../../pi';
 import { validateItem } from './storage';
 import type { QueueDelivery } from './delivery';
 

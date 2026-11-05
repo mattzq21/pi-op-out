@@ -1,7 +1,6 @@
-import { MAX_REMOTE_HOSTS } from '../settings_types';
+import { MAX_REMOTE_HOSTS, type RemoteHost } from '../settings';
 import { isDirectory } from '../environment';
-import type { RemoteHost } from '../settings_types';
-import type { SessionSummary } from '../types';
+import type { SessionSummary } from '../sessions';
 import { Mutex } from '../util/sync';
 
 const MAX_AGE = 15_000;

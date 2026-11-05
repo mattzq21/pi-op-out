@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Channel, logFailure } from '../util/sync';
-import { MAX_RESPONSE_BYTES } from '../config';
+import { MAX_RESPONSE_BYTES } from '../environment';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const MAX_AUTH_BYTES = 4096;

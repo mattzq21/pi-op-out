@@ -9,7 +9,7 @@ let folder: string;
 let previousStorage: string | undefined;
 const database = require('../../daemon/resources/session-database/index.ts');
 const newChats = require('../../daemon/resources/storage-operations/new-chats.ts');
-const lifecycle = require('../../daemon/resources/chat-storage/lifecycle.ts');
+const lifecycle = require('../../daemon/src/storage/lifecycle.ts');
 const core = require('../../daemon/resources/session-database/core.ts');
 
 beforeAll(() => {

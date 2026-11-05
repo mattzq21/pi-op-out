@@ -2,7 +2,7 @@ import { basename, isAbsolute } from 'node:path';
 import { rememberProjectRepository } from '../../projects';
 import * as Worktrees from '../../worktrees';
 import { detectRepository, publishBranchHistory } from '../../worktrees';
-import * as Registry from '../../session_registry';
+import { registry as Registry } from '../../sessions';
 import { flag, kind, text } from '../json';
 import { Guard, ownershipError } from '../ownership';
 import { argument, expandHome, parseLaunchSpec, sessionSpec, specIdentity, type LaunchSpec } from '../pi';

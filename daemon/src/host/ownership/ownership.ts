@@ -3,10 +3,9 @@ import { sessionName } from "../../../resources/piop-storage/index.ts";
 import { randomUUID } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
-import * as ConversationStorage from '../../storage';
+import { conversationOwnership as ConversationStorage, lock } from '../../storage';
 import * as SessionTables from '../../../resources/session-database/index.ts';
 import { getProjectRepository } from '../../projects';
-import * as StorageLocks from '../../../resources/chat-storage/index.ts';
 import { flag } from '../json';
 import { readHeaderLine } from '../../util/lines.ts';
 import { errorText } from '../../util/sync';
@@ -52,7 +51,7 @@ export class Guard {
   // An archived or deleted chat has no owner.
   release(ownership: ConversationOwnership, removed: boolean): void {
     try {
-      if ((removed || this.archived) && this.owned && this.lock) ConversationStorage.remove(ownership.root, ConversationOwnership.key(this.id));
+      if ((removed || this.archived) && this.owned && this.lock) ConversationStorage.removeRecord(ownership.root, ConversationOwnership.key(this.id));
     } finally { this.drop(); }
   }
 
@@ -94,7 +93,7 @@ export class ConversationOwnership {
   }
 
   private async lock(id: string, mutation: boolean): Promise<Held> {
-    const release = await StorageLocks.lock((mutation ? 'conversation-mutation:' : 'conversation:') + ConversationOwnership.key(id), { timeoutMs: 180_000 });
+    const release = await lock((mutation ? 'conversation-mutation:' : 'conversation:') + ConversationOwnership.key(id), { timeoutMs: 180_000 });
     if (!release) throw new Error('Conversation is busy; try taking ownership again');
     return { release };
   }
@@ -108,12 +107,12 @@ export class ConversationOwnership {
   }
 
   read(id: string): any | null {
-    const body = ConversationStorage.read(this.root, ConversationOwnership.key(id));
-    return body === undefined ? null : JSON.parse(body);
+    const body = ConversationStorage.readRecord(this.root, ConversationOwnership.key(id));
+    return body === null ? null : JSON.parse(body);
   }
 
   write(id: string, record: any): void {
-    ConversationStorage.write(this.root, ConversationOwnership.key(id), JSON.stringify(record));
+    ConversationStorage.writeRecord(this.root, ConversationOwnership.key(id), JSON.stringify(record));
   }
 
   // The saved conversation id when it is archived, or not. path, when given, must be its transcript.

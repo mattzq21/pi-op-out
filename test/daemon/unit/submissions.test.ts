@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connection } from '../../../daemon/resources/session-database/core.ts';
-import { CommandRefusedError } from '../../../daemon/src/pi_rejection';
+import { CommandRefusedError } from '../../../daemon/src/pi/rejection';
 import { SubmissionLedger } from '../../../daemon/src/host/submissions';
 
 const roots: string[] = [];

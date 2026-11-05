@@ -1,5 +1,5 @@
 import { replaceSidebarSummaries, sidebarSummaries, type SidebarSummary } from '../../resources/session-database/index.ts';
-import { parseSession, serializeSession } from '../types';
+import { parseSession, serializeSession } from './summary';
 import type { CachedSession } from './listing';
 
 export function load(root: string): Map<string, CachedSession> {

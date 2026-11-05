@@ -1,7 +1,7 @@
 import { Host } from './controller';
 import { HostServices } from './services';
 import type { HostEvents } from './events';
-import type { BrokerCall } from '../broker';
+import type { BrokerCall } from '../pi';
 
 export { Host } from './controller';
 export type { HostEvents, SessionClosedReport, SessionStateReport } from './events';

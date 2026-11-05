@@ -1,7 +1,7 @@
 import { isMainThread, parentPort, workerData, type MessagePort } from 'node:worker_threads';
-import { BUILD_ID } from '../config';
+import { BUILD_ID } from '../environment';
 import { connectWorker } from '../../resources/session-database/index.ts';
-import { withinFlow } from '../../resources/chat-storage/index.ts';
+import { withinFlow } from '../storage';
 import { QUEUED, STARTED, type HostOperationName, type WorkerJob, type WorkerReply } from './protocol';
 
 interface Context { begin(): boolean; storage?: WorkerJob['storage'] }
@@ -15,19 +15,19 @@ function started(operation: (input: any) => Promise<unknown> | unknown): Handler
 }
 
 const handlers: Record<HostOperationName, Handler> = {
-  'chat-branch-history': started(async input => (await import('../../resources/chat-storage/index.ts')).publishBranchHistory(input)),
-  'discard-chat-branch': started(async input => (await import('../../resources/chat-storage/index.ts')).discardBranchHistory(input.root, input.sessionId, input.sessionPath)),
-  'index-sessions': started(async input => (await import('../../resources/chat-storage/index.ts')).indexSessions(input)),
-  'storage-inventory': started(async input => (await import('../../resources/chat-storage/index.ts')).storageInventory(input)),
-  'recover-missing-session': started(async input => (await import('../../resources/chat-storage/index.ts')).recoverMissingSession(input)),
-  'relocate-session': started(async input => (await import('../../resources/chat-storage/index.ts')).checkedRelocation(input)),
-  'temporary-chat': started(async input => (await import('../../resources/chat-storage/index.ts')).temporaryChat(input)),
+  'chat-branch-history': started(async input => (await import('../storage')).publishBranchHistory(input)),
+  'discard-chat-branch': started(async input => (await import('../storage')).discardBranchHistory(input.root, input.sessionId, input.sessionPath)),
+  'index-sessions': started(async input => (await import('../storage')).indexSessions(input)),
+  'storage-inventory': started(async input => (await import('../storage')).storageInventory(input)),
+  'recover-missing-session': started(async input => (await import('../storage')).recoverMissingSession(input)),
+  'relocate-session': started(async input => (await import('../storage')).checkedRelocation(input)),
+  'temporary-chat': started(async input => (await import('../storage')).temporaryChat(input)),
   'agent-definitions': started(async input => (await import('piop-agent-loader')).loadAgentDefinitions(input)),
   'save-agent-definitions': started(async input => (await import('piop-agent-loader')).saveAgentDefinitions(input)),
   'move-agent': started(async input => (await import('piop-agent-loader')).moveAgent(input)),
   'session-storage': async (input, context) => {
     if (!context.storage) throw new Error('Session storage change has no storage root');
-    const answer = (await import('../../resources/chat-storage/index.ts')).lifecycle.run({ root: context.storage.root, begin: context.begin }, input);
+    const answer = (await import('../storage')).lifecycle.run({ root: context.storage.root, begin: context.begin }, input);
     return answer.cancelled ? CANCELLED_RESULT : answer;
   },
 };

@@ -226,7 +226,7 @@ test('current model settings preserve the history used for compaction', async t 
 test('the chat preview and reopened session follow a branch choice without a transcript write', async t => {
   const f = await fixture(t);
   const bundle = join(f.home, 'index.mjs');
-  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/chat-storage/indexing.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/src/storage/indexing.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { indexSessions } = await import(pathToFileURL(bundle));
   const summary = async () => {
     const result = await indexSessions({ paths: [f.file] });
@@ -273,7 +273,7 @@ test('the end of a line that a stop cut short is dropped before the next entry i
 test('a skill prompt that names its skill gives the session name one skill reference', async t => {
   const f = await fixture(t);
   const bundle = join(f.home, 'index.mjs');
-  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/chat-storage/indexing.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/src/storage/indexing.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { indexSessions } = await import(pathToFileURL(bundle));
   const skill = '<skill name="statechart" location="/skills/statechart/SKILL.md">\nReferences are relative to /skills/statechart.\n\nbody\n</skill>';
   f.manager.appendMessage({ role: 'user', content: `${skill}\n\n$statechart draw the simplest example.`, timestamp: 1 });

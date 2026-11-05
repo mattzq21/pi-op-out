@@ -1,20 +1,18 @@
 import { z } from 'zod';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
-import { homeDir } from '../environment';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation, STORAGE_TIMEOUT } from '../host_operations';
 import { localLaunchDirectory, remoteDirectoryPath, remoteHost, ssh, reserveSessionId } from '../pi';
 import { output, shellQuote } from '../process';
 import { inspectSessionProjectsWith, ProjectMetadataCache, refreshProjectRepository } from '../projects';
 import * as sidebarStorage from './sidebar';
 import { list as worktreeRecords } from '../worktrees';
-import { loadAppSettings } from '../settings';
-import type { RemoteHost } from '../settings_types';
+import { loadAppSettings, type RemoteHost } from '../settings';
 import { localSessionRows } from '../../resources/session-database/index.ts';
 import { Mutex, isMissing } from '../util/sync';
 import * as peers from '../peers';
-import type { SessionSummary } from '../types';
+import type { SessionSummary } from './summary';
 import type { App } from '../app';
 
 // A summary of a saved chat, made from the given revision of it.

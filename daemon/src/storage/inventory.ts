@@ -1,14 +1,14 @@
-import * as stateRecords from '../piop-storage/index.ts';
-import * as names from '../piop-storage/index.ts';
-import * as database from '../session-database/index.ts';
+import * as stateRecords from '../../resources/piop-storage/index.ts';
+import * as names from '../../resources/piop-storage/index.ts';
+import * as database from '../../resources/session-database/index.ts';
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { validSessionHeader } from "./session-header.ts";
+import { validSessionHeader } from "./session_header.ts";
 import fs from "node:fs/promises";
 import { createReadStream, readdirSync } from "node:fs";
 import path from "node:path";
-import { lines as lfLines } from "../../src/util/lines.ts";
-import * as TemporaryChats from './temporary-chats.ts';
+import { lines as lfLines } from "../util/lines.ts";
+import * as TemporaryChats from './temporary_chats.ts';
 
 // The storage report: the sizes of the storage folders, and the archived chats. The saved rows say what each file is.
 

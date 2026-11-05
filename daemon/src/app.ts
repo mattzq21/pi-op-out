@@ -1,9 +1,8 @@
 import { DaemonClients } from './clients';
 import * as daemonRestart from './restart';
-import { PiRuntime } from './pi';
+import { PiRuntime, BrokerRuntime } from './pi';
 import { interruptTerminals, TerminalRuntime } from './terminals';
 import { SessionIndexRuntime } from './sessions';
-import { BrokerRuntime } from './broker';
 import { PeerRuntime } from './peers';
 import { UsageRuntime } from './providers';
 

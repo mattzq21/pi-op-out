@@ -3,7 +3,7 @@ import { anthropicUsage } from './anthropic';
 import { codexUsage } from './codex';
 import { opencodeGoUsage } from './opencode';
 import { opencodexUsage } from './opencodex';
-import { isUsageIndicator, USAGE_INDICATORS, type UsageIndicator } from '../settings_types';
+import { isUsageIndicator, USAGE_INDICATORS, type UsageIndicator } from '../settings';
 
 const SOURCES: Record<UsageIndicator, UsageSource> = { codex: codexUsage, anthropic: anthropicUsage, opencodeGo: opencodeGoUsage, opencodex: opencodexUsage };
 export type Provider = UsageIndicator;

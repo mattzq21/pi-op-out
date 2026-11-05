@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { homeDir, isDirectory } from '../environment';
 import { ensureDesktopSessionsDir } from '../process';
-import * as Registry from '../session_registry';
+import * as Registry from './registry';
 import * as peers from '../peers';
 import { profileRoot } from '../host_operations';
 import { Mutex } from '../util/sync';
 import { replaceSessionGroupRows, sessionGroupRows, transaction } from '../../resources/session-database/index.ts';
-import type { SessionSummary } from '../types';
+import type { SessionSummary } from './summary';
 import { listDirectories } from './listing';
 import type { App } from '../app';
 

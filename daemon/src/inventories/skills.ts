@@ -1,9 +1,8 @@
 import { readdirSync, readFileSync, realpathSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
-import { homeDir } from '../environment';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
 import { saveSkillInventoryJson, skillInventoryJson, transaction } from '../../resources/session-database/index.ts';
-import type { AppSettings } from '../settings_types';
+import type { AppSettings } from '../settings';
 
 export function frontmatterValue(content: string, key: string): string | undefined {
   if (!content.startsWith('---')) return undefined;

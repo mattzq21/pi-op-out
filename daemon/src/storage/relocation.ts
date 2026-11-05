@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import * as database from '../session-database/index.ts';
-import { storagePublish } from '../piop-storage/index.ts';
-import { readSessionHeader } from './session-header.ts';
+import * as database from '../../resources/session-database/index.ts';
+import { storagePublish } from '../../resources/piop-storage/index.ts';
+import { readSessionHeader } from './session_header.ts';
 
 function relocateSession(profile: string, sessionPath: string, requestedReplacement: string, from?: string) {
   const replacement = fs.realpathSync(requestedReplacement);

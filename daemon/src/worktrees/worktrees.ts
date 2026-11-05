@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
+import { STORAGE_DIRECTORY } from '../environment';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const CHAT_ID = new RegExp(`^${UUID}$`);

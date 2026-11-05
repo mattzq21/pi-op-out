@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { sessionSummarySchema } from '../../protocol/results';
+import { sessionSummarySchema } from '../../../protocol/results';
 
 export interface AgentAddress { hostId: string; sessionId?: string; sessionPath?: string; working: boolean; messageable: boolean }
 

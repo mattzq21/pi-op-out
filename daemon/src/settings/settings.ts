@@ -1,16 +1,15 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { MAX_REMOTE_HOSTS, defaultSettings, parseAppSettings, serializeAppSettings, validateContextCaps, validateRemoteHost, type AppSettings } from './settings_types';
-import { mergeDiscoveredSkills, onSkillsChanged, watchSkills, onToolsChanged, savedTools } from './inventories';
+import { MAX_REMOTE_HOSTS, defaultSettings, parseAppSettings, serializeAppSettings, validateContextCaps, validateRemoteHost, type AppSettings } from './types';
+import { mergeDiscoveredSkills, onSkillsChanged, watchSkills, onToolsChanged, savedTools } from '../inventories';
 import { validateKeybindings } from './keybindings';
-import { STORAGE_DIRECTORY } from './config';
-import { homeDir } from './environment';
-import { ensurePrivateDir } from './private_fs';
-import { records } from '../resources/session-database/index.ts';
-import type { App } from './app';
-import { updateSettings } from './local_host';
-import * as peers from './peers';
-import { Mutex, errorText } from './util/sync';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
+import { ensurePrivateDir } from '../util/private_fs';
+import { records } from '../../resources/session-database/index.ts';
+import type { App } from '../app';
+import { updateSettings } from '../pi';
+import * as peers from '../peers';
+import { Mutex, errorText } from '../util/sync';
 
 export { mergeDiscoveredSkills };
 

@@ -1,11 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { STORAGE_DIRECTORY } from '../../config';
-import { homeDir, nodeExecutable, pathWithNode } from '../../environment';
+import { STORAGE_DIRECTORY, homeDir, nodeExecutable, pathWithNode } from '../../environment';
 import { generatedExtensions } from '../../extensions';
 import { readLines } from '../../util/lines.ts';
-import { installedPi } from '../../pi_install';
+import { installedPi } from '../../pi';
 import { Mutex } from '../../util/sync';
 import type { Duplex } from 'node:stream';
 import { PiStorage } from '../pi';

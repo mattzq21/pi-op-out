@@ -1,18 +1,16 @@
 import { join } from "node:path";
-import { reserve, releaseReservation } from "./session_registry";
-import { STORAGE_DIRECTORY, BROKER_REQUEST_LIMIT } from './config';
-import { buildPiCommand, launchSpec } from './pi';
-import { homeDir } from './environment';
-import { loadAppSettings } from './settings';
-import * as peers from './peers';
-import * as providerAuth from './providers';
-import * as daemonRestart from './restart';
+import { registry as Registry, type AgentAddress, type SessionSummary } from '../sessions';
+import { STORAGE_DIRECTORY, BROKER_REQUEST_LIMIT, homeDir } from '../environment';
+import { buildPiCommand, launchSpec } from './launch';
+import { loadAppSettings } from '../settings';
+import * as peers from '../peers';
+import * as providerAuth from '../providers';
+import * as daemonRestart from '../restart';
 import { localHost } from './local_host';
-import type { OrchestrationRequest } from './host/index';
-import * as sessionGroups from './sessions';
-import type { App } from './app';
-import type { AgentAddress, SessionSummary } from './types';
-import { logFailure } from './util/sync';
+import type { OrchestrationRequest } from '../host/index';
+import * as sessionGroups from '../sessions';
+import type { App } from '../app';
+import { logFailure } from '../util/sync';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
@@ -134,10 +132,10 @@ async function respondBrokerRequest(app: App, broker: BrokerRuntime, path: strin
   if (path === '/session-identity') {
     const root = join(homeDir(), STORAGE_DIRECTORY);
     if (value?.action === 'reserve' && Number.isInteger(value.count) && value.count >= 1 && value.count <= 2) {
-      return { sessionIds: Array.from({ length: value.count }, () => reserve(root)) };
+      return { sessionIds: Array.from({ length: value.count }, () => Registry.reserve(root)) };
     }
     if (value?.action === 'release' && Array.isArray(value.sessionIds) && value.sessionIds.length <= 2 && value.sessionIds.every(isUuid)) {
-      for (const id of value.sessionIds) releaseReservation(root, id);
+      for (const id of value.sessionIds) Registry.releaseReservation(root, id);
       return null;
     }
     throw new Error('Invalid session identity request');

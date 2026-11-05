@@ -4,8 +4,7 @@ import './main_thread_changes';
 import { closeSync, constants, fstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { BUILD_ID, STORAGE_DIRECTORY } from '../config';
-import { homeDir } from '../environment';
+import { BUILD_ID, STORAGE_DIRECTORY, homeDir } from '../environment';
 import { CANCELLED, QUEUED, type HostOperationName, type WorkerJob, type WorkerReply } from './protocol';
 import { logFailure } from '../util/sync';
 

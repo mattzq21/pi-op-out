@@ -1,9 +1,9 @@
-import { defaultPluginSettings, parsePluginSettings } from './plugins';
+import { defaultPluginSettings, parsePluginSettings } from '../plugins';
 import { z } from 'zod';
-import { appSettingsSchema, USAGE_INDICATORS, type AppSettings, type RemoteHost, type UsageIndicator } from '../../protocol/settings';
-import { capRangeError } from '../../pi-extensions/piop-context-window-cap/interface';
+import { appSettingsSchema, USAGE_INDICATORS, type AppSettings, type RemoteHost, type UsageIndicator } from '../../../protocol/settings';
+import { capRangeError } from '../../../pi-extensions/piop-context-window-cap/interface';
 
-export type { AppSettings, RemoteHost, ToolConfig, SkillConfig, UsageIndicator } from '../../protocol/settings';
+export type { AppSettings, RemoteHost, ToolConfig, SkillConfig, UsageIndicator } from '../../../protocol/settings';
 export { USAGE_INDICATORS };
 
 export const MAX_REMOTE_HOSTS = 16;

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { daemonExecutable, temporaryDirectory } from './harness';
 import { tryLockFileSync } from '../../daemon/src/util/flock';
 import { save } from '../../daemon/resources/session-database/records.ts';
-import { PROTOCOL_VERSION } from '../../daemon/src/config';
+import { PROTOCOL_VERSION } from '../../daemon/src/environment';
 
 test('stop finishes when a closing daemon releases its lock during connection retries', async () => {
   const executable = await daemonExecutable();

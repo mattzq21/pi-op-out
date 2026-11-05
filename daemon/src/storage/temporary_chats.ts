@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import * as database from '../session-database/index.ts';
-import { onMainThread } from '../session-database/index.ts';
+import * as database from '../../resources/session-database/index.ts';
+import { onMainThread } from '../../resources/session-database/index.ts';
 
 function directoryExists(directory: string): boolean {
   try {

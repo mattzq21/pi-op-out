@@ -7,7 +7,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readSync, renameSync, unlinkSync, writeSync, fsyncSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { formatWithOptions } from 'node:util';
-import { ensurePrivateDir, setPrivateFilePermissions } from '../private_fs';
+import { ensurePrivateDir, setPrivateFilePermissions } from '../util/private_fs';
 import * as endpoint from './endpoint';
 import { daemonScript } from './executable';
 import { lockPathSync } from '../util/flock';

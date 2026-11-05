@@ -3,8 +3,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import builtIn from 'piop-builtin-plugins';
 import { PLUGIN_ID, pluginManifestSchema, type PluginManifest } from '../../../protocol/plugins';
-import { STORAGE_DIRECTORY } from '../config';
-import { homeDir } from '../environment';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
 import { errorText } from '../util/sync';
 
 // A plugin that this daemon found: its manifest and the files that the manifest needs.

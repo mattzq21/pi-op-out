@@ -1,13 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { STORAGE_DIRECTORY } from './config';
-import { homeDir } from './environment';
-import { ensurePrivateDir } from './private_fs';
-import * as R from './resources';
-import * as Contributions from './plugins';
-import type { AppSettings } from './settings_types';
-import { errorText } from './util/sync';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
+import { ensurePrivateDir } from '../util/private_fs';
+import * as R from './bundled';
+import * as Contributions from '../plugins';
+import type { AppSettings } from '../settings';
+import { errorText } from '../util/sync';
 
 export function extensionBase(): string {
   return join(homeDir(), STORAGE_DIRECTORY);

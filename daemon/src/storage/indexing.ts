@@ -1,5 +1,5 @@
-import * as stateRecords from '../piop-storage/index.ts';
-import * as names from '../piop-storage/index.ts';
+import * as stateRecords from '../../resources/piop-storage/index.ts';
+import * as names from '../../resources/piop-storage/index.ts';
 import fs from 'node:fs';
 import { Type, type Static } from 'typebox';
 import type { SessionHeader } from '@earendil-works/pi-coding-agent';

@@ -4,11 +4,10 @@ import { closeSync, futimesSync, openSync, readFileSync, constants } from 'node:
 import { join, resolve } from 'node:path';
 import { Type, type Static } from 'typebox';
 import { Check } from 'typebox/value';
-import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY } from '../config';
-import { homeDir } from '../environment';
-import { ensurePrivateDir, setPrivateFilePermissions } from '../private_fs';
+import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY, homeDir } from '../environment';
+import { ensurePrivateDir, setPrivateFilePermissions } from '../util/private_fs';
 import { records } from '../../resources/session-database/index.ts';
-import * as restartStorage from '../restart_storage';
+import { storage as restartStorage } from '../restart';
 import { tryLockFileSync, type FileLock } from '../util/flock';
 import { extensionBase } from '../extensions';
 import { libcName } from '../util/libc';

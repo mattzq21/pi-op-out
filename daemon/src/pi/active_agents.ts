@@ -1,4 +1,4 @@
-import type { AgentAddress } from '../types';
+import type { AgentAddress } from '../sessions';
 
 // The agents that run on this daemon, by runtime ID or session key. It tells when a chat starts or stops working, so
 // clients update that one chat and do not reload the chat list.

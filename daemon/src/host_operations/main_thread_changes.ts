@@ -3,4 +3,4 @@
 import '../../resources/session-database/index.ts';
 import '../../resources/piop-storage/index.ts';
 import '../../resources/storage-operations/index.ts';
-import '../../resources/chat-storage/index.ts';
+import '../storage';

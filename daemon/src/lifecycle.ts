@@ -1,6 +1,6 @@
 import { recoverChatWorktrees, sweepDeletedSessions } from './archives';
 import { App } from './app';
-import { DEVELOPMENT } from './config';
+import { DEVELOPMENT } from './environment';
 import * as daemonEndpoint from './service';
 import * as daemonStdio from './service';
 import * as daemonRestart from './restart';
@@ -10,8 +10,7 @@ import * as peers from './peers';
 import * as providerAuth from './providers';
 import * as piRuntime from './pi';
 import * as terminals from './terminals';
-import { startLocalHost, stopLocalHost } from './local_host';
-import { resumeInterruptedTasks } from './interrupted_tasks';
+import { startLocalHost, stopLocalHost, resumeInterruptedTasks } from './pi';
 import { stopOrphanedProcesses } from './process';
 import { loadAppSettings } from './settings';
 import { generatedExtensions, removeUnusedGeneratedExtensions } from './extensions';

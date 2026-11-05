@@ -1,7 +1,7 @@
 import { join } from 'node:path';
-import { CommandRefusedError } from '../pi_rejection';
+import { CommandRefusedError, type BrokerCall } from '../pi';
 import { refreshProjectRepository } from '../projects';
-import * as Registry from '../session_registry';
+import { registry as Registry } from '../sessions';
 import * as SessionTables from '../../resources/session-database/index.ts';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
@@ -9,10 +9,9 @@ import { recordTools, recordCommands, savedCommands } from '../inventories';
 import * as DaemonRestart from '../restart';
 import { Mutex, errorText } from '../util/sync';
 import { flag, text, jsonEqual } from './json';
-import { agents as Agents } from './services';
+import { agents as Agents, type HostServices } from './services';
 import { attach, MutationGuards, ConversationOwnership, ownershipError } from './ownership';
-import { previewPrompt, stopPromptPreviews, argument, sessionSpec, serializeSpec, type SessionLaunch } from './pi';
-import type { RuntimeEvent, RuntimeEventSource } from './pi';
+import { previewPrompt, stopPromptPreviews, argument, sessionSpec, serializeSpec, type SessionLaunch, type RuntimeEvent, type RuntimeEventSource } from './pi';
 import { forkFromView, Orchestration } from './chats';
 import { ClientViews, MessagePins, clientPayload, detachReadonly, readonlyCommand, readonlyPresence, ToolPayloadCache } from './views';
 import { clientEvents, type HostEvents } from './events';
@@ -20,8 +19,6 @@ import type { AttachRequest, HostConfiguration, MutationEnd, MutationRequest, Or
 import { drainSaves } from './queue';
 import { Session, type SessionHost, sessionCommand } from './session';
 import { SubmissionLedger } from './submissions';
-import type { HostServices } from './services';
-import type { BrokerCall } from '../broker';
 
 export class Host implements SessionHost {
   private sessions = new Map<string, Session>();

@@ -1,7 +1,7 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
+import { STORAGE_DIRECTORY } from '../environment';
 import { signalProcessGroup } from './cleanup';
 
 export function shellQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }

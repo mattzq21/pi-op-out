@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { homeDir, isFile } from '../environment';
 import { shellQuote, type CommandSpec } from '../process';
-import { validateRemoteHost, type AppSettings, type RemoteHost } from '../settings_types';
+import { validateRemoteHost, type AppSettings, type RemoteHost } from '../settings';
 
 export function remoteHost(settings: AppSettings, hostId: string): RemoteHost {
   const host = settings.hosts.find(host => host.id === hostId);

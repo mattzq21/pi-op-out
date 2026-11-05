@@ -2,13 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
-import * as database from '../session-database/index.ts';
-import { onMainThread } from '../session-database/index.ts';
-import * as conversationStorage from './conversation-ownership.ts';
-import * as temporaryChat from './temporary-chats.ts';
-import { collectGoalFiles } from '../storage-operations/index.ts';
+import { z } from 'zod';
+import * as database from '../../resources/session-database/index.ts';
+import { onMainThread } from '../../resources/session-database/index.ts';
+import * as conversationStorage from './conversation_ownership.ts';
+import * as temporaryChat from './temporary_chats.ts';
+import { collectGoalFiles } from '../../resources/storage-operations/index.ts';
 import { lockSync } from './locks.ts';
-import { validSessionHeader } from './session-header.ts';
+import { validSessionHeader } from './session_header.ts';
+import { hostOperation, runHostOperation, STORAGE_TIMEOUT, type HostOperation } from '../host_operations';
 
 // A transcript stays where it was made for its whole life. A new chat writes its files, and then its rows in one
 // transaction. Archive and restore change only its database row; delete removes its rows in one transaction, and its
@@ -98,7 +100,7 @@ function removeFiles(file: string): void {
 }
 
 // The deletion of the chats ids: their rows in one transaction, and then their files and the goal files that only they used.
-function deleteSessions(root: string, ids: string[]): string[] {
+function removeSessions(root: string, ids: string[]): string[] {
   const targets = sessions(root, ids).map(saved => saved.sessionPath);
 
   forget(root, ids);
@@ -119,13 +121,13 @@ function deleteSessions(root: string, ids: string[]): string[] {
   return warnings;
 }
 
-function deleteBlank(root: string, target: any): string[] {
+function removeBlank(root: string, target: any): string[] {
   const request = { ...target, root: path.join(root, 'sessions') };
   const candidate = blankSession(request);
 
   if (!candidate || candidate.root !== root || session(root, candidate.id)?.sessionPath !== candidate.target.path) return [];
 
-  return deleteSessions(root, [candidate.id]);
+  return removeSessions(root, [candidate.id]);
 }
 
 // Removes the temporary folders of deleted chats that no other chat works in. A folder that another chat works in stays
@@ -153,9 +155,9 @@ function run(context: { root: string; begin: () => boolean }, request: any): any
 
   if (!context.begin()) return { cancelled: true };
 
-  if (request?.action === 'delete') return locked(root, false, () => answer(deleteSessions(root, request.sessionIds)));
+  if (request?.action === 'delete') return locked(root, false, () => answer(removeSessions(root, request.sessionIds)));
 
-  if (request?.action === 'delete-blank') return locked(root, true, () => answer(deleteBlank(root, request.blank)));
+  if (request?.action === 'delete-blank') return locked(root, true, () => answer(removeBlank(root, request.blank)));
 
   throw new Error(`Unknown session storage action: ${request?.action}`);
 }
@@ -241,4 +243,30 @@ function inspectBlank(directory: string, file: string, expected: string | undefi
   return { root, id: header.id, target: { root: directory, path: file, area: 'sessions' } };
 }
 
-export { session, idOf, descendants, archive, restore, forget, run, sweep };
+type Request =
+  | { action: 'delete'; sessionIds: string[] }
+  | { action: 'delete-blank'; blank: { path?: string | null; id?: string | null } };
+
+const answerSchema = z.object({ warning: z.string().optional(), busy: z.boolean().optional() });
+
+let operation: HostOperation<Request, z.output<typeof answerSchema>> | undefined;
+
+// Runs request on a worker thread (see run).
+async function inWorker(request: Request): Promise<boolean> {
+  operation ??= hostOperation<Request, z.output<typeof answerSchema>>('session-storage', 'storage', STORAGE_TIMEOUT, answerSchema);
+  const answer = await runHostOperation(operation, request);
+  if (answer.warning) console.error(answer.warning);
+  return answer.busy !== true;
+}
+
+// Deletes the chats ids: their rows at once, then their files.
+async function deleteSessions(ids: string[]): Promise<void> {
+  await inWorker({ action: 'delete', sessionIds: ids });
+}
+
+// Deletes a chat that has no message, unless the storage is busy.
+async function deleteBlank(blank: { path?: string | null; id?: string | null }): Promise<void> {
+  await inWorker({ action: 'delete-blank', blank });
+}
+
+export { session, idOf, descendants, archive, restore, forget, run, sweep, deleteSessions, deleteBlank };

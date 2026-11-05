@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
-import * as database from '../session-database/index.ts';
-import { onMainThread } from '../session-database/index.ts';
+import * as database from '../../resources/session-database/index.ts';
+import { onMainThread } from '../../resources/session-database/index.ts';
 
 // The ownership record of each active conversation: the client that owns it (null when none does), the daemon run
 // that wrote it, and the client that owned it last.

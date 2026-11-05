@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { STORAGE_DIRECTORY } from './config';
-import { homeDir } from './environment';
-import { agentResources, contextCapSettings } from './extensions';
-import { startHost, type Host, type HostEvents, type SessionClosedReport, type SessionStateReport } from './host/index';
-import type { AppSettings } from './settings_types';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
+import { agentResources, contextCapSettings } from '../extensions';
+import { startHost, type Host, type HostEvents, type SessionClosedReport, type SessionStateReport } from '../host/index';
+import type { AppSettings } from '../settings';
 import { piBrokerRequest } from './broker';
-import type { App } from './app';
+import type { App } from '../app';
 
 // The Host of this daemon, which runs its Pi sessions in this process, and what the rest of the daemon keeps about it.
 export class LocalHost {

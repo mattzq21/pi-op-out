@@ -24,8 +24,8 @@ beforeAll(async () => {
     goals: require('../../../daemon/resources/storage-operations/goals.ts'),
     records: require('../../../daemon/resources/piop-storage/session-records.ts'),
     names: require('../../../daemon/resources/piop-storage/session-names.ts'),
-    lifecycle: require('../../../daemon/resources/chat-storage/lifecycle.ts'),
-    locks: require('../../../daemon/resources/chat-storage/locks.ts'),
+    lifecycle: require('../../../daemon/src/storage/lifecycle.ts'),
+    locks: require('../../../daemon/src/storage/locks.ts'),
   };
 });
 afterAll(() => {

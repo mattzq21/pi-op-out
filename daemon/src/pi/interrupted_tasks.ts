@@ -1,13 +1,12 @@
 import { join } from 'node:path';
-import { STORAGE_DIRECTORY } from './config';
-import { homeDir } from './environment';
-import { buildPiCommand, launchSpec } from './pi';
-import { loadAppSettings } from './settings';
+import { STORAGE_DIRECTORY, homeDir } from '../environment';
+import { buildPiCommand, launchSpec } from './launch';
+import { loadAppSettings } from '../settings';
 import { localHost } from './local_host';
-import type { OrchestrationRequest } from './host/index';
-import * as Registry from './session_registry';
-import { errorText, logFailure } from './util/sync';
-import type { App } from './app';
+import type { OrchestrationRequest } from '../host/index';
+import { registry as Registry } from '../sessions';
+import { errorText, logFailure } from '../util/sync';
+import type { App } from '../app';
 
 export async function resumeInterruptedTasks(app: App): Promise<void> {
   const ids = Registry.runningTasks(join(homeDir(), STORAGE_DIRECTORY));

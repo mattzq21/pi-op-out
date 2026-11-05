@@ -1,4 +1,4 @@
-import type { AppSettings } from './settings_types';
+import type { AppSettings } from './types';
 
 export function canonicalShortcut(shortcut: string): string | undefined {
   const raw = shortcut.split('+');

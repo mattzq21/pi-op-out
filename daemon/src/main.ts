@@ -5,7 +5,7 @@ import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError, connection } from
 import { PROCESS_TAG } from './process';
 import { errorText } from './util/sync';
 import { isHostOperationWorker, runHostOperationWorker } from './host_operations';
-import { STORAGE_DIRECTORY } from './config';
+import { STORAGE_DIRECTORY } from './environment';
 import { readOnlyStorage } from '../resources/session-database/index.ts';
 import { stateRecords } from './plugins';
 

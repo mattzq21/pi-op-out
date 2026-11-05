@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { isGoalSubmissionQueued, lookup, pruneSubmissionOutcomes, receivedSubmissions, saveSubmissionOutcome, submissionOutcome } from '../../resources/session-database/index.ts';
-import { CommandRefusedError } from '../pi_rejection';
+import { CommandRefusedError } from '../pi';
 import { errorText } from '../util/sync';
 
 export type Outcome = { accepted: true } | { accepted: false; error: string };

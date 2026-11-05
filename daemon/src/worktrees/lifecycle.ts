@@ -249,7 +249,7 @@ export function pendingWarnings(root = profileRoot()): string[] {
 }
 
 function transcriptArea(root: string, chatId: string): Area {
-  const saved = SessionLifecycle.session(chatId, root);
+  const saved = SessionLifecycle.session(root, chatId);
   if (!saved || !existsSync(saved.sessionPath)) return 'missing';
   return saved.archived ? 'archived' : 'sessions';
 }

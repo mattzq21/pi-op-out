@@ -1,6 +1,6 @@
 import { Type, type Static } from 'typebox';
 import { Check } from 'typebox/value';
-import * as Storage from '../resources/session-database/index.ts';
+import * as Storage from '../../resources/session-database/index.ts';
 
 // The records of a daemon restart in the storage database of root:
 //   plan: the restart in progress: its identity, the daemon that asked for it, the new and the fallback daemon file,

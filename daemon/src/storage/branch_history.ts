@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import * as stateRecords from '../piop-storage/index.ts';
-import * as database from '../session-database/index.ts';
-import { forkChat } from '../storage-operations/index.ts';
-import * as names from '../piop-storage/index.ts';
-import { readSessionHeader } from './session-header.ts';
-import { onMainThread } from '../session-database/index.ts';
+import * as stateRecords from '../../resources/piop-storage/index.ts';
+import * as database from '../../resources/session-database/index.ts';
+import { forkChat } from '../../resources/storage-operations/index.ts';
+import * as names from '../../resources/piop-storage/index.ts';
+import { readSessionHeader } from './session_header.ts';
+import { onMainThread } from '../../resources/session-database/index.ts';
 import * as lifecycle from './lifecycle.ts';
 
 export interface BranchHistoryRequest {

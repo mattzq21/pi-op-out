@@ -1,9 +1,9 @@
 import dbus from 'dbus-next';
 import { writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { DEVELOPMENT, PROJECT_DIR } from './config';
-import * as daemonEndpoint from './service';
-import { errorText } from './util/sync';
+import { DEVELOPMENT, PROJECT_DIR } from '../environment';
+import * as daemonEndpoint from '../service';
+import { errorText } from '../util/sync';
 
 const { Interface } = dbus.interface;
 const { Variant } = dbus;

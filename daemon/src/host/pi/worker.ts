@@ -1,10 +1,10 @@
-import { reserve } from '../../session_registry';
+import { registry as Registry } from '../../sessions';
 import { readLines } from '../../util/lines.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Duplex } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import { CommandRefusedError } from '../../pi_rejection';
+import { CommandRefusedError } from '../../pi';
 import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../../process';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 import type { PiStorage } from './storage';
@@ -41,7 +41,7 @@ process.on('exit', () => {
 // A Pi that names no chat starts a new one. Its identity is reserved here, when the Pi starts.
 function launchCommand(spec: LaunchSpec, storage: PiStorage): { program: string; args: string[] } {
   const args = [...spec.args];
-  if (!['--session', '--session-id', '--fork', '--no-session'].some(flag => args.includes(flag))) args.push('--session-id', reserve(storage.root));
+  if (!['--session', '--session-id', '--fork', '--no-session'].some(flag => args.includes(flag))) args.push('--session-id', Registry.reserve(storage.root));
   return { program: spec.program, args };
 }
 

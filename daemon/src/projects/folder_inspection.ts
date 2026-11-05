@@ -1,5 +1,5 @@
 import { runLimited, type CommandSpec } from '../process';
-import type { SessionSummary } from '../types';
+import type { SessionSummary } from '../sessions';
 
 const SCRIPT = `for path do
         if [ -d "$path" ] && [ -f "$path/.git" ]; then printf '2'; elif [ -d "$path" ]; then printf '1'; else printf '0'; fi

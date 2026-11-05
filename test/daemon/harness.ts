@@ -7,7 +7,7 @@ import { Database } from 'bun:sqlite';
 import { afterAll } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { developmentEndpointKey } from '../../daemon/src/config';
+import { developmentEndpointKey } from '../../daemon/src/environment';
 import { linkTestPi } from '../pi-install.mjs';
 export { fakePi } from '../pi-install.mjs';
 

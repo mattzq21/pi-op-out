@@ -3,8 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { descendantProcesses, killVerified, signalProcessGroup } from '../process';
 import { processesEnded } from '../util/process_exit';
-import { MAX_TERMINALS } from '../config';
-import { isDirectory } from '../environment';
+import { MAX_TERMINALS, isDirectory } from '../environment';
 import * as terminalSessions from './sessions';
 import type { App } from '../app';
 

@@ -1,7 +1,7 @@
 import { Notify, sleep } from '../util/sync';
 import * as daemonRestart from '../restart';
 import type { App } from '../app';
-import { UNUSED_STOP_MS } from '../config';
+import { UNUSED_STOP_MS } from '../environment';
 
 export class DaemonClients {
   constructor(private readonly onStop: () => void, private readonly onLastDisconnect: () => void, private readonly unusedDelay = UNUSED_STOP_MS) {}

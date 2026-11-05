@@ -10,11 +10,9 @@ import * as chatWorktrees from '../worktrees';
 import { MutationGuard } from './ownership';
 import * as sessionGroups from '../sessions';
 import * as terminalSessions from '../terminals';
-import { stopTerminals } from '../terminals';
-import type { TerminalRuntime } from '../terminals';
+import { stopTerminals, type TerminalRuntime } from '../terminals';
 import type { App } from '../app';
-import { lifecycle as SessionLifecycle } from '../storage';
-import type { SavedSession } from '../storage';
+import { lifecycle as SessionLifecycle, type SavedSession } from '../storage';
 import { isAuxiliary, records } from '../../resources/piop-storage/index.ts';
 import type { FolderMove } from '../worktrees';
 import { readHeaderLine } from '../util/lines.ts';
@@ -57,8 +55,8 @@ export function locateSessionFile(sessionPath: string, archived: boolean): strin
 
 function registered(path: string): SavedSession | undefined {
   try {
-    const id = SessionLifecycle.idOf(path);
-    return id === undefined ? undefined : SessionLifecycle.session(id);
+    const id = SessionLifecycle.idOf(profileRoot(), path);
+    return id === undefined ? undefined : SessionLifecycle.session(profileRoot(), id);
   } catch { return undefined; }
 }
 
@@ -89,14 +87,14 @@ async function holdArchiveTree(app: App, sessionId: string, clientId: string, gu
   const tree: SavedSession[] = [];
   const hold = async (id: string) => {
     guards.push(await MutationGuard.acquire(app, id, clientId, 'archive'));
-    const saved = SessionLifecycle.session(id)!;
+    const saved = SessionLifecycle.session(profileRoot(), id)!;
     const local = app.pi.host;
     if (local?.alive) await local.host.retire(id, saved.sessionPath, true);
     tree.push(saved);
   };
   await hold(sessionId);
   for (;;) {
-    const added = SessionLifecycle.descendants(sessionId, { archived: false }).filter(child => !tree.some(saved => saved.sessionId === child.sessionId));
+    const added = SessionLifecycle.descendants(profileRoot(), sessionId, { archived: false }).filter(child => !tree.some(saved => saved.sessionId === child.sessionId));
     if (!added.length) return tree;
     for (const child of added) await hold(child.sessionId);
   }
@@ -112,7 +110,7 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       await chatWorktrees.cleanUp(ids);
       const archiving = await chatWorktrees.beginArchive(ids);
       const invalidate = app.sessionIndex.projects.invalidateAfter('local');
-      try { SessionLifecycle.archive(ids); }
+      try { SessionLifecycle.archive(profileRoot(), ids); }
       catch (error) { chatWorktrees.stopped(archiving); await undoAfter(error, () => chatWorktrees.rollbackArchive(archiving)); }
       finally { invalidate(); }
       const warnings = await chatWorktrees.finishArchive(archiving);
@@ -132,14 +130,14 @@ export function deleteSessions(app: App, sessionIds: string[], clientId: string)
     const hold = async (id: string) => {
       if (tree.some(saved => saved.sessionId === id)) return false;
       guards.push(await MutationGuard.acquire(app, id, clientId, 'delete'));
-      tree.push(SessionLifecycle.session(id)!);
+      tree.push(SessionLifecycle.session(profileRoot(), id)!);
       return true;
     };
     try {
       for (const id of sessionIds) await hold(id);
       for (let added = true; added;) {
         added = false;
-        for (const saved of [...tree]) for (const child of SessionLifecycle.descendants(saved.sessionId)) added = await hold(child.sessionId) || added;
+        for (const saved of [...tree]) for (const child of SessionLifecycle.descendants(profileRoot(), saved.sessionId)) added = await hold(child.sessionId) || added;
       }
       const ids = tree.map(saved => saved.sessionId);
       await stopTerminals(app.terminals, terminalSessions.sessionTerminals(app.terminals, ids));
@@ -171,17 +169,17 @@ export function restoreSession(app: App, sessionId: string, clientId: string): P
 // Restores sessionId with its archived subagents. Their worktrees come back first; when one comes back in another
 // folder, the chats that worked in the old folder are moved to it after the commit.
 async function restoreTree(app: App, sessionId: string, clientId: string): Promise<void> {
-  const root = SessionLifecycle.session(sessionId);
+  const root = SessionLifecycle.session(profileRoot(), sessionId);
   if (!root) throw new Error('This conversation has been deleted');
   if (!root.archived) throw new Error('This conversation is not archived');
   assertRootRestore(root);
-  const tree = [root, ...SessionLifecycle.descendants(sessionId, { archived: true, kinds: RESTORED_KINDS })];
+  const tree = [root, ...SessionLifecycle.descendants(profileRoot(), sessionId, { archived: true, kinds: RESTORED_KINDS })];
   const ids = tree.map(saved => saved.sessionId);
   const guards: MutationGuard[] = [];
   try {
     for (const id of ids) guards.push(await MutationGuard.acquire(app, id, clientId, 'restore'));
     const restoring = await chatWorktrees.beginRestore(ids);
-    try { SessionLifecycle.restore(ids); }
+    try { SessionLifecycle.restore(profileRoot(), ids); }
     catch (error) { chatWorktrees.stopped(restoring); await undoAfter(error, () => chatWorktrees.rollbackRestore(restoring)); }
     const warnings = await moveFolders(tree, chatWorktrees.folderMoves(restoring));
     try { await chatWorktrees.finishRestore(restoring); }
@@ -213,7 +211,7 @@ async function moveFolders(tree: SavedSession[], moves: FolderMove[]): Promise<s
 
 // Removes the files of chats that were deleted while the daemon stopped.
 export function sweepDeletedSessions(app: App): void {
-  try { reportWarnings(app, SessionLifecycle.sweep()); }
+  try { reportWarnings(app, SessionLifecycle.sweep(profileRoot())); }
   catch (error: any) { reportWarnings(app, [`Could not remove the files of deleted conversations: ${error?.message ?? error}`]); }
 }
 

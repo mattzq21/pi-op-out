@@ -1,10 +1,8 @@
-import { agentCommands } from '../resources';
+import { agentCommands } from '../extensions';
 import * as Contributions from '../plugins';
-import { localHost } from '../local_host';
+import { localHost, discoverPi, type PiRuntime } from '../pi';
 import type { App } from '../app';
-import { discoverPi } from '../pi';
 import { GOAL_COMMAND } from '../host';
-import type { PiRuntime } from '../pi';
 
 const ACTIONS = ['list', 'begin', 'poll', 'reply', 'cancel', 'logout', 'create', 'remove', 'fast_models', 'draft_catalog'];
 

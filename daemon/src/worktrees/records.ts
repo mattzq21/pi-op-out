@@ -5,7 +5,7 @@ import { forgetProjectRepository } from '../projects';
 import { discardBranchHistory } from './branch_operations';
 import { homeDir } from '../environment';
 import { profileRoot } from '../host_operations';
-import * as Registry from '../session_registry';
+import { registry as Registry } from '../sessions';
 import { startSetup, stopSetup, type Setup } from './scripts';
 
 export interface ChatWorktreeRecord {

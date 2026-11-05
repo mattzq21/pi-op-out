@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
-import { homeDir, nodeExecutable, pathWithNode } from '../environment';
-import { installedPi } from '../pi_install';
+import { STORAGE_DIRECTORY, homeDir, nodeExecutable, pathWithNode } from '../environment';
+import { installedPi } from './install';
 import * as Ext from '../extensions';
 import * as Contributions from '../plugins';
 import { ensureDesktopSessionsDir, shellQuote } from '../process';
-import { validateRemoteHost, type AppSettings } from '../settings_types';
+import { validateRemoteHost, type AppSettings } from '../settings';
 import * as SessionTables from '../../resources/session-database/index.ts';
-import type { BrokerRuntime } from '../broker';
+import type { BrokerRuntime } from './broker';
 import { QUEUE_TOOLS } from '../host';
 
 export { validateRemoteHost };

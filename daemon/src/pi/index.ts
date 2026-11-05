@@ -1,3 +1,11 @@
+export { CommandRefusedError, refusalText, responseErrorText } from './rejection';
+export type { Refuser } from './rejection';
+export { installedPi } from './install';
+export type { InstalledPi } from './install';
 export { discoverPi, reported } from './discovery';
 export { buildPiCommand, launchSpec, localLaunchDirectory, remoteDirectoryPath, remoteHost, remoteLoginCommand, sessionIdentity, ssh, sshBase } from './launch';
 export { PiRuntime, detachOwner, detachPiWith, ensureRuntimeOwner, openProjectDirectory, piCommand, piPresence, reserveSessionId, startPiForOwner, stopPi } from './runtime';
+export { BrokerBusyError, BrokerRuntime, BusyAgent, agentIsActive, claimAgent, clientBrokerRequest, piBrokerRequest } from './broker';
+export type { BrokerAnswer, BrokerCall } from './broker';
+export { LocalHost, localHost, spec, startLocalHost, stopLocalHost, updateSettings } from './local_host';
+export { resumeInterruptedTasks } from './interrupted_tasks';

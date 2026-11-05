@@ -1,9 +1,9 @@
 import { locateSessionFile } from './archives';
-import { sessionIdentity } from '../pi';
-import { localHost } from '../local_host';
+import { sessionIdentity, localHost } from '../pi';
 import type { Host, MutationRequest } from '../host';
 import type { App } from '../app';
 import { lifecycle as SessionLifecycle } from '../storage';
+import { profileRoot } from '../host_operations';
 
 export class MutationGuard {
   private finished = false;
@@ -13,7 +13,7 @@ export class MutationGuard {
 
   // Holds the saved chat sessionId for one change, so no client or runtime changes it meanwhile.
   static async acquire(app: App, sessionId: string, clientId: string, operation: MutationRequest['operation']): Promise<MutationGuard> {
-    const saved = SessionLifecycle.session(sessionId);
+    const saved = SessionLifecycle.session(profileRoot(), sessionId);
     if (!saved) throw new Error('This conversation has been deleted');
     if (operation !== 'delete' && saved.archived !== (operation === 'restore')) throw new Error(saved.archived ? 'This conversation has been deleted or archived' : 'This conversation is not archived');
     const host = localHost(app).host;
