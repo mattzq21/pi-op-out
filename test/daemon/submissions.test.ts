@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import * as Registry from '../../daemon/src/session_registry';
+import { connection } from '../../daemon/resources/session-database/core.cjs';
 import { CommandRefusedError } from '../../daemon/src/pi_rejection';
 import { SubmissionLedger } from '../../daemon/src/host/submissions';
 
@@ -19,8 +19,7 @@ function ledger() {
 function session(root: string, id: string, transcript?: string) {
   const path = join(root, id + '.jsonl');
   if (transcript !== undefined) writeFileSync(path, transcript);
-  const db = Registry.connection(root);
-  db.prepare('INSERT INTO sessions VALUES (?, ?)').run(id, path);
+  connection(root).prepare('INSERT INTO sessions VALUES (?, ?)').run(id, path);
 }
 
 const settled = () => Promise.resolve();
@@ -64,7 +63,7 @@ test('the outcome waits while the message is being sent, and a repeat does not r
 test('a message left without an outcome by a stopped daemon is accepted only when the saved queue holds it', async () => {
   const { root } = ledger();
   session(root, 's');
-  const db = Registry.connection(root);
+  const db = connection(root);
   for (const id of ['queued', 'dropped']) db.prepare("INSERT INTO submission_outcomes VALUES (?, 's', 'received', NULL, ?)").run(id, Date.now());
   db.prepare("INSERT INTO queue_items VALUES (1, 's', 1, 'Hi', 'followUp', ?)").run(JSON.stringify({ goalSubmissionId: 'queued' }));
   const next = new SubmissionLedger(root, () => {});

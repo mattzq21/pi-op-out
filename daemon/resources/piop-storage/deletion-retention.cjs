@@ -229,22 +229,7 @@ function cleanupRegistry(root, sessionIds) {
 
   if (!tables.databaseExists(root)) return [...sessionIds];
 
-  return removeRegistryRows(tables.connection(root), sessionIds);
-}
-
-function removeRegistryRows(db, sessionIds) {
-
-  const read = db.prepare('SELECT session_id, session_path FROM sessions WHERE lower(session_id) = ?');
-  const completed = [];
-
-  for (const id of sessionIds) {
-    const record = read.get(id.toLowerCase());
-
-    if (record) continue;
-    completed.push(id);
-  }
-
-  return completed;
+  return tables.unregisteredSessionIds(root, sessionIds);
 }
 
 module.exports = { collectRetention, cleanupRegistry, survivingSession };

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { HostOperationError, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from '../host_operations';
 import { requestRetention } from './retention_requests';
 import { CommandRefusedError, refusalText } from '../pi_rejection';
-import * as Registry from '../session_registry';
+import { pending } from '../../resources/session-database.cjs';
 
 const archivedSessionSchema = z.object({ sessionId: z.string(), sourcePath: z.string(), sessionPath: z.string() });
 const restoredSessionSchema = archivedSessionSchema.extend({ path: z.string() });
@@ -103,6 +103,6 @@ export async function recover(options: { root?: string; signal?: AbortSignal; bu
 }
 
 export async function recoverPending(root: string): Promise<void> {
-  if (!Registry.pending(root, 'recovery')) return;
+  if (!pending(root, 'recovery')) return;
   await recover({ root, busyIsOk: true });
 }

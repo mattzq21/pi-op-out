@@ -44,9 +44,7 @@ function observeReferences(root, entries, observation) {
 }
 
 function registered(root, observation, deleted) {
-  const database = require('../session-database.cjs').connection(root);
-
-  for (const record of database.prepare('SELECT session_id, session_path FROM sessions').all()) observeRegistered(root, record, observation, deleted);
+  for (const record of require('../session-database.cjs').goalCleanupSessions(root)) observeRegistered(root, record, observation, deleted);
 }
 
 function observeRegistered(root, record, observation, deleted) {
@@ -160,14 +158,14 @@ function plan(root, targets) {
 
 function confirmedDeletions(root) {
   const deleted = new Set();
-  const current = require('../session-database.cjs').connection(root).prepare('SELECT 1 FROM sessions WHERE session_id=?');
+  const { goalCleanupSessionExists } = require('../session-database.cjs');
 
   for (const directory of require('./goal-ownership.cjs').directories(root)) {
     try {
       const record = assets.readOwners(root, directory);
       const ids = [...record.owners.map(owner => owner.sessionId), ...record.retiredOwners ?? [], preparedOwner(root, directory)];
 
-      for (const id of ids) if (id && !current.get(id)) deleted.add(id);
+      for (const id of ids) if (id && !goalCleanupSessionExists(root, id)) deleted.add(id);
     } catch (error) { console.error(`${directory}: goal ownership could not be established; retained: ${error.message}`); }
   }
 

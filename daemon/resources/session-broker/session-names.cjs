@@ -16,36 +16,24 @@ function validName(name) {
   return capped;
 }
 
-function nameOf(db, sessionId) { return db.prepare('SELECT name FROM session_names WHERE session_id=?').get(sessionId)?.name; }
-
-function write(db, sessionId, name, replace) {
-  db.prepare(`INSERT INTO session_names (session_id, name) VALUES (?, ?) ON CONFLICT(session_id) DO ${replace ? 'UPDATE SET name=excluded.name' : 'NOTHING'}`).run(sessionId, validName(name));
-}
-
-function transaction(root, work) {
-  const db = database.connection(root);
-
-  return database.transaction(db, 'IMMEDIATE', () => work(db));
-}
-
-function sessionName(file, sessionId, connection) {
-  return nameOf(connection ?? database.connection(database.storageRoot(file)), sessionId);
-}
+function sessionName(file, sessionId) { return database.sessionNameOf(database.storageRoot(file), sessionId); }
 
 const nameSession = onMainThread('session-names.nameSession', (file, sessionId, name, replace = true) => {
-  transaction(database.storageRoot(file), db => {
-    database.register(db, sessionId, file);
-    write(db, sessionId, name, replace);
+  const root = database.storageRoot(file);
+
+  database.transaction(root, 'IMMEDIATE', () => {
+    database.register(root, sessionId, file);
+    database.saveSessionName(root, sessionId, validName(name), replace);
   });
 });
 
 const renameSession = onMainThread('session-names.renameSession', (root, sessionId, name) => {
-  return transaction(root, db => {
-    if (!db.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path IS NOT NULL').get(sessionId)) throw new Error('Conversation not found');
-    write(db, sessionId, name, true);
+  return database.transaction(root, 'IMMEDIATE', () => {
+    if (!database.isSavedSession(root, sessionId)) throw new Error('Conversation not found');
+    database.saveSessionName(root, sessionId, validName(name), true);
 
-    return nameOf(db, sessionId);
+    return database.sessionNameOf(root, sessionId);
   });
 });
 
-module.exports = { capSessionName, promptName, validName, sessionName, nameSession, renameSession, nameOf };
+module.exports = { capSessionName, promptName, validName, sessionName, nameSession, renameSession };

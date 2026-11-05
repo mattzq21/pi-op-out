@@ -17,7 +17,7 @@ import '../../resources/registry-deletion.cjs';
 import '../../resources/restore-receipts.cjs';
 import '../../resources/session-broker/session-child-index.cjs';
 import '../../resources/session-broker/session-names.cjs';
-import '../../resources/session-database.cjs';
+import '../../resources/session-database/core.cjs';
 import '../../resources/session-registry.cjs';
 import '../../resources/storage-locks.cjs';
 import '../../resources/storage-transaction.cjs';

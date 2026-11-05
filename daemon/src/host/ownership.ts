@@ -5,7 +5,7 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
 import * as ConversationStorage from '../storage';
 import { recoverPending } from '../storage';
-import * as Registry from '../session_registry';
+import * as SessionTables from '../../resources/session-database.cjs';
 import * as ChildIndex from '../../resources/session-broker/session-child-index.cjs';
 import { getProjectRepository } from '../projects';
 import * as StorageLocks from '../../resources/storage-locks.cjs';
@@ -77,9 +77,7 @@ function optionalPath(path: string): string | null {
 }
 
 export function registeredPath(root: string, id: string): string | null {
-  const database = Registry.connection(root);
-  const row: any = database.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id);
-  return typeof row?.session_path === 'string' ? row.session_path : null;
+  return SessionTables.lookup(root, id) ?? null;
 }
 
 export class ConversationOwnership {
@@ -296,8 +294,7 @@ export class ConversationOwnership {
   }
 
   removed(id: string): boolean {
-    const exists = Boolean((Registry.connection(this.root).prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?) AS found').get(id) as any).found);
-    return !exists || flag(this.read(id), 'deleted');
+    return !SessionTables.sessionRowExists(this.root, id) || flag(this.read(id), 'deleted');
   }
 
   lookup(id: string): any {

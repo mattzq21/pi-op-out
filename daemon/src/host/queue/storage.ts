@@ -1,7 +1,5 @@
 import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
-import * as Registry from '../../session_registry';
-import { ensurePrivateDir } from '../../private_fs';
-import { transaction, type Database } from '../../util/db';
+import { clearQueue, isQueueHeld, nextQueueItemId, savedQueue, setQueueHeld, transaction, writeQueue, type QueueRow } from '../../../resources/session-database.cjs';
 import * as Publication from '../reference_publication';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
@@ -50,20 +48,11 @@ export class QueueStorage {
   id(): string { return basename(this.path, '.json'); }
 
   reserveId(): string {
-    const db = Registry.connection(this.root());
-    const row: any = db.prepare('UPDATE queue_item_sequence SET last_id=last_id+1 WHERE id=1 AND last_id<9007199254740991 RETURNING last_id').get();
-    if (!row) throw new Error('Query returned no rows');
-    return String(row.last_id);
+    return nextQueueItemId(this.root());
   }
 
   record(): any | null {
-    const db = Registry.connection(this.root());
-    return transaction(db, 'DEFERRED', () => {
-      const row: any = db.prepare('SELECT cwd, session_path FROM queue_origins WHERE session_id=?').get(this.id());
-      if (!row) return null;
-      const origin = { cwd: row.cwd, sessionPath: row.session_path ?? null };
-      return { version: 1, origin, items: loadRows(db, this.id()) };
-    });
+    return savedQueue(this.root(), this.id());
   }
 
   load(): any[] {
@@ -72,17 +61,12 @@ export class QueueStorage {
   }
 
   held(): boolean {
-    const db = Registry.connection(this.root());
-    return db.prepare('SELECT 1 FROM session_queue_holds WHERE session_id=?').get(this.id()) !== undefined;
+    return isQueueHeld(this.root(), this.id());
   }
 
   async saveHeld(held: boolean): Promise<void> {
     const root = this.root();
-    return inOrder(resolve(root), async () => {
-      const db = Registry.connection(root);
-      if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
-      else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
-    });
+    return inOrder(resolve(root), async () => setQueueHeld(root, this.id(), held));
   }
 
   async recover(pending: any[]): Promise<any[]> {
@@ -112,22 +96,15 @@ export class QueueStorage {
     const publication = await Publication.lock(root);
     try {
       await Publication.validateNewReferences(root, items, this.load());
-      const db = Registry.connection(root);
-      transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin));
+      transaction(root, 'IMMEDIATE', () => this.writeItems(root, items, origin));
     } finally { publication.release(); }
   }
 
-  private writeItems(db: Database, items: any[], origin: any): void {
+  private writeItems(root: string, items: any[], origin: any): void {
     const id = this.id();
-    if (!items.length) {
-      db.prepare('DELETE FROM queue_items WHERE session_id=?').run(id);
-      db.prepare('DELETE FROM queue_origins WHERE session_id=?').run(id);
-      return;
-    }
+    if (!items.length) return clearQueue(root, id);
     if (!origin) throw new Error('Queued-input recovery is missing its working directory');
-    db.prepare('INSERT INTO queue_origins VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET cwd=excluded.cwd, session_path=excluded.session_path')
-      .run(id, typeof origin.cwd === 'string' ? origin.cwd : null, typeof origin.sessionPath === 'string' ? origin.sessionPath : null);
-    saveRows(db, id, items);
+    writeQueue(root, id, { cwd: typeof origin.cwd === 'string' ? origin.cwd : null, sessionPath: typeof origin.sessionPath === 'string' ? origin.sessionPath : null }, queueRows(items));
   }
 }
 
@@ -176,29 +153,6 @@ export function itemId(item: any): number {
   return id;
 }
 
-function loadRows(db: Database, session: string): any[] {
-  const rows: any[] = db.prepare('SELECT queue_item_id, message, behavior, details_json FROM queue_items WHERE session_id=? ORDER BY queue_position').all(session);
-  return rows.map(row => {
-    const item = JSON.parse(row.details_json);
-    item.id = String(row.queue_item_id);
-    item.message = row.message;
-    item.behavior = row.behavior;
-    const images = loadImages(db, row.queue_item_id);
-    if (images.length) item.images = images;
-    return item;
-  });
-}
-
-function loadImages(db: Database, id: number): any[] {
-  const rows: any[] = db.prepare('SELECT media_type, data, details_json FROM queue_attachments WHERE queue_item_id=? ORDER BY attachment_position').all(id);
-  return rows.map(row => {
-    const image = JSON.parse(row.details_json);
-    image.mimeType = row.media_type;
-    image.data = Buffer.from(row.data).toString('base64');
-    return image;
-  });
-}
-
 function details(item: any, omitted: string[]): string {
   if (item === null || typeof item !== 'object' || Array.isArray(item)) throw new Error('Invalid queue item');
   const fields = { ...item };
@@ -206,24 +160,15 @@ function details(item: any, omitted: string[]): string {
   return JSON.stringify(fields);
 }
 
-function saveRows(db: Database, session: string, items: any[]): void {
+function queueRows(items: any[]): QueueRow[] {
   const ids = items.map(itemId);
   if (new Set(ids).size !== ids.length) throw new Error('Duplicate queue item ID');
-  db.prepare('DELETE FROM queue_items WHERE session_id=? AND queue_item_id NOT IN (SELECT value FROM json_each(?))').run(session, JSON.stringify(ids));
-  items.forEach((item, index) => saveItem(db, session, index + 1, item));
-}
-
-function saveItem(db: Database, session: string, position: number, item: any): void {
-  const id = itemId(item);
-  const written = db.prepare('INSERT INTO queue_items VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(queue_item_id) DO UPDATE SET queue_position=excluded.queue_position, message=excluded.message, behavior=excluded.behavior, details_json=excluded.details_json WHERE queue_items.session_id=excluded.session_id')
-    .run(id, session, position, item.message, item.behavior, details(item, ['id', 'message', 'behavior', 'images']));
-  if (Number(written.changes) !== 1) throw new Error('Queue item belongs to another session');
-  const images: any[] = Array.isArray(item.images) ? item.images : [];
-  db.prepare('DELETE FROM queue_attachments WHERE queue_item_id=? AND attachment_position>?').run(id, images.length);
-  images.forEach((image, index) => {
-    if (typeof image?.data !== 'string') throw new Error('Missing queue attachment data');
-    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(image.data) || image.data.length % 4 !== 0) throw new Error('Invalid queue attachment encoding');
-    db.prepare('INSERT INTO queue_attachments (queue_item_id, attachment_position, media_type, data, details_json) VALUES (?, ?, ?, ?, ?) ON CONFLICT(queue_item_id, attachment_position) DO UPDATE SET media_type=excluded.media_type, data=excluded.data, details_json=excluded.details_json')
-      .run(id, index + 1, typeof image.mimeType === 'string' ? image.mimeType : null, Buffer.from(image.data, 'base64'), details(image, ['data', 'mimeType']));
-  });
+  return items.map((item, index) => ({
+    id: ids[index], message: item.message, behavior: item.behavior, details: details(item, ['id', 'message', 'behavior', 'images']),
+    images: (Array.isArray(item.images) ? item.images : []).map((image: any) => {
+      if (typeof image?.data !== 'string') throw new Error('Missing queue attachment data');
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(image.data) || image.data.length % 4 !== 0) throw new Error('Invalid queue attachment encoding');
+      return { mimeType: typeof image.mimeType === 'string' ? image.mimeType : null, data: Buffer.from(image.data, 'base64'), details: details(image, ['data', 'mimeType']) };
+    }),
+  }));
 }

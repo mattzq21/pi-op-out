@@ -32,12 +32,11 @@ function addRoot(roots, target, provenance, ownership = 'referenced', owners = [
 
 async function readRegistry(profile, discovery) {
   const tables = require('./session-database.cjs');
-  const database = tables.databaseFile(profile);
+  const database = `the storage database of ${profile}`;
 
   try {
-    await fs.lstat(database);
-    const db = tables.connection(profile);
-    const rows = db.prepare(tables.directoryQuery(db, ['session_id', 'session_path', 'cwd'])).all();
+    if (!tables.databaseExists(profile)) return;
+    const rows = tables.inventorySessionDirectories(profile);
 
     for (const row of rows) {
       if (!Check(registrySchema, row)) { discovery.warnings.push(`${database}: invalid registry row; owner provenance is unresolved`); continue; }
@@ -47,9 +46,7 @@ async function readRegistry(profile, discovery) {
 
       if (absolute(row.session_path)) discovery.sessionPaths.add(row.session_path);
     }
-  } catch (error) {
-    if (error.code !== 'ENOENT') discovery.warnings.push(`${database}: registry provenance unavailable: ${error.message}`);
-  }
+  } catch (error) { discovery.warnings.push(`${database}: registry provenance unavailable: ${error.message}`); }
 }
 
 function validRecovery(record, container) {

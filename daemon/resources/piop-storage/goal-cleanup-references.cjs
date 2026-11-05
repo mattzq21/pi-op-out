@@ -33,9 +33,7 @@ function saved(root, directory) {
   const expected = require('./goal-ownership.cjs').savedIdentity(root, directory);
 
   if (expected === undefined) return;
-  const rows = database.connection(root).prepare(`SELECT d.record_json, t.contents_json FROM goal_asset_dependencies d
-    JOIN goal_text_contents t USING(directory, identity) JOIN goal_ownership o USING(directory, identity)
-    WHERE d.directory=? AND d.identity=? AND o.record_json IS NOT NULL`).all(directory, expected);
+  const rows = database.goalSavedReferences(root, directory, expected);
 
   if (rows.length > 1) throw new Error('More than one saved goal folder identity; cleanup retained');
 

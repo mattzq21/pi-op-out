@@ -24,24 +24,20 @@ const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.Strin
 
 function key(source) { return createHash('sha256').update(source).digest('hex'); }
 
-function withDatabase(root, operation) {
-  return operation(database.connection(root));
-}
-
 function readReceipt(root, id) {
-  const row = withDatabase(root, db => db.prepare('SELECT record_json FROM session_restore_receipts WHERE record_id=?').get(id));
+  const body = database.restoreReceiptBody(root, id);
 
-  return row ? { id, body: row.record_json, value: parse(row.record_json) } : null;
+  return body === undefined ? null : { id, body, value: parse(body) };
 }
 
 function receiptIds(root) {
-  return withDatabase(root, db => db.prepare('SELECT record_id FROM session_restore_receipts ORDER BY record_id').all().map(row => row.record_id));
+  return database.restoreReceiptIds(root);
 }
 
 function unchanged(root, snapshot) { return readReceipt(root, snapshot.id)?.body === snapshot.body; }
 
 const removeReceipt = onMainThread('restore-receipts.removeReceipt', (root, snapshot) => {
-  return withDatabase(root, db => db.prepare('DELETE FROM session_restore_receipts WHERE record_id=? AND record_json=?').run(snapshot.id, snapshot.body).changes === 1);
+  return database.removeRestoreReceipt(root, snapshot.id, snapshot.body);
 });
 
 function canonicalRoot(root) {
@@ -178,7 +174,7 @@ function record(root, journal) {
 }
 
 const saveReceipt = onMainThread('restore-receipts.saveReceipt', (root, id, body) => {
-  withDatabase(root, db => db.prepare('INSERT INTO session_restore_receipts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json').run(id, body));
+  database.saveRestoreReceipt(root, id, body);
 });
 
 function pruneReceipt(root, id) {

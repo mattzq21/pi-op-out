@@ -21,10 +21,6 @@ function parsed(directory, text) {
   return record;
 }
 
-function withDatabase(root, operation) {
-  return operation(database.connection(root));
-}
-
 function identity(directory) {
   const info = fs.lstatSync(directory, { bigint: true });
 
@@ -39,22 +35,15 @@ function read(root, directory) {
   try { expected = identity(directory); }
   catch (error) { if (error.code === 'ENOENT') return missingDirectoryRecord(root, directory); throw error; }
 
-  return withDatabase(root, db => {
-    const query = db.prepare('SELECT record_json FROM goal_ownership WHERE directory=? AND identity=?');
-    const row = query.get(directory, expected);
+  const row = database.goalOwnership(root, directory, expected);
 
-    if (!row) {
-      assertSavedIdentity(db, directory, expected);
+  if (!row) {
+    if (database.goalOwnershipReplaced(root, directory, expected)) throw new Error('Saved goal ownership directory was replaced');
 
-      return undefined;
-    }
+    return undefined;
+  }
 
-    return row.record_json === null ? undefined : parsed(directory, row.record_json);
-  });
-}
-
-function assertSavedIdentity(db, directory, expected) {
-  if (db.prepare('SELECT 1 FROM goal_ownership WHERE directory=? AND identity<>? AND record_json IS NOT NULL').get(directory, expected)) throw new Error('Saved goal ownership directory was replaced');
+  return row.record_json === null ? undefined : parsed(directory, row.record_json);
 }
 
 function missingDirectoryRecord(root, directory) {
@@ -66,33 +55,30 @@ function missingDirectoryRecord(root, directory) {
 function savedIdentity(root, directory) { return missingDirectoryRow(root, directory)?.identity; }
 
 function missingDirectoryRow(root, directory) {
-  return withDatabase(root, db => {
-    const rows = db.prepare('SELECT identity, record_json FROM goal_ownership WHERE directory=? AND record_json IS NOT NULL').all(directory);
+  const rows = database.goalOwnershipsOf(root, directory);
 
-    if (rows.length > 1) throw new Error('More than one saved goal owner record refers to the missing directory');
+  if (rows.length > 1) throw new Error('More than one saved goal owner record refers to the missing directory');
 
-    return rows[0];
-  });
+  return rows[0];
 }
 
 const save = onMainThread('goal-ownership.save', (root, directory, record, destination = directory) => {
   if (record !== undefined && !Check(recordSchema, record)) throw new Error('Invalid goal ownership record');
   const expected = identity(directory);
-  withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json')
-    .run(destination, expected, record === undefined ? null : JSON.stringify(record)));
+  database.saveGoalOwnership(root, destination, expected, record === undefined ? null : JSON.stringify(record));
 
   return expected;
 });
 
 function retained(root, directory, expected) {
-  return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_ownership WHERE directory=? AND identity=? AND record_json IS NOT NULL').get(directory, expected)));
+  return database.goalOwnershipRetained(root, directory, expected);
 }
 
 const remove = onMainThread('goal-ownership.remove', (root, directory, expected) => {
-  withDatabase(root, db => db.prepare('DELETE FROM goal_ownership WHERE directory=? AND identity=?').run(directory, expected));
+  database.removeGoalOwnership(root, directory, expected);
 });
 
-const reserveDirectory = onMainThread('goal-ownership.reserveDirectory', (root, directory) => Number(withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL) ON CONFLICT DO NOTHING').run(directory, '').changes)));
+const reserveDirectory = onMainThread('goal-ownership.reserveDirectory', (root, directory) => database.reserveGoalDirectory(root, directory));
 
 function allocate(root, parent) {
   for (let attempt = 0; attempt < 16; attempt++) {
@@ -119,26 +105,13 @@ function allocate(root, parent) {
 
 const publishAllocation = onMainThread('goal-ownership.publishAllocation', (root, directory) => {
   const expected = identity(directory);
-  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
-    db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL)').run(directory, expected);
-    db.prepare("INSERT INTO goal_text_files VALUES (?, ?, '[]')").run(directory, expected);
-    db.prepare("INSERT INTO goal_text_contents VALUES (?, ?, '[]')").run(directory, expected);
-    db.prepare("DELETE FROM goal_ownership WHERE directory=? AND identity=''").run(directory);
-  }));
+  database.publishGoalDirectory(root, directory, expected);
 
   return expected;
 });
 
 function directories(root, sessionId) {
-  return withDatabase(root, db => {
-    const rows = sessionId === undefined
-      ? db.prepare('SELECT DISTINCT directory FROM goal_ownership').all()
-      : db.prepare(`SELECT DISTINCT directory FROM goal_ownership
-        WHERE EXISTS (SELECT 1 FROM json_each(record_json, '$.owners') AS owner
-          WHERE json_extract(owner.value, '$.sessionId')=?)`).all(sessionId);
-
-    return rows.map(row => row.directory);
-  });
+  return database.goalOwnedDirectories(root, sessionId);
 }
 
 module.exports = { read, save, retained, remove, directories, allocate, savedIdentity };

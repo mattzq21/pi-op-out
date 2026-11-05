@@ -8,6 +8,7 @@ import { queueCommand } from './session';
 import * as storageTransactions from '../storage';
 import * as Worktrees from '../worktrees';
 import * as Registry from '../session_registry';
+import { mailboxHasDelivery } from '../../resources/session-database.cjs';
 import { detectRepository, publishBranchHistory } from '../worktrees';
 import { rememberProjectRepository } from '../projects';
 import { recentHistory } from './history_window';
@@ -232,8 +233,7 @@ export class Orchestration {
   }
 
   private stored(id: string, path: string, delivery: string): boolean {
-    const database = Registry.connection(this.host.storageRoot());
-    if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? AND delivery_id=?').get(id, delivery)) return true;
+    if (mailboxHasDelivery(this.host.storageRoot(), id, delivery)) return true;
     if (!path || !existsSync(path)) return false;
     return readFileSync(path, 'utf8').split('\n').some(line => {
       if (!line.includes(delivery)) return false;

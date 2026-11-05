@@ -1,9 +1,8 @@
 import { createTranscript, removeTemporary } from '../../../resources/piop-storage/recovery.cjs';
 import { closeSync, constants, existsSync, openSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
-import * as Registry from '../../session_registry';
 import { ensurePrivateDir } from '../../private_fs';
-import { transaction } from '../../util/db';
+import { bindRecoveredQueue, isRegistered, lookup, pending, queuedSessionIds, saveRecoveredFileMetadata, transaction } from '../../../resources/session-database.cjs';
 import { errorText } from '../../util/sync';
 import * as StorageLocks from '../../../resources/storage-locks.cjs';
 import { readHeaderLine } from '../protocol';
@@ -23,8 +22,8 @@ function recoverStorage(root: string, ownership: ConversationOwnership): Recover
   const restore = StorageLocks.lockSync('restore:' + root, { wait: false });
   if (!restore) return { ...empty(), retry: true, waiting: StorageLocks.lock('restore:' + root).then(release => release?.()) };
   try {
-    if (Registry.pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
-    const entries = (Registry.connection(root).prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id));
+    if (pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
+    const entries = queuedSessionIds(root);
     const recovery = empty();
     const waiting: Promise<void>[] = [];
     for (const entry of entries) {
@@ -65,9 +64,8 @@ function recoverContents(root: string, id: string): boolean {
 }
 
 function registeredSessionPath(root: string, id: string): string | null {
-  const db = Registry.connection(root);
-  const row: any = db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id);
-  return typeof row?.session_path === 'string' ? row.session_path : null;
+  const path = lookup(root, id);
+  return typeof path === 'string' ? path : null;
 }
 
 function transcriptExists(root: string, id: string): boolean {
@@ -98,9 +96,7 @@ function recoveryPath(root: string, id: string, origin: any): string {
 }
 
 function recoverTranscript(root: string, target: string, id: string, cwd: string, name: string): boolean {
-  const db = Registry.connection(root);
-  const bound = db.prepare('UPDATE sessions SET session_path=?1 WHERE session_id=?2 AND (session_path IS NULL OR session_path=?1)').run(target, id);
-  if (Number(bound.changes) !== 1) throw new Error('Queued input no longer belongs to this session path');
+  if (!bindRecoveredQueue(root, id, target)) throw new Error('Queued input no longer belongs to this session path');
   const created = createTranscript(target, id, cwd, name);
   registerRecovered(root, target, id);
   return created;
@@ -111,11 +107,8 @@ function registerRecovered(root: string, target: string, id: string): void {
   const metadata = statSync(target, { bigint: true });
   const modified = String(metadata.mtimeNs);
   const size = Number(metadata.size);
-  const db = Registry.connection(root);
-  transaction(db, 'IMMEDIATE', () => {
-    const row: any = db.prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=? AND session_path=?) AS found').get(id, target);
-    if (!row.found) throw new Error('Recovered transcript does not own its session ID');
-    db.prepare('INSERT INTO session_file_metadata VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size').run(id, target, modified, size);
-    db.prepare('DELETE FROM session_file_writes WHERE session_id=?').run(id);
+  transaction(root, 'IMMEDIATE', () => {
+    if (!isRegistered(root, id, target)) throw new Error('Recovered transcript does not own its session ID');
+    saveRecoveredFileMetadata(root, id, target, modified, size);
   });
 }

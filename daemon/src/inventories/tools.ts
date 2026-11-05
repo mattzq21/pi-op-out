@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir } from '../environment';
-import { connection, transaction } from '../util/db';
+import { saveToolInventoryJson, toolInventoryJson, transaction } from '../../resources/session-database.cjs';
 import type { ToolConfig } from '../settings_types';
 import { reported } from '../pi';
 
@@ -29,18 +29,16 @@ export function parseTools(value: unknown): ToolConfig[] {
 
 // The tools that Pi last reported in the storage root.
 export function savedTools(root = defaultRoot()): ToolConfig[] {
-  const row = connection(root).prepare('SELECT entries_json FROM tool_inventory WHERE id=1').get() as { entries_json: string } | undefined;
-  return parseTools(row ? JSON.parse(row.entries_json) : []);
+  const entries = toolInventoryJson(root);
+  return parseTools(entries === undefined ? [] : JSON.parse(entries));
 }
 
 // Saves the tools that Pi reported. True when they changed.
 function saveTools(root: string, tools: ToolConfig[]): boolean {
   const entries = JSON.stringify(tools);
-  const database = connection(root);
-  return transaction(database, 'IMMEDIATE', () => {
-    const row = database.prepare('SELECT entries_json FROM tool_inventory WHERE id=1').get() as { entries_json: string } | undefined;
-    if (row?.entries_json === entries) return false;
-    database.prepare('INSERT INTO tool_inventory VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET entries_json=excluded.entries_json').run(entries);
+  return transaction(root, 'IMMEDIATE', () => {
+    if (toolInventoryJson(root) === entries) return false;
+    saveToolInventoryJson(root, entries);
     return true;
   });
 }

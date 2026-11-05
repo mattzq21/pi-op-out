@@ -8,11 +8,10 @@ import { localLaunchDirectory, remoteDirectoryPath, remoteHost, ssh, reserveSess
 import { output, shellQuote } from '../process';
 import { inspectSessionProjectsWith, ProjectMetadataCache, refreshProjectRepository } from '../projects';
 import * as sidebarStorage from './sidebar';
-import * as Registry from '../session_registry';
 import * as WorktreeRecords from '../../resources/chat-worktree-records.cjs';
 import { loadAppSettings } from '../settings';
 import type { RemoteHost } from '../settings_types';
-import { transaction } from '../util/db';
+import { captureSessionFileMetadata, localSessionRows, transaction } from '../../resources/session-database.cjs';
 import { Mutex, isMissing } from '../util/sync';
 import * as peers from '../peers';
 import type { SessionSummary } from '../types';
@@ -140,15 +139,14 @@ async function refreshLocalCache(root: string, cache: Map<string, CachedSession>
 
 function localSessionCandidates(root: string, cache: Map<string, CachedSession>): [Set<string>, SessionCandidate[]] {
   const seen = new Set<string>(); const changed: SessionCandidate[] = [];
-  const database = Registry.connection(dirname(root));
+  const storageRoot = dirname(root);
   const prefix = root.replace(/\/+$/, '') + sep;
   let resolved = prefix;
   try { resolved = realpathSync(root) + sep; } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-  const rows = database.prepare(`SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size, n.name AS name, b.session_id AS branch_session, b.tip_id AS branch_tip, b.leaf_id AS branch_leaf FROM sessions s LEFT JOIN session_branch_selection b ON b.session_id=s.session_id LEFT JOIN session_names n ON n.session_id=s.session_id LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE substr(s.session_path, 1, length(?1))=?1 OR substr(s.session_path, 1, length(?2))=?2`).all(prefix, resolved) as any[];
-  for (const row of rows) {
+  for (const row of localSessionRows(storageRoot, prefix, resolved)) {
     const path: string = row.path;
     const saved = row.modified !== null && row.modified !== undefined && row.size !== null && row.size !== undefined ? [String(row.modified), Number(row.size)] as const : undefined;
-    const candidate = saved ? registeredCandidate(path, saved) : captureLocalCandidate(database, path);
+    const candidate = saved ? registeredCandidate(path, saved) : captureLocalCandidate(storageRoot, path);
     if (!candidate) continue;
     candidate[1] += ':' + (row.name ?? '') + ':' + JSON.stringify([row.branch_session, row.branch_tip, row.branch_leaf]);
     seen.add(path);
@@ -163,15 +161,13 @@ function registeredCandidate(path: string, [modified, size]: readonly [string, n
   return [path, `${modified}:${size}`, seconds, size];
 }
 
-function captureLocalCandidate(database: import('../util/db').Database, path: string): SessionCandidate | undefined {
-  return transaction(database, 'IMMEDIATE', () => {
+function captureLocalCandidate(storageRoot: string, path: string): SessionCandidate | undefined {
+  return transaction(storageRoot, 'IMMEDIATE', () => {
     const candidate = localCandidate(path);
     if (candidate) {
       const [file, fingerprint, , size] = candidate;
       const modified = fingerprint.split(':')[0];
-      database.prepare(`INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
-            AND NOT EXISTS (SELECT 1 FROM session_file_writes w WHERE w.session_id=sessions.session_id)
-            ON CONFLICT(session_id) DO NOTHING`).run(modified!, size, file);
+      captureSessionFileMetadata(storageRoot, file, modified!, size);
     }
     return candidate;
   });

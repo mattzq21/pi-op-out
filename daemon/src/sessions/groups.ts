@@ -6,7 +6,7 @@ import * as Registry from '../session_registry';
 import * as peers from '../peers';
 import { profileRoot } from '../host_operations';
 import { Mutex } from '../util/sync';
-import { transaction, type Database } from '../util/db';
+import { replaceSessionGroupRows, sessionGroupRows, transaction } from '../../resources/session-database.cjs';
 import type { SessionSummary } from '../types';
 import { listDirectories } from './listing';
 import type { App } from '../app';
@@ -42,59 +42,44 @@ export function serializeGroups(state: SessionGroups): any {
 
 function storagePath(): string { return join(ensureDesktopSessionsDir(homeDir()), 'groups.json'); }
 
-function database(path: string): Database {
+// The storage root of the groups file path.
+function storageRootOf(path: string): string {
   const parent = join(path, '..');
-  const root = parent.endsWith('/sessions') ? join(parent, '..') : parent;
-  return Registry.connection(root);
+  return parent.endsWith('/sessions') ? join(parent, '..') : parent;
 }
 
 function read(path: string): SessionGroups | undefined {
-  const connection = database(path);
-  return transaction(connection, 'DEFERRED', () => readWith(connection));
+  const root = storageRootOf(path);
+  return transaction(root, 'DEFERRED', () => readFrom(root));
 }
 
 function update<T>(path: string, change: (stored: SessionGroups | undefined) => { save?: SessionGroups; value: T }): T {
-  const connection = database(path);
-  return transaction(connection, 'IMMEDIATE', () => {
-    const { save, value } = change(readWith(connection));
-    if (save) writeWith(connection, save);
+  const root = storageRootOf(path);
+  return transaction(root, 'IMMEDIATE', () => {
+    const { save, value } = change(readFrom(root));
+    if (save) writeTo(root, save);
     return value;
   });
 }
 
-function readWith(connection: Database): SessionGroups | undefined {
-      const state = connection.prepare('SELECT initialized FROM session_group_state WHERE id=1').get() as { initialized: number };
-      if (!state.initialized) return undefined;
-      const groups = (connection.prepare('SELECT group_id, name, cwd, host_id, host_name FROM session_groups ORDER BY position, group_id').all() as any[])
-        .map(row => ({ id: row.group_id, name: row.name, cwd: row.cwd ?? null, hostId: row.host_id ?? null, hostName: row.host_name ?? null }));
-      const assignments = new Map((connection.prepare('SELECT session_key, group_id FROM session_group_assignments').all() as any[]).map(row => [row.session_key as string, (row.group_id ?? null) as string | null]));
-      const removedProjects = new Set((connection.prepare('SELECT project_id FROM session_group_removed_projects').all() as any[]).map(row => row.project_id as string));
-      const parents = new Map((connection.prepare('SELECT group_id, parent_id FROM session_group_parents').all() as any[]).map(row => [row.group_id as string, row.parent_id as string]));
-      const orders = emptyOrders();
-      for (const row of connection.prepare('SELECT scope, owner, token FROM session_group_orders ORDER BY scope, owner, position').all() as any[]) {
-        const lists = orders[row.scope as OrderScope];
-        if (!lists) throw new Error(`Unknown sidebar order scope ${row.scope}`);
-        const list = lists.get(row.owner) ?? [];
-        list.push(row.token);
-        lists.set(row.owner, list);
-      }
-      return { groups, parents, assignments, removedProjects, orders };
+function readFrom(root: string): SessionGroups | undefined {
+  const saved = sessionGroupRows(root);
+  if (!saved) return undefined;
+  const orders = emptyOrders();
+  for (const row of saved.orders) {
+    const lists = orders[row.scope as OrderScope];
+    if (!lists) throw new Error(`Unknown sidebar order scope ${row.scope}`);
+    const list = lists.get(row.owner) ?? [];
+    list.push(row.token);
+    lists.set(row.owner, list);
+  }
+  return { groups: saved.groups, parents: new Map(saved.parents), assignments: new Map(saved.assignments), removedProjects: new Set(saved.removedProjects), orders };
 }
 
-function writeWith(connection: Database, groups: SessionGroups): void {
-      normalizeOrders(groups);
-      connection.exec('DELETE FROM session_groups; DELETE FROM session_group_parents; DELETE FROM session_group_assignments; DELETE FROM session_group_removed_projects; DELETE FROM session_group_orders;');
-      const insertGroup = connection.prepare('INSERT INTO session_groups (group_id, position, name, cwd, host_id, host_name) VALUES (?, ?, ?, ?, ?, ?)');
-      groups.groups.forEach((group, position) => insertGroup.run(group.id, position, group.name, group.cwd, group.hostId, group.hostName));
-      const assign = connection.prepare('INSERT INTO session_group_assignments VALUES (?, ?)');
-      for (const [key, group] of groups.assignments) assign.run(key, group);
-      const parent = connection.prepare('INSERT INTO session_group_parents VALUES (?, ?)');
-      for (const [id, value] of groups.parents) parent.run(id, value);
-      const removed = connection.prepare('INSERT INTO session_group_removed_projects VALUES (?)');
-      for (const project of groups.removedProjects) removed.run(project);
-      const order = connection.prepare('INSERT INTO session_group_orders VALUES (?, ?, ?, ?)');
-      for (const scope of ORDER_SCOPES) for (const [owner, tokens] of groups.orders[scope]) tokens.forEach((token, position) => order.run(scope, owner, position, token));
-      connection.exec('UPDATE session_group_state SET initialized=1 WHERE id=1');
+function writeTo(root: string, groups: SessionGroups): void {
+  normalizeOrders(groups);
+  const orders = ORDER_SCOPES.flatMap(scope => [...groups.orders[scope]].flatMap(([owner, tokens]) => tokens.map((token, position) => ({ scope, owner, position, token }))));
+  replaceSessionGroupRows(root, { groups: groups.groups, assignments: groups.assignments, removedProjects: groups.removedProjects, parents: groups.parents, orders });
 }
 
 async function discover(app: App, hostId: string): Promise<string[]> {

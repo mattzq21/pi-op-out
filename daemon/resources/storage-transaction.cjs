@@ -33,26 +33,20 @@ function point() {
   if (limit !== undefined && writes++ >= Number(limit)) process.kill(process.pid, 'SIGKILL');
 }
 
-function withDatabase(root, operation) {
-  return operation(database.connection(root));
-}
-
 // The journal of each storage transaction, saved before and after each step, so a crash can be undone or finished.
 const insertJournal = onMainThread('storage-transaction.insertJournal', (root, id, kind, state, body) => {
-  withDatabase(root, db => db.prepare('INSERT INTO storage_transactions VALUES (?, ?, ?, ?)').run(id, kind, state, body));
+  database.insertStorageJournal(root, id, kind, state, body);
 });
 
 const saveJournal = onMainThread('storage-transaction.saveJournal', (root, id, state, body) => {
-  withDatabase(root, db => {
-    if (db.prepare('UPDATE storage_transactions SET state=?, journal_json=? WHERE id=?').run(state, body, id).changes !== 1) throw new Error('Storage transaction is not registered');
-  });
+  if (!database.updateStorageJournal(root, id, state, body)) throw new Error('Storage transaction is not registered');
 });
 
 const removeJournal = onMainThread('storage-transaction.removeJournal', (root, id, staging) => {
-  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
-    require('./transcript-references.cjs').removeDirectory(db, staging);
-    db.prepare('DELETE FROM storage_transactions WHERE id=?').run(id);
-  }));
+  database.transaction(root, 'IMMEDIATE', () => {
+    database.removeTranscriptCachesUnder(root, staging);
+    database.deleteStorageJournal(root, id);
+  });
 });
 
 function insert(journal) {
@@ -81,7 +75,7 @@ function retire(journal) {
 }
 
 function rows(root) {
-  return withDatabase(root, db => db.prepare('SELECT id, kind, state, journal_json FROM storage_transactions ORDER BY id').all())
+  return database.storageJournalRows(root)
     .map(row => {
       try {
         const journal = JSON.parse(row.journal_json);
@@ -636,7 +630,7 @@ function recover(root) {
   return failures.length ? { state: 'pending', error: failures.join('\n'), warning: temporary } : { state: 'committed', warning: temporary };
 }
 
-function pending(root) { return withDatabase(root, db => database.pending(db, 'transaction')); }
+function pending(root) { return database.pending(root, 'transaction'); }
 
 function stuck(root) {
   return rows(root).filter(row => row.damaged || row.journal.lastError).map(row => ({ id: row.id, kind: row.kind, error: row.damaged ?? row.journal.lastError }));

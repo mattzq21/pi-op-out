@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { CommandRefusedError } from '../pi_rejection';
 import { refreshProjectRepository } from '../projects';
 import * as Registry from '../session_registry';
+import * as SessionTables from '../../resources/session-database.cjs';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
 import { recordTools, recordCommands, savedCommands } from '../inventories';
@@ -174,8 +175,7 @@ export class Host implements SessionHost {
         return existing;
       }
       if (!argument(launch.spec, '--session') && launch.cwd) {
-        const saved = Registry.connection(this.storageRoot()).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(key);
-        if (!(saved as any)?.session_path) await refreshProjectRepository(this.storageRoot(), launch.cwd);
+        if (!SessionTables.lookup(this.storageRoot(), key)) await refreshProjectRepository(this.storageRoot(), launch.cwd);
       }
       const pending = this.pending.get(key) ?? [];
       this.pending.delete(key);
@@ -236,13 +236,12 @@ export class Host implements SessionHost {
     if (this.shuttingDown || this.sessions.get(session.key) !== session || this.orchestration.delivering(session.identity)
       || this.readonlyViews(session.identity).length
       || this.views.requestedFor(session.identity)) return false;
-    const database = Registry.connection(this.storageRoot());
+    const root = this.storageRoot();
     const id = session.identity;
     if (session.queue.liveGoal()) return false;
-    if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? LIMIT 1').get(id)) return false;
-    const runs = database.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=?').all(id);
-    return !runs.some(row => {
-      const run = JSON.parse(String(row.run_json));
+    if (SessionTables.mailboxHasMessages(root, id)) return false;
+    return !SessionTables.subagentRunBodies(root, id).some(body => {
+      const run = JSON.parse(body);
       return run.status === 'running' || run.resultDelivery === 'pending';
     });
   }

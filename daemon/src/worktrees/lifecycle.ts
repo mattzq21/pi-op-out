@@ -52,16 +52,8 @@ function canonicalFolder(folder: string): string {
 }
 
 function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree, excludeArchivedChildren = false): boolean {
-  const db = SessionTables.connection(root);
-  const children = new Set<string>();
-  const sessions = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as Array<{ session_id: string; session_path: string }>;
-  if (excludeArchivedChildren) {
-    const descendants = db.prepare(`WITH RECURSIVE descendants(id) AS (
-      SELECT child_id FROM auxiliary_children WHERE parent_id=?
-      UNION SELECT c.child_id FROM auxiliary_children c JOIN descendants d ON c.parent_id=d.id
-    ) SELECT id FROM descendants`).all(record.chatId) as Array<{ id: string }>;
-    for (const child of descendants) children.add(child.id);
-  }
+  const sessions = SessionTables.savedSessionsExcept(root, record.chatId);
+  const children = new Set<string>(excludeArchivedChildren ? SessionTables.auxiliaryDescendantIds(root, record.chatId) : []);
   const target = canonicalFolder(folder);
   for (const session of sessions) {
     if (children.has(session.session_id) && session.session_path.startsWith(join(root, 'archived') + sep)) continue;

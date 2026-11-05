@@ -1,28 +1,25 @@
-import type { DatabaseSync } from "node:sqlite";
 import { isAbsolute } from "node:path";
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { connection, register, storageRoot, transaction } from "../session-database.cjs";
+import { addSubagentRuns, hasSubagentRuns, register, saveSubagentRun, storageRoot, subagentRun, subagentRuns, transaction } from "../session-database.cjs";
 import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
 // The subagent runs of each parent chat. Only the daemon runs these; Pi asks through its storage channel.
 
-function runDatabase(file: string, sessionId: string) {
-  const db = connection(storageRoot(file));
+// The storage root of a parent chat whose subagent runs are ready.
+function runStorage(file: string, sessionId: string) {
+  const root = storageRoot(file);
 
-  transaction(db, "IMMEDIATE", () => {
-    if (db.prepare("SELECT 1 FROM session_subagent_state WHERE session_id=?").get(sessionId)) return;
-    register(db, sessionId, file);
-    db.prepare("INSERT INTO session_subagent_state VALUES (?)").run(sessionId);
+  transaction(root, "IMMEDIATE", () => {
+    if (hasSubagentRuns(root, sessionId)) return;
+    register(root, sessionId, file);
+    addSubagentRuns(root, sessionId);
   });
 
-  return db;
+  return root;
 }
 
 const savedRunSchema = Schema.Object({ run_id: Schema.String(), run_json: Schema.String(), child_path: Schema.Union([Schema.String(), Schema.Null()]) });
-
-const selectRuns = `SELECT r.run_id, r.run_json, s.session_path AS child_path FROM session_subagent_runs r
-  LEFT JOIN sessions s ON s.session_id=json_extract(r.run_json, '$.sessionId')`;
 
 function decodeRun(saved: Static<typeof savedRunSchema>, sessionId: string) {
   const run = Parse(runSchema, JSON.parse(saved.run_json));
@@ -34,20 +31,18 @@ function decodeRun(saved: Static<typeof savedRunSchema>, sessionId: string) {
   return run;
 }
 
-function readRun(db: DatabaseSync, sessionId: string, id: string) {
-  const row = db.prepare(`${selectRuns} WHERE r.session_id=? AND r.run_id=?`).get(sessionId, id);
+function readRun(root: string, sessionId: string, id: string) {
+  const row = subagentRun(root, sessionId, id);
 
   return row ? decodeRun(Parse(savedRunSchema, row), sessionId) : undefined;
 }
 
-function storeRun(db: DatabaseSync, run: SubagentRun) {
-  db.prepare(`INSERT INTO session_subagent_runs VALUES (?, ?, ?, ?) ON CONFLICT(session_id, run_id)
-    DO UPDATE SET started_at=excluded.started_at, run_json=excluded.run_json`)
-    .run(run.parentSessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
+function storeRun(root: string, run: SubagentRun) {
+  saveSubagentRun(root, run.parentSessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
 }
 
-function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
-  const previous = readRun(db, run.parentSessionId, resultNotificationId(run));
+function mergePendingRun(root: string, run: SubagentRun) {
+  const previous = readRun(root, run.parentSessionId, resultNotificationId(run));
 
   if (previous && previous.status !== "running" && run.status === "running") return false;
 
@@ -57,8 +52,7 @@ function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
 }
 
 function readRuns(file: string, sessionId: string) {
-  return runDatabase(file, sessionId).prepare(`${selectRuns} WHERE r.session_id=? ORDER BY r.started_at, r.run_id`)
-    .all(sessionId).map(row => decodeRun(Parse(savedRunSchema, row), sessionId));
+  return subagentRuns(runStorage(file, sessionId), sessionId).map(row => decodeRun(Parse(savedRunSchema, row), sessionId));
 }
 
 const parentSchema = Schema.Object({ sessionId: Schema.String({ minLength: 1 }), path: Schema.String({ minLength: 1 }) });
@@ -80,11 +74,11 @@ export const OPERATIONS = {
     const run = Parse(runSchema, request.run) as SubagentRun;
 
     if (run.parentSessionId !== chat.sessionId) throw new Error("Subagent run belongs to another parent conversation");
-    const db = runDatabase(chat.path, chat.sessionId);
+    runStorage(chat.path, chat.sessionId);
 
-    return transaction(db, "IMMEDIATE", () => {
-      if (!mergePendingRun(db, run)) return null;
-      storeRun(db, Parse(runSchema, run));
+    return transaction(root, "IMMEDIATE", () => {
+      if (!mergePendingRun(root, run)) return null;
+      storeRun(root, Parse(runSchema, run));
 
       return run.deliveryIds ?? [];
     });

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionQueue } from '../../daemon/src/host/queue/queue';
 import { QueueGoal } from '../../daemon/src/host/goals/state';
-import database from '../../daemon/resources/session-database.cjs';
+import { connection } from '../../daemon/resources/session-database/core.cjs';
 import goals from '../../daemon/resources/piop-storage/goals.cjs';
 
 const root = mkdtempSync(join(tmpdir(), 'piop-queue-goal-'));
@@ -16,7 +16,7 @@ function chat(status: 'active' | null, pending: any[] = [], extra: { held?: bool
   const sessionId = 'chat-' + ++chats;
   const file = join(root, 'sessions', sessionId + '.jsonl');
   writeFileSync(file, '');
-  const db = database.connection(root);
+  const db = connection(root);
   db.prepare('INSERT INTO sessions VALUES (?, ?)').run(sessionId, file);
   if (extra.waiting) db.prepare("INSERT INTO session_extension_state VALUES (?, 'piop-input-hold', ?)").run(sessionId, JSON.stringify({ type: 'custom', customType: 'piop-input-hold', data: { held: true } }));
   if (status) goals.write(file, sessionId, { id: 'goal-' + sessionId, sessionId, objective: 'Build', status });
