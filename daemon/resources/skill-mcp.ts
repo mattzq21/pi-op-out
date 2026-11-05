@@ -1,19 +1,37 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { ExtensionAPI, ExtensionContext, McpServerConfig } from "@earendil-works/pi-coding-agent";
-import { mcpServerSchema, mcpServersSchema } from "../../pi-extensions/piop-define-agents/mcp-schema.ts";
+import { skillMcpServerSchema, skillMcpServersSchema } from "../../pi-extensions/piop-define-agents/mcp-schema.ts";
 import { subscribeConnections } from "./mcp-connections.cjs";
-import type { AppRequest } from "../../pi-extensions/piop-define-agents/contracts.ts";
+import { leadingCalls, skillPaths } from "./piop-controls/skill-calls.ts";
 
 const ENTRY = "piop-skill-mcp";
+const FAILED_ENTRY = "piop-skill-mcp-failed";
 const STATUS = "piop-skill-mcp";
-const manifestSchema = z.object({ mcpServers: mcpServersSchema }).strict();
-const savedSchema = z.array(z.object({ file: z.string(), servers: z.array(z.object({ alias: z.string(), name: z.string().regex(/^skill_[a-zA-Z0-9_]+$/), config: mcpServerSchema })) }));
-type Server = { alias: string; name: string; config: McpServerConfig; state: "connecting" | "connected" | "failed"; error?: string; connection?: object };
-type Connection = { name: string; state: string; error?: string };
+export const SKILL_MCP_FAILED = "This skill's embedded MCP failed to load";
+const manifestSchema = z.object({ mcpServers: skillMcpServersSchema }).strict();
+const savedSchema = z.array(z.object({ file: z.string(), servers: z.array(z.object({ alias: z.string(), name: z.string().regex(/^[a-zA-Z0-9_]+$/), config: skillMcpServerSchema })) }));
+type Server = { alias: string; name: string; config: McpServerConfig & { exposure: keyof typeof REACH }; state: "connecting" | "connected"; connection?: object };
+type Connection = { name: string; state: string };
+const REACH = { direct: "", codemode: " (call from codemode scripts)", deferred: " (find with tool_search)" };
+const configSchema = z.object({ mcpServers: z.record(z.string(), z.unknown()).optional() });
+const namespace = (name: string) => name.replaceAll("-", "_");
+
+// Pi prefers servers from its own mcp.json files over registered ones with the same name. Pi skips invalid files.
+function configuredNames(paths: string[]) {
+  return paths.flatMap(path => {
+    let content: string;
+    try { content = readFileSync(path, "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+    let parsed;
+    try { parsed = configSchema.safeParse(JSON.parse(content.replace(/^\uFEFF/, ""))); } catch { return []; }
+    return parsed.success ? Object.keys(parsed.data.mcpServers ?? {}) : [];
+  });
+}
+
 const SKILL_BLOCK = /<skill name="[^"]+" location="([^"]+)">\n[\s\S]*?\n<\/skill>(?:\n\n|$)/y;
 
 function invokedSkillPaths(prompt: string) {
@@ -27,34 +45,69 @@ function invokedSkillPaths(prompt: string) {
   return paths;
 }
 
-export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Promise<void>, wait: () => Promise<void>) {
+const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Promise<void>, wait: () => Promise<void>, mcpConfigs: (ctx: ExtensionContext) => string[]) {
   const loaded = new Map<string, Map<string, Server>>();
   const registered = new Set<string>();
   const changed = new Set<() => void>();
   let codemode = true, generation = 0;
   let context: ExtensionContext | undefined;
   let statusText: string | undefined;
-  const all = () => [...loaded.values()].flatMap(servers => [...servers.values()]);
+  // Skills that start the same server with the same settings share one Server object.
+  const all = () => [...new Set([...loaded.values()].flatMap(servers => [...servers.values()]))];
+  const used = (server: Server) => [...loaded.values()].some(servers => [...servers.values()].includes(server));
   const publish = () => {
-    const value = JSON.stringify([...loaded].flatMap(([file, servers]) => [...servers.values()].map(server => ({ name: server.name, label: `${basename(dirname(file))}: ${server.alias}`, state: server.state, ...(server.error ? { error: server.error } : {}) }))));
+    const users = new Map<Server, string[]>();
+    for (const [file, servers] of loaded) for (const server of servers.values()) users.set(server, [...users.get(server) ?? [], basename(dirname(file))]);
+    const value = JSON.stringify([...users].map(([server, skills]) => ({ name: server.name, label: `${skills.join(", ")}: ${server.alias}`, state: server.state })));
     if (context && value !== statusText) { context.ui.setStatus(STATUS, value === "[]" ? undefined : value); statusText = value; }
     for (const notify of changed) notify();
   };
   const save = () => pi.appendEntry(ENTRY, [...loaded].map(([file, servers]) => ({ file, servers: [...servers.values()].map(({ alias, name, config }) => ({ alias, name, config })) })));
-  const failed = (server: Server, error: unknown) => { server.state = "failed"; server.error = error instanceof Error ? error.message : String(error); publish(); };
-  const register = (server: Server) => {
-    if (registered.has(server.name)) return;
-    server.state = "connecting"; delete server.error; delete server.connection;
-    publish();
-    try {
-      pi.registerMcpServer(server.name, { ...server.config, exposure: codemode ? "codemode" : "direct" });
-      registered.add(server.name);
-    } catch (error) { failed(server, error); }
-  };
   const stop = (server: Server) => {
     if (!registered.has(server.name)) return;
     registered.delete(server.name);
     pi.unregisterMcpServer(server.name);
+  };
+  const report = (file: string) => {
+    const skill = basename(dirname(file));
+    try { pi.appendEntry(FAILED_ENTRY, { skill }); }
+    catch (error) { context?.ui.notify(`The embedded MCP of skill "${skill}" failed to load, and the chat could not save this notice: ${errorText(error)}`, "error"); }
+  };
+  const drop = (file: string) => {
+    const servers = loaded.get(file);
+    if (!servers) return;
+    loaded.delete(file);
+    for (const server of servers.values()) if (!used(server)) stop(server);
+    try { save(); }
+    catch (error) { context?.ui.notify(`Could not save the skill MCP servers of this chat: ${errorText(error)}`, "error"); }
+    publish();
+  };
+  const fail = (server: Server) => {
+    for (const [file] of [...loaded].filter(([, servers]) => [...servers.values()].includes(server))) { drop(file); report(file); }
+  };
+  const conflict = (server: Pick<Server, "name">, ctx: ExtensionContext) => {
+    const key = namespace(server.name);
+    const taken = all().some(other => other !== server && namespace(other.name) === key)
+      || pi.getMcpServers().some(other => !registered.has(other.name) && namespace(other.name) === key)
+      || configuredNames(mcpConfigs(ctx)).some(name => namespace(name) === key);
+    return taken ? new Error(`The MCP server name "${server.name}" is already in use in this chat`) : undefined;
+  };
+  const register = (server: Server, ctx: ExtensionContext) => {
+    if (registered.has(server.name)) return;
+    server.state = "connecting"; delete server.connection;
+    publish();
+    if (server.config.exposure === "codemode" && !codemode) return fail(server);
+    try {
+      const error = conflict(server, ctx);
+      if (error) throw error;
+      pi.registerMcpServer(server.name, server.config);
+      registered.add(server.name);
+    } catch { fail(server); }
+  };
+  const registerAll = (servers: Iterable<Server>, ctx: ExtensionContext) => {
+    for (const server of servers) if (used(server)) register(server, ctx);
   };
   const clear = () => {
     generation++;
@@ -65,13 +118,13 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
   };
   const unsubscribe = subscribeConnections((connection: Connection) => {
     const server = all().find(server => server.name === connection.name);
-    if (!server || connection.state === "closed") return;
+    if (!server || connection.state === "closed" || connection.state === "disconnected") return;
     if (connection.state === "connecting") server.connection = connection;
     if (server.connection && server.connection !== connection) return;
     server.connection = connection;
-    if (connection.state === "connected") { server.state = "connected"; delete server.error; }
-    else if (connection.state === "connecting") { server.state = "connecting"; delete server.error; }
-    else { server.state = "failed"; server.error = connection.error || (connection.state === "needs-auth" ? "Sign-in is required." : "The connection closed."); }
+    if (connection.state === "connected") server.state = "connected";
+    else if (connection.state === "connecting") server.state = "connecting";
+    else return fail(server);
     publish();
   });
 
@@ -88,8 +141,31 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
       };
       changed.add(finish); ctx.signal?.addEventListener("abort", finish, { once: true }); finish();
     });
-    const failures = all().filter(server => server.state === "failed");
-    if (failures.length) throw new Error(`Required skill MCP servers failed: ${failures.map(server => `${server.alias}: ${server.error}`).join("; ")}. Use Retry or Remove in the chat.`);
+  };
+
+  const start = (file: string, ctx: ExtensionContext): Map<string, Server> | undefined => {
+    let content: string;
+    try { content = readFileSync(join(dirname(file), "mcp.json"), "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+    const definitions = manifestSchema.parse(JSON.parse(content)).mcpServers;
+    const replace = (value: string) => value.replaceAll("${SKILL_DIR}", dirname(file)).replaceAll("${PROJECT_DIR}", ctx.cwd);
+    const servers = new Map(Object.entries(definitions).filter(([, config]) => config.enabled !== false).map(([alias, supplied]): [string, Server] => {
+      const { piopInjectAgentId, ...rest } = supplied;
+      if (piopInjectAgentId) throw new Error("Skill MCP servers do not support piopInjectAgentId");
+      const config = JSON.parse(JSON.stringify(rest, (_key, value) => typeof value === "string" ? replace(value) : value)) as Server["config"];
+      if ("command" in config && (config.command.startsWith("./") || config.command.startsWith("../"))) config.command = resolve(dirname(file), config.command);
+      const server: Server = { alias, name: namespace(alias), config, state: "connecting" };
+      const shared = all().find(other => other.name === server.name);
+      if (!shared) { const error = conflict(server, ctx); if (error) throw error; return [alias, server]; }
+      if (!isDeepStrictEqual(shared.config, server.config)) throw new Error(`The MCP server name "${server.name}" is already in use in this chat with other settings`);
+      return [alias, shared];
+    }));
+    if (!servers.size) return;
+    loaded.set(file, servers);
+    save();
+    registerAll(servers.values(), ctx);
+    publish();
+    return servers;
   };
 
   const load = async (path: string, ctx: ExtensionContext): Promise<string | undefined> => {
@@ -100,50 +176,21 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     context = ctx;
     let servers = loaded.get(file);
     if (!servers) {
-      let content: string;
-      try { content = readFileSync(join(dirname(file), "mcp.json"), "utf8"); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-      const definitions = manifestSchema.parse(JSON.parse(content)).mcpServers;
-      const replace = (value: string) => value.replaceAll("${SKILL_DIR}", dirname(file)).replaceAll("${PROJECT_DIR}", ctx.cwd);
-      servers = new Map(Object.entries(definitions).filter(([, config]) => config.enabled !== false).map(([alias, supplied]) => {
-        const { piopInjectAgentId, ...rest } = supplied;
-        if (piopInjectAgentId) throw new Error("Skill MCP servers do not support piopInjectAgentId");
-        const config = JSON.parse(JSON.stringify(rest, (_key, value) => typeof value === "string" ? replace(value) : value)) as McpServerConfig;
-        if ("command" in config) {
-          config.cwd = resolve(dirname(file), config.cwd ?? ".");
-          if (config.command.startsWith("./") || config.command.startsWith("../")) config.command = resolve(dirname(file), config.command);
-        }
-        return [alias, { alias, name: `skill_${randomUUID().replaceAll("-", "")}_${alias.replaceAll("-", "_")}`, config, state: "connecting" }];
-      }));
-      if (!servers.size) return;
-      loaded.set(file, servers);
-      try { save(); } catch (error) { loaded.delete(file); throw error; }
-      for (const server of servers.values()) register(server);
+      try { servers = start(file, ctx); }
+      catch { drop(file); report(file); throw new Error(SKILL_MCP_FAILED); }
+      if (!servers) return;
     }
-    if (!servers.size) return;
     await settle(ctx, current);
-    return `Skill MCP tools: ${[...servers.values()].map(({ alias, name }) => `${alias}: mcp__${name}__*`).join(", ")}.`;
+    if (loaded.get(file) !== servers) throw new Error(SKILL_MCP_FAILED);
+    return `Skill MCP tools: ${[...servers.values()].map(({ alias, name, config }) => `${alias}: mcp__${name}__*${REACH[config.exposure]}`).join(", ")}.`;
   };
 
-  const action = async (name: string, action: "retry" | "remove", ctx: ExtensionContext) => {
-    const group = [...loaded.values()].find(servers => [...servers.values()].some(server => server.name === name));
-    const server = group && [...group.values()].find(server => server.name === name);
-    if (!group || !server) throw new Error("This skill MCP server is no longer required");
-    context = ctx;
-    if (action === "remove") {
-      group.delete(server.alias);
-      try { save(); } catch (error) { group.set(server.alias, server); throw error; }
-      stop(server); publish(); return null;
-    }
-    stop(server); register(server); await settle(ctx); return null;
+  const reject = (event: { text: string }, ctx: ExtensionContext, error: unknown) => {
+    const message = errorText(error);
+    ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error: message }));
+    ctx.ui.notify(message, "error");
+    return { action: "handled" as const };
   };
-  const stopRequests = pi.events.on("piop:rpc", (request: AppRequest) => {
-    if (request.command !== "skill_mcp") return;
-    request.ready = Promise.resolve().then(() => {
-      const payload = z.object({ name: z.string(), action: z.enum(["retry", "remove"]) }).parse(request.payload);
-      return action(payload.name, payload.action, request.ctx);
-    });
-  });
 
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "read" || event.isError || typeof event.input.path !== "string") return;
@@ -151,17 +198,19 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
       const message = await load(event.input.path, ctx);
       if (message) return { content: [...event.content, { type: "text" as const, text: message }] };
     } catch (error) {
-      return { content: [...event.content, { type: "text" as const, text: `Skill MCP loading failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      return { content: [{ type: "text" as const, text: errorText(error) }], isError: true };
     }
   });
   pi.on("input", async (event, ctx) => {
-    try { await settle(ctx); }
-    catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error: message }));
-      ctx.ui.notify(message, "error");
-      return { action: "handled" as const };
-    }
+    if (event.streamingBehavior) return;
+    try {
+      await settle(ctx);
+      const available = skillPaths(pi);
+      for (const name of leadingCalls(event.text).names) {
+        const path = available.get(name);
+        if (path) await load(path, ctx);
+      }
+    } catch (error) { return reject(event, ctx, error); }
   });
   pi.on("before_agent_start", async (event, ctx) => {
     try {
@@ -175,7 +224,7 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
       if (contents.length) return { message: { customType: "skill-mcp", content: contents.join("\n"), display: false } };
     } catch (error) {
       ctx.abort();
-      ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      ctx.ui.notify(errorText(error), "error");
     }
   });
   pi.on("session_start", (_event, ctx) => {
@@ -183,18 +232,25 @@ export function skillMcp(pi: ExtensionAPI, ready: (ctx: ExtensionContext) => Pro
     const entry = [...ctx.sessionManager.getBranch()].reverse().find(entry => entry.type === "custom" && entry.customType === ENTRY);
     if (entry?.type === "custom") {
       const saved = savedSchema.parse(entry.data);
-      for (const group of saved) loaded.set(group.file, new Map(group.servers.map(server => [server.alias, { ...server, config: server.config as McpServerConfig, state: "connecting" }])));
-      for (const server of all()) register(server);
+      const shared = new Map<string, Server>();
+      for (const group of saved) loaded.set(group.file, new Map(group.servers.map(saved => {
+        const server = shared.get(saved.name) ?? { ...saved, config: saved.config as Server["config"], state: "connecting" };
+        shared.set(server.name, server);
+        return [saved.alias, server];
+      })));
+      registerAll(all(), ctx);
     }
     publish();
   });
-  pi.on("session_shutdown", (_event, ctx) => { clear(); ctx.ui.setStatus(STATUS, undefined); unsubscribe(); stopRequests(); });
+  pi.on("session_shutdown", (_event, ctx) => { clear(); ctx.ui.setStatus(STATUS, undefined); unsubscribe(); });
 
   return {
     select(enabled: boolean) {
       if (codemode === enabled) return;
       codemode = enabled;
-      for (const server of all()) { stop(server); register(server); }
+      const reach = all().filter(server => server.config.exposure === "codemode");
+      for (const server of reach) stop(server);
+      if (context) registerAll(reach, context);
     },
   };
 }

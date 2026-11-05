@@ -32,4 +32,4 @@ export interface PluginModule {
   messages?: Record<string, Component<{ details: unknown }>>;
 }
 
-export interface SidepaneOpening { requestId: string; initialPrompt?: string; initialImages?: ImageAttachment[] }
+export interface SidepaneOpening { requestId: string; initialPrompt?: string; initialImages?: ImageAttachment[]; background: boolean }

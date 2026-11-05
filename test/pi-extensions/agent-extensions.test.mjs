@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, writeFile, rm, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { compileAgentFixture } from '../compile-defined-agent-fixture.mjs';
 import { agentDefinitions, agentFixture, profile, configured, readStoredConfig, writeStoredConfig, piRoot } from '../defined-agent-fixture.mjs';
@@ -346,7 +348,7 @@ async function sessionAgentFixture(t) {
   return f;
 }
 
-test('a fixed agent retains manual model and effort choices after restore', async t => {
+test('a started conversation keeps manual model and effort choices after restore and can change agent', async t => {
   const f = await sessionAgentFixture(t);
   await f.emit('session_start');
   assert.equal(f.capability().locked, false);
@@ -370,11 +372,12 @@ test('a fixed agent retains manual model and effort choices after restore', asyn
   assert.equal(restored.capability().locked, true);
   assert.equal(restored.ctx.model.id, 'another-model');
   assert.equal(restored.pi.getThinkingLevel(), 'low');
-  await assert.rejects(restored.select('general'), /agent is fixed/);
-  assert.equal(restored.capability().active, 'reviewer');
+  await restored.select('general');
+  assert.equal(restored.capability().active, 'general');
+  assert.equal(restored.entries.findLast(entry => entry.customType === 'pi-define-agents-state').data.snapshot.definition.name, 'general');
 });
 
-test('legacy conversations retain their fixed agent when global definitions change', async t => {
+test('legacy conversations keep their saved agent when global definitions change', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push(
     { type: 'message', message: { role: 'user', content: 'Existing conversation' } },
@@ -388,11 +391,11 @@ test('legacy conversations retain their fixed agent when global definitions chan
   await f.store(config);
   assert.equal(f.capability().active, 'reviewer');
   assert.equal(f.capability().saved, true);
-  await assert.rejects(f.select('general'), /agent is fixed/);
-  assert.equal(f.capability().active, 'reviewer');
+  await f.select('general');
+  assert.equal(f.capability().active, 'general');
 });
 
-test('a missing restored agent blocks input and cannot be replaced in a locked session', async t => {
+test('a missing restored agent blocks input until another agent is chosen', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'removed', locked: true } });
   await f.emit('session_start');
@@ -400,18 +403,109 @@ test('a missing restored agent blocks input and cannot be replaced in a locked s
   assert.equal(f.capability().unavailable, true);
   assert.deepEqual(await f.emit('input', { text: 'Blocked' }), { action: 'handled' });
   assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /Agent "removed" is unavailable/);
-  await assert.rejects(f.select('general'), /agent is fixed/);
-  assert.deepEqual(await f.emit('input', { text: 'Continue' }), { action: 'handled' });
+  assert.deepEqual(await f.emit('input', { text: 'Again' }), { action: 'handled' });
+  await f.select('general');
+  assert.equal(f.capability().unavailable, false);
+  assert.deepEqual(await f.emit('input', { text: 'Continue' }), { action: 'continue' });
 });
 
 
-test('compacted history fixes agent selection while a new empty session allows it', async t => {
+test('after an agent change, each request starts with the new agent prompt and tools', async t => {
+  let root = dirname(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim()));
+  while (!existsSync(join(root, 'node_modules/@earendil-works/pi-ai/package.json'))) { const parent = dirname(root); if (parent === root) throw new Error('Could not locate the installed Pi AI package'); root = parent; }
+  const { getCurrentSystemMessage } = await import(pathToFileURL(join(root, 'node_modules/@earendil-works/pi-ai/dist/index.js')));
+  const f = await sessionAgentFixture(t);
+  await f.emit('session_start');
+  const tool = name => ({ name, description: name, parameters: { type: 'object' } });
+  const head = { role: 'system', content: '', sections: { preamble: 'Old prompt', instructions: '<instructions>\nOld\n</instructions>', cwd: '<cwd>\n/w\n</cwd>' }, toolsAdded: [tool('read'), tool('bash')], timestamp: 1 };
+  const user = { role: 'user', content: 'First', timestamp: 2 };
+  const reply = { role: 'assistant', content: [{ type: 'text', text: 'Done' }], timestamp: 3 };
+  const tools = { role: 'system', content: '', toolsAdded: [tool('grep')], timestamp: 4 };
+  const change = { role: 'system', content: '', sections: { preamble: 'New prompt', instructions: null }, toolsAdded: [tool('write')], toolsRemoved: [{ name: 'bash' }], timestamp: 5 };
+  const next = { role: 'user', content: 'Second', timestamp: 6 };
+  const later = { role: 'system', content: '', toolsAdded: [tool('find')], timestamp: 7 };
+  const messages = [head, user, reply, tools, change, next, later];
+  const { messages: sent } = await f.emit('context_with_system', { messages: structuredClone(messages) });
+  assert.deepEqual(sent, [getCurrentSystemMessage(messages.slice(0, 5)), user, reply, next, later]);
+  assert.deepEqual(sent[0].sections, { preamble: 'New prompt', cwd: '<cwd>\n/w\n</cwd>' });
+  assert.deepEqual(sent[0].toolsAdded.map(tool => tool.name), ['read', 'grep', 'write']);
+  assert.equal(await f.emit('context_with_system', { messages: [head, user, reply, tools, next] }), undefined);
+});
+
+test('/agent edits the agent of this conversation only, and the edit survives a restore', async t => {
+  const f = await sessionAgentFixture(t);
+  await f.emit('session_start');
+  const opened = [];
+  f.ctx.ui.input = async title => { opened.push(title); return 'opened'; };
+  await f.commands.get('agent').handler('', f.ctx);
+  assert.deepEqual(opened, ['__piop_chat_agent__']);
+  await f.select('reviewer');
+  assert.deepEqual(await f.emit('input', { text: 'Start' }), { action: 'continue' });
+  f.entries.push({ type: 'message', message: { role: 'user', content: 'Start' } });
+  const chat = await f.rpc('chat_agent');
+  assert.equal(chat.agent.name, 'reviewer'); assert.equal(chat.systemPrompt, 'Prompt'); assert.equal(chat.agentPrompt, '');
+  assert.equal(chat.agent.path_systemprompt, undefined);
+  const prompt = async target => { const options = { sections: {}, skills: [] }; await target.emit('before_agent_start', { systemPromptOptions: options }); return [options.customPrompt, options.sections.instructions]; };
+
+  await assert.rejects(f.rpc('set_chat_agent', { ...chat, systemPrompt: ' ' }), /system prompt cannot be empty/);
+  await assert.rejects(f.rpc('set_chat_agent', { ...chat, agent: { ...chat.agent, name: 'bad name' } }), /agent name/);
+  await assert.rejects(f.rpc('set_chat_agent', { ...chat, agent: { ...chat.agent, tools: 'read' } }), /Invalid agent settings: \/agent\/tools/);
+  f.ctx.isIdle = () => false;
+  await assert.rejects(f.rpc('set_chat_agent', chat), /Wait for the current response/);
+  f.ctx.isIdle = () => true;
+  assert.deepEqual(await prompt(f), ['Prompt', '']);
+
+  await f.rpc('set_chat_agent', { agent: { ...chat.agent, name: 'editor', description: 'Edits text' }, systemPrompt: 'Edited prompt', agentPrompt: 'Be brief.' });
+  assert.equal(f.capability().active, 'editor');
+  assert.deepEqual(await prompt(f), ['Edited prompt', 'Be brief.']);
+  assert.deepEqual((await f.rpc('chat_agent')).systemPrompt, 'Edited prompt');
+  assert.equal(f.entries.findLast(entry => entry.customType === 'pi-define-agents-state').data.snapshot.definition.name, 'editor');
+  assert.deepEqual((await f.configuration()).agents.map(agent => agent.name), ['general', 'reviewer']);
+
+  await f.rpc('set_chat_agent', { agent: { ...chat.agent, name: 'editor', description: 'Edits text' }, systemPrompt: 'Edited again', agentPrompt: 'Be brief.' });
+  assert.equal(f.entries.filter(entry => entry.customType === 'pi-define-agents-state').at(-1).data.snapshot.definition.name, 'editor');
+
+  const restored = await sessionAgentFixture(t);
+  restored.entries.push(...structuredClone(f.entries));
+  await restored.emit('session_start');
+  assert.equal(restored.capability().active, 'editor');
+  assert.deepEqual(await prompt(restored), ['Edited again', 'Be brief.']);
+  assert.equal((await restored.rpc('chat_agent')).agent.description, 'Edits text');
+});
+
+test('/agent shows the model and effort picked in the composer, and Apply makes the pane values the only choice', async t => {
+  const f = await sessionAgentFixture(t);
+  await f.emit('session_start');
+  const published = () => f.statuses.get('pi-define-agents');
+  f.statuses.delete('pi-define-agents');
+  await f.pi.setModel({ provider: 'test', id: 'picked' });
+  assert.ok(published(), 'a composer model change tells open agent panes');
+  f.statuses.delete('pi-define-agents');
+  f.pi.setThinkingLevel('low');
+  await f.emit('thinking_level_select', { level: 'low' });
+  assert.ok(published(), 'a composer effort change tells open agent panes');
+  const chat = await f.rpc('chat_agent');
+  assert.equal(chat.agent.model, 'test/picked'); assert.equal(chat.agent.effort, 'low');
+
+  await f.rpc('set_chat_agent', { ...chat, systemPrompt: 'Edited' });
+  assert.equal(f.ctx.model.id, 'picked'); assert.equal(f.pi.getThinkingLevel(), 'low');
+  const edited = await f.rpc('chat_agent');
+  await f.rpc('set_chat_agent', { ...edited, agent: { ...edited.agent, model: 'test/chosen', effort: 'medium' } });
+  assert.equal(f.ctx.model.id, 'chosen'); assert.equal(f.pi.getThinkingLevel(), 'medium');
+  await f.emit('input', { text: 'Go' });
+  assert.equal(f.ctx.model.id, 'chosen'); assert.equal(f.pi.getThinkingLevel(), 'medium');
+  const shown = (await f.rpc('chat_agent')).agent;
+  assert.equal(shown.model, 'test/chosen'); assert.equal(shown.effort, 'medium');
+});
+
+test('compacted history allows agent selection', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push({ type: 'compaction' });
   await f.emit('session_start');
   assert.equal(f.capability().locked, true);
-  await assert.rejects(f.select('reviewer'), /agent is fixed/);
-  assert.equal(f.capability().active, 'general');
+  await f.select('reviewer');
+  assert.equal(f.capability().active, 'reviewer');
+  await f.select('general');
   f.entries.length = 0;
   f.ctx.sessionManager.getSessionFile = () => join(f.dir, 'new-session');
   await f.emit('session_start');

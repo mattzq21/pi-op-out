@@ -46,6 +46,7 @@ interface CachedSession {
   thinkingLevels: string[];
   resources: Record<string, SessionResource>;
   outline?: { before: string; items: HistoryOutline };
+  loaded: boolean;
 }
 
 const stores = new WeakMap<Transport, SessionMemory>();
@@ -113,7 +114,7 @@ function enforceCacheLimit() {
 
 // A fresh copy: the store changes its objects in place, so they must not be shared.
 function initialSnapshot(state: AgentState): CachedSession {
-  return { state: structuredClone(unwrap(state)), messages: [], models: [], commands: [], thinkingLevels: ["off"], resources: {} };
+  return { state: structuredClone(unwrap(state)), messages: [], models: [], commands: [], thinkingLevels: ["off"], resources: {}, loaded: false };
 }
 
 function stripToolArguments(message: ChatMessage): ChatMessage {
@@ -505,6 +506,8 @@ export function forgetSession(transport: Transport) {
 
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 
+export const sessionMemoryFor = (transport: Transport) => memoryFor(transport);
+
 function memoryFor(transport: Transport, initialState = emptyState) {
   let store = stores.get(transport);
 
@@ -543,5 +546,5 @@ export function useSessionMemory(transport: Accessor<Transport>, initialState: A
   const setCommands = (update: StateUpdate<SlashCommand[]>) => memory().set("commands", update);
   const setThinkingLevels = (update: StateUpdate<string[]>) => memory().set("thinkingLevels", update);
 
-  return { get state() { return snapshot().state; }, get messages() { return snapshot().messages; }, get models() { return snapshot().models; }, get commands() { return snapshot().commands; }, get thinkingLevels() { return snapshot().thinkingLevels; }, get resources() { return snapshot().resources; }, get memory() { return memory(); }, setState, setMessages, setModels, setCommands, setThinkingLevels };
+  return { get state() { return snapshot().state; }, get loaded() { return snapshot().loaded; }, get messages() { return snapshot().messages; }, get models() { return snapshot().models; }, get commands() { return snapshot().commands; }, get thinkingLevels() { return snapshot().thinkingLevels; }, get resources() { return snapshot().resources; }, get memory() { return memory(); }, setState, setMessages, setModels, setCommands, setThinkingLevels };
 }

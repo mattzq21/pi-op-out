@@ -12,15 +12,17 @@ test('running side agents show in the header pill, grouped by kind, and a row op
   await page.getByRole('button', { name: 'Model', exact: true }).click();
   await page.getByRole('option', { name: /scripted-model/ }).click();
   const composer = page.getByRole('textbox', { name: 'Message piop' });
-  await composer.fill('Draw with helpers: six SVGs that make me smile');
-  await composer.press('Enter');
+  await composer.first().fill('Draw with helpers: six SVGs that make me smile');
+  await composer.first().press('Enter');
 
   const pill = page.getByRole('button', { name: '4 working' });
   await pill.waitFor({ timeout: 60000 });
-  await composer.fill('/btw Which colours fit best?');
-  await composer.press('Enter');
+  await composer.first().fill('/btw');
+  await composer.first().press('Enter');
+  const sideComposer = page.locator('#sidepane-panel').getByRole('textbox', { name: 'Message piop' });
+  await sideComposer.fill('Which colours fit best?');
+  await sideComposer.press('Enter');
   await page.getByRole('button', { name: '5 working' }).waitFor({ timeout: 30000 });
-  await page.locator('#sidepane-panel').waitFor();
   await page.getByRole('button', { name: /^Open side pane/ }).click();
   await page.locator('#sidepane-panel').waitFor({ state: 'hidden' });
   await page.mouse.move(700, 500);

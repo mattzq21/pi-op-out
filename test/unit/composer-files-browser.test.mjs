@@ -612,7 +612,7 @@ test('an attachment added while a send is pending survives that send and is sent
   await page.getByRole('checkbox', { name: 'Hold sends' }).check();
   await page.getByRole('textbox', { name: 'Message piop' }).focus();
   await page.keyboard.press('Enter');
-  await page.getByRole('button', { name: 'Send message', exact: true }).and(page.locator(':disabled')).waitFor();
+  await page.getByLabel('Held sends').filter({ hasText: '1' }).waitFor();
   await writeFile(path, 'second');
   await browserFileDrop(page, [path]);
   await page.waitForFunction(() => document.querySelectorAll('[aria-label="Remove note.txt"]').length === 2);

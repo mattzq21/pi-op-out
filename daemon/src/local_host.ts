@@ -116,6 +116,7 @@ function runtimeEvent(app: App, local: LocalHost, runtimeId: string, event: any)
       case 'agent_start': app.pi.activeAgents.update(agent, { working: true }); break;
       case 'agent_settled': app.pi.activeAgents.update(agent, { working: false }); break;
       case 'ownership_lost': app.pi.activeAgents.update(agent, { working: false, messageable: true }); break;
+      case 'ownership_acquired': app.pi.activeAgents.update(agent, { messageable: false }); break;
     }
   }
   // A runtime's events go only to the client that started it.

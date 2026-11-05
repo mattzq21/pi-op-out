@@ -32,10 +32,12 @@ export function ImageGallery(props: { children: JSX.Element }) {
     if (at >= 0 && list.length > 1) setCurrent(list[(at + delta + list.length) % list.length]);
   };
 
-  const closeViewer = () => {
+  const closeViewer = (byPointer: boolean) => {
     const image = current();
     setCurrent(undefined);
-    image?.element()?.focus({ preventScroll: true });
+
+    if (!byPointer) return image?.element()?.focus({ preventScroll: true });
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   };
 
   const gallery: Gallery = {
@@ -52,7 +54,7 @@ export function ImageGallery(props: { children: JSX.Element }) {
   </ImageGalleryContext.Provider>;
 }
 
-function ImageViewer(props: { src: string; alt: string; position: { index: number; count: number }; onStep: (delta: number) => void; onClose: () => void }) {
+function ImageViewer(props: { src: string; alt: string; position: { index: number; count: number }; onStep: (delta: number) => void; onClose: (byPointer: boolean) => void }) {
   const dialogRef = createRef<HTMLDialogElement>(null);
   const contentRef = createRef<HTMLDivElement>(null);
   const imageRef = createRef<HTMLImageElement>(null);
@@ -144,7 +146,7 @@ function ImageViewer(props: { src: string; alt: string; position: { index: numbe
     return () => { removeTouchGestures?.(); dialog?.removeEventListener("wheel", zoomImage); dialog?.close(); returnFocus?.focus({ preventScroll: true }); };
   }, () => []);
 
-  return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onClick={props.onClose} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose} onKeyDown={navigate}>
+  return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onClick={event => props.onClose(event.detail > 0)} onCancel={event => { event.preventDefault(); props.onClose(false); }} onClose={() => props.onClose(false)} onKeyDown={navigate}>
     <div class="image-viewer-toolbar">
       <Show when={props.position.count > 1}><div class="image-viewer-nav">
         <button type="button" aria-label="Previous image" data-tooltip="Previous image" onClick={event => { event.stopPropagation(); props.onStep(-1); }}><ChevronLeft size={22} /></button>

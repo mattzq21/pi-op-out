@@ -95,9 +95,22 @@ export class NativeTransport {
   canLoadModels() { return this.running || this.draftOnly(); }
   preview() { return this.sessionId && !this.running && !this.readOnly && !this.draftOnly() ? previewConversation(this.sessionId, this.hostId) : undefined; }
   hasConfirmedOwnership() { return this.running && this.owns; }
-  async takeOwnership() {
+  private takingOwnership?: Promise<void>;
+  takeOwnership() {
+    this.takingOwnership ??= this.takeOwnershipNow().finally(() => { this.takingOwnership = undefined; });
+
+    return this.takingOwnership;
+  }
+  private async takeOwnershipNow() {
     if (this.readOnly) throw new Error("This view is read-only");
+    const change = this.ownershipChange;
     await this.command({ type: "take_ownership" });
+
+    if (change === this.ownershipChange) this.ownershipAcquired();
+  }
+  private ownershipChange = 0;
+  private ownershipAcquired() {
+    this.ownershipChange++;
     this.owns = true;
     this.emit({ type: "ownership_acquired" });
     this.emit({ type: "session_info_changed" });
@@ -458,7 +471,9 @@ export class NativeTransport {
       if (envelope.runtimeId !== undefined && envelope.runtimeId !== this.runtimeId) return;
       const event = envelope.event;
 
-      if (envelope.runtimeId !== undefined && event.type === "ownership_lost") { this.owns = false; this.retainedRequests.clear(); }
+      if (envelope.runtimeId !== undefined && event.type === "ownership_lost") { this.ownershipChange++; this.owns = false; this.retainedRequests.clear(); }
+
+      if (envelope.runtimeId !== undefined && event.type === "ownership_acquired" && !this.readOnly) { this.ownershipAcquired(); return; }
 
       if (event.type === "disconnected") this.connectionLost();
       this.emit(event);
@@ -506,6 +521,7 @@ export class NativeTransport {
     const owns = !this.readOnly && attached?.owned !== false;
 
     if (this.initializingChat && owns === this.owns) return;
+    this.ownershipChange++;
     this.owns = owns;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
@@ -553,7 +569,7 @@ export class NativeTransport {
   async command(command: RpcCommand, schema: z.ZodType = jsonResultSchema) {
     const result = await this.executeCommand(command, schema);
 
-    if (command.type === "select_agent" || command.type === "set_model") {
+    if (command.type === "select_agent" || command.type === "set_chat_agent" || command.type === "set_model") {
       const state = await this.executeCommand({ type: "get_state" }, agentStateSchema);
       this.promptControls.useEffectiveModel(state.model);
     }

@@ -43,17 +43,29 @@ export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "sto
 
 export type AgentProfilesMode = AgentStartPurpose | "both";
 
-export function startableProfiles(pi: ExtensionAPI, purpose: AgentStartPurpose) {
-  const catalog: AgentProfilesRequest = { purpose };
-  pi.events.emit("piop:agents:profiles", catalog);
+function listed({ purpose, active, profiles }: AgentProfilesRequest) {
+  if (!profiles) throw new Error("Agent profiles are unavailable");
 
-  if (!catalog.profiles) throw new Error("Agent profiles are unavailable");
-
-  return catalog as AgentProfilesRequest & { profiles: NonNullable<AgentProfilesRequest["profiles"]> };
+  return { purpose, active, profiles };
 }
 
-export function soleProfile(pi: ExtensionAPI, purpose: AgentStartPurpose) {
-  const catalog = startableProfiles(pi, purpose);
+export async function startableProfiles(pi: ExtensionAPI, purpose: AgentStartPurpose) {
+  const catalog: AgentProfilesRequest = { purpose };
+  pi.events.emit("piop:agents:profiles", catalog);
+  await catalog.ready;
+
+  return listed(catalog);
+}
+
+export function lastReadProfiles(pi: ExtensionAPI, purpose: AgentStartPurpose) {
+  const catalog: AgentProfilesRequest = { purpose, lastRead: true };
+  pi.events.emit("piop:agents:profiles", catalog);
+
+  return listed(catalog);
+}
+
+export async function soleProfile(pi: ExtensionAPI, purpose: AgentStartPurpose) {
+  const catalog = await startableProfiles(pi, purpose);
   const only = catalog.profiles.length === 1 ? catalog.profiles[0].name : undefined;
 
   return only === catalog.active ? undefined : only;
@@ -61,7 +73,7 @@ export function soleProfile(pi: ExtensionAPI, purpose: AgentStartPurpose) {
 
 function profilesTool(pi: ExtensionAPI, mode: AgentProfilesMode) {
   const list = async (purpose: AgentStartPurpose) => {
-    const catalog = startableProfiles(pi, purpose);
+    const catalog = await startableProfiles(pi, purpose);
     const text = catalog.profiles.length ? JSON.stringify(catalog.profiles) : `You cannot start any agent as a ${purpose}.`;
 
     return { content: [{ type: "text" as const, text }], details: catalog };

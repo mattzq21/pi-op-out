@@ -93,8 +93,9 @@ export class PluginService {
       if (!state) throw new Error('Plugins are unavailable');
       return {
         enabled: [...state.enabled], configured: [...state.enabled], revision: state.revision, error: state.error,
-        plugins: catalog().plugins.map(({ manifest: { id, name, messages, auxiliary, client } }) => ({ id, name, messages, auxiliary, client })),
+        plugins: catalog().plugins.map(({ manifest: { id, name, keybinds, messages, auxiliary, client } }) => ({ id, name, keybinds, messages, auxiliary, client })),
         queuedCommands: Contributions.commandPolicy().queued,
+        queuedWithPrompt: Contributions.commandPolicy().queuedWithPrompt,
       };
     } finally { release(); }
   }

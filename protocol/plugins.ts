@@ -34,16 +34,32 @@ export type AuxiliaryLook = z.output<typeof auxiliaryLookSchema>;
 export const pluginScopeSchema = z.enum(["client", "host", "conversation"]);
 export type PluginScope = z.output<typeof pluginScopeSchema>;
 
+// A keyboard shortcut that runs one of the plugin's commands. The user can change the shortcut; the default is not
+// used when another shortcut already has it. needsMessages: the shortcut does nothing in a chat without messages.
+export const pluginKeybindSchema = z.strictObject({
+  id: z.string().regex(PLUGIN_ID),
+  label: z.string().min(1),
+  description: z.string(),
+  defaultShortcut: z.string(),
+  command: z.string(),
+  needsMessages: z.boolean().optional(),
+});
+export type PluginKeybind = z.output<typeof pluginKeybindSchema>;
+
 export const pluginManifestSchema = z.strictObject({
   id: z.string().regex(PLUGIN_ID),
   name: z.string().min(1),
   enabledByDefault: z.boolean().optional(),
   // The Pi extension loads after this core Pi extension.
   extension: z.strictObject({ after: z.enum(["session", "context-bar"]) }).optional(),
-  // The slash commands of the plugin. A queued command waits until the current response ends.
-  commands: z.record(z.string(), z.enum(["immediate", "queued"])).optional(),
+  // The slash commands of the plugin, and when each runs:
+  // - immediate: at once. immediateWithImages: at once, with the images of the message.
+  // - queued: after the current response. queuedWithPrompt: after the current response when text follows the command,
+  //   else at once.
+  commands: z.record(z.string(), z.enum(["immediate", "immediateWithImages", "queued", "queuedWithPrompt"])).optional(),
   // The client requests of the plugin, with what each does, for the error when the plugin is off.
   requests: z.record(z.string(), z.string()).optional(),
+  keybinds: z.array(pluginKeybindSchema).optional(),
   agentTools: z.array(z.string()).optional(),
   // The plugin's settings, with their default values. A saved value must have the type of its default.
   settings: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
@@ -56,12 +72,12 @@ export const pluginManifestSchema = z.strictObject({
 export type PluginManifest = z.output<typeof pluginManifestSchema>;
 
 // What clients get about a plugin.
-export const pluginSummarySchema = pluginManifestSchema.pick({ id: true, name: true, messages: true, auxiliary: true, client: true });
+export const pluginSummarySchema = pluginManifestSchema.pick({ id: true, name: true, keybinds: true, messages: true, auxiliary: true, client: true });
 export type PluginSummary = z.output<typeof pluginSummarySchema>;
 
 export const pluginStatusSchema = z.object({
   enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable(),
-  plugins: z.array(pluginSummarySchema), queuedCommands: z.array(z.string()),
+  plugins: z.array(pluginSummarySchema), queuedCommands: z.array(z.string()), queuedWithPrompt: z.array(z.string()),
 });
 export type PluginStatus = z.output<typeof pluginStatusSchema>;
 

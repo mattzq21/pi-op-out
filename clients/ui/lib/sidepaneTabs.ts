@@ -8,6 +8,8 @@ export interface SidepaneTab { key: string; kind: string; session: SessionSummar
 
 const sessionKey = (session: Pick<SessionSummary, "hostId" | "id">) => `${session.hostId ?? "local"}:${session.id}`;
 
+const agentSettingsKey = (session: Pick<SessionSummary, "hostId" | "id">) => `agent:${sessionKey(session)}`;
+
 const createdOrder = (left: SessionSummary, right: SessionSummary) => (left.path.split("/").at(-1) ?? "").localeCompare(right.path.split("/").at(-1) ?? "");
 
 function tabLabel(session: SessionSummary) {
@@ -47,6 +49,7 @@ export function createSidepaneTabs(options: Options) {
     try { options.subagentTabs.save([...keys]); }
     catch (error) { options.onError(`Could not save the subagent tabs: ${error instanceof Error ? error.message : String(error)}`); }
   }, { defer: true }));
+  const [agentSessions, setAgentSessions] = createSignal<SessionSummary[]>([]);
   const openings = new Map<string, SidepaneOpening>();
   const change = (update: (current: Set<string>) => void) => (current: ReadonlySet<string>) => { const next = new Set(current); update(next); return next; };
 
@@ -86,7 +89,15 @@ export function createSidepaneTabs(options: Options) {
 
   const agents = createMemo<SidepaneTab[]>(() => auxiliaryTree()
     .map(session => ({ key: sessionKey(session), kind: required(session.auxiliaryKind), session, label: tabLabel(session), running: options.running(session) })));
-  const tabs = createMemo<SidepaneTab[]>(() => agents().filter(tab => tab.kind !== "subagent" || pinned().has(tab.key)));
+  const agentSettingsTabs = createMemo<SidepaneTab[]>(() => {
+    const main = options.main();
+    const scope = new Set([`${main.hostId}:${main.sessionId}`, ...auxiliaryTree().map(sessionKey)]);
+
+    const listed = new Map(options.sessions().map(session => [sessionKey(session), session]));
+
+    return agentSessions().filter(session => scope.has(sessionKey(session))).map(opened => listed.get(sessionKey(opened)) ?? opened).map(session => ({ key: agentSettingsKey(session), kind: "agent", session, label: `Agent: ${tabLabel(session)}`, running: false }));
+  });
+  const tabs = createMemo<SidepaneTab[]>(() => [...agents().filter(tab => tab.kind !== "subagent" || pinned().has(tab.key)), ...agentSettingsTabs()]);
 
   const selected = createMemo(() => tabs().find(tab => tab.key === selectedKey()) ?? tabs()[0]);
   const shown = () => open() && tabs().length > 0;
@@ -97,7 +108,7 @@ export function createSidepaneTabs(options: Options) {
     setOpened(current => current.some(session => listed.has(sessionKey(session))) ? current.filter(session => !listed.has(sessionKey(session))) : current);
   }));
 
-  const openAuxiliary = (session: SessionSummary, opening?: SidepaneOpening) => {
+  const openAuxiliary = (session: SessionSummary, opening?: SidepaneOpening, select = true) => {
     const key = sessionKey(session);
 
     if (opening) openings.set(key, opening);
@@ -105,11 +116,16 @@ export function createSidepaneTabs(options: Options) {
     if (!options.sessions().some(item => sessionKey(item) === key)) setOpened(current => [...current.filter(item => sessionKey(item) !== key), session]);
 
     if (session.auxiliaryKind === "subagent") setPinned(change(next => next.add(key)));
-    show(key);
+
+    if (select) show(key);
   };
 
   return {
     agents, tabs, selected, open, setOpen, shown, openAuxiliary,
+    openAgentSettings: (session: SessionSummary) => {
+      setAgentSessions(current => [...current.filter(item => sessionKey(item) !== sessionKey(session)), session]);
+      show(agentSettingsKey(session));
+    },
     workingTree: (session: SessionSummary) => {
       const host = session.hostId ?? "local";
       const tree = [session.id];
@@ -133,6 +149,7 @@ export function createSidepaneTabs(options: Options) {
     finishOpening: (key: string) => { openings.delete(key); },
     forget: (key: string) => {
       openings.delete(key);
+      setAgentSessions(current => current.filter(session => agentSettingsKey(session) !== key));
       setOpened(current => current.filter(session => sessionKey(session) !== key));
       setPinned(change(next => next.delete(key)));
     },
@@ -146,6 +163,7 @@ export function createSidepaneTabs(options: Options) {
         setPinned(change(next => next.delete(key)));
       }
       setOpened(current => current.filter(session => !matches(session)));
+      setAgentSessions(current => current.filter(session => !matches(session)));
     },
   };
 }

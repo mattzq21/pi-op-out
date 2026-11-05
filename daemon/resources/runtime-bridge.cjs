@@ -27,7 +27,7 @@ const { patchMethod, requireMethods } = require("./pi-patch.cjs");
 // Pi takes its storage channel before it starts any program, so those programs do not get it.
 require("./storage-channel.cjs").claim();
 
-const configurationCommands = new Set(["context_cap_settings", "agent_definitions_changed", "provider_auth_refresh", "select_agent", "fork_after", "rewind_message", "prepare_fork"]);
+const configurationCommands = new Set(["context_cap_settings", "provider_auth_refresh", "select_agent", "set_chat_agent", "fork_after", "rewind_message", "prepare_fork"]);
 
 let queueValidation;
 
@@ -90,7 +90,7 @@ function installQueueProtocol(session, output) {
           const message = Array.isArray(input) ? input.find(message => message?.role === "user") : input;
 
           if (message?.role === "user") {
-            message.piopQueueId = scope.queueId;
+            if (scope.queueId) message.piopQueueId = scope.queueId;
             if (scope.submissionId) message.piopSubmissionId = scope.submissionId;
             scope.tagged = true;
           }
@@ -267,6 +267,7 @@ function dispatchPrompt(command, session, output) {
   let preflightSucceeded = false;
   void session.prompt(command.message, {
     images: command.images, streamingBehavior: command.streamingBehavior, source: "rpc",
+    ...(typeof command.goalSubmissionId === "string" && command.goalSubmissionId ? { [queuePromptScope]: { session, submissionId: command.goalSubmissionId, tagged: false } } : {}),
     preflightResult: (disposition, submittedText) => {
       preflightSucceeded = true;
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
@@ -561,11 +562,15 @@ const commandPolicy = JSON.parse(process.env.PIOP_COMMAND_POLICY);
 
 const queuedCommands = new Set(commandPolicy.queued);
 
+const queuedWithPrompt = new Set(commandPolicy.queuedWithPrompt);
+
+const imageCommands = new Set(commandPolicy.withImages);
+
 const disabledCommands = new Map(Object.entries(commandPolicy.disabled));
 
 const commandName = text => /^\/(\S+)/.exec(text)?.[1];
 
-const queuedCommand = text => queuedCommands.has(commandName(text));
+const queuedCommand = text => queuedCommands.has(commandName(text)) || (queuedWithPrompt.has(commandName(text)) && /^\/\S+\s+\S/.test(text.trimStart()));
 
 const userText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
 
@@ -585,15 +590,15 @@ function bindFollowUpDrain(session) {
   }, "Agent follow-up queue");
 }
 
-function executeQueuedCommand(session, text, images) {
-  return afterReload(session, () => executeQueuedCommandReady(session, text, images));
+function executePluginCommand(session, text, images) {
+  return afterReload(session, () => executePluginCommandReady(session, text, images));
 }
 
-async function executeQueuedCommandReady(session, text, images) {
+async function executePluginCommandReady(session, text, images) {
   const ctx = session.extensionRunner.createCommandContext();
   const signal = ctx.signal;
   const command = text.split(/\s/, 1)[0].slice(1);
-  const request = { command: "run_queued_command", payload: { command, args: text.slice(command.length + 1).trim(), images }, ctx };
+  const request = { command: "run_command", payload: { command, args: text.slice(command.length + 1).trim(), images }, ctx };
 
   try {
     Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge")).value(request);
@@ -608,7 +613,7 @@ async function executeQueuedCommandReady(session, text, images) {
   return !signal?.aborted;
 }
 
-async function consumeQueuedCommands(session, messages) {
+async function consumeQueuedCommands(session, messages, output) {
   const prompts = [];
 
   for (const message of messages) {
@@ -627,21 +632,21 @@ async function consumeQueuedCommands(session, messages) {
       break;
     }
 
-    const consumed = await executeQueuedCommand(session, text, message.content.filter(part => part.type === "image"));
+    const consumed = await executePluginCommand(session, text, message.content.filter(part => part.type === "image"));
 
-    if (consumed && isQueuedUserMessage(message)) session.sessionManager.appendMessage(message);
+    if (consumed && isQueuedUserMessage(message)) output({ type: "queue_consumed", queueId: message.piopQueueId, sessionId: session.sessionManager.getSessionId(), entryId: null });
   }
 
   return prompts;
 }
 
-async function drainQueuedCommands(session, drain) {
+async function drainQueuedCommands(session, drain, output) {
   while (true) {
     if (session.agent.signal?.aborted || session[reachedCompaction]) return [];
     const messages = await drain();
 
     if (!messages.length) return messages;
-    const prompts = await consumeQueuedCommands(session, messages);
+    const prompts = await consumeQueuedCommands(session, messages, output);
 
     if (prompts.length || session[reachedCompaction]) return prompts;
   }
@@ -698,7 +703,7 @@ function bindQueuedCommands(session, output) {
 
   patchMethod(agent, "createLoopConfig", createLoopConfig => function (...args) {
     const config = createLoopConfig.apply(this, args);
-    patchMethod(config, "getFollowUpMessages", followUp => () => drainQueuedCommands(session, followUp), "Agent loop config");
+    patchMethod(config, "getFollowUpMessages", followUp => () => drainQueuedCommands(session, followUp, output), "Agent loop config");
 
     return config;
   });
@@ -710,7 +715,7 @@ function bindQueuedCommands(session, output) {
 
     let cancelled = false;
     await this.runWithLifecycle(async signal => {
-      await consumeQueuedCommands(session, messages);
+      await consumeQueuedCommands(session, messages, output);
       cancelled = signal.aborted;
     });
 
@@ -748,6 +753,13 @@ async function main() {
 
     if (this[runningCompaction]) await this[runningCompaction];
 
+    if (imageCommands.has(commandName(text))) {
+      await executePluginCommand(this, text, options?.images ?? []);
+      options?.preflightResult?.("handled");
+
+      return;
+    }
+
     if (queuedCommand(text) && this.isStreaming) {
       return this._queueFollowUp(text, options?.images).then(() => options?.preflightResult?.("queued"));
     }
@@ -781,4 +793,4 @@ async function main() {
 
 if (require.main === module) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
 
-module.exports = { continueRun };
+module.exports = { continueRun, dispatchPrompt, installQueueProtocol };

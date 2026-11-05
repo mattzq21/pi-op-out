@@ -125,3 +125,27 @@ test.concurrent('a review submitted during a reply waits for that reply and is n
   expect(requests).toHaveLength(1);
   expect(requests.some(request => request.messages.some((message: any) => text(message).includes('/review queued.ts')))).toBe(false);
 }, 60000);
+
+test.concurrent('a bare /review during a turn opens at once and links the review in the chat after the turn, without a warning', async () => {
+  let finish!: () => void;
+  const finished = new Promise<void>(resolve => { finish = resolve; });
+  agents.scripts.set('Plan the scanner', async messages => {
+    if (text(messages.at(-1)) !== 'Keep scanning') return { text: 'Scanner planned.' };
+    await finished;
+    return { text: 'Scanning done.' };
+  });
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Plan the scanner' });
+  await chat.until(history => text(history.at(-1)) === 'Scanner planned.');
+  await chat.command({ type: 'prompt', message: 'Keep scanning' });
+  for (let tries = 0; !agents.model.requests.some(request => text(request.messages.at(-1)) === 'Keep scanning') && tries < 100; tries++) await Bun.sleep(100);
+
+  const review = await openReview(chat, '/review');
+  expect(review.name).toBe('Review 1');
+  finish();
+  const linked = async () => (await chat.command({ type: 'get_entries' })).entries.some((entry: any) => entry.type === 'custom_message' && entry.customType === 'piop-review-link' && entry.details?.sessionId === review.sessionId);
+  for (let tries = 0; !(await linked()) && tries < 100; tries++) await Bun.sleep(100);
+  expect(await linked()).toBe(true);
+  await Bun.sleep(500);
+  expect(uiRequests(chat.runtimeId, 'notify').map(request => request.message).filter(message => /Review/.test(message))).toEqual([]);
+}, 60000);

@@ -16,7 +16,6 @@ const [sent, setSent] = createSignal<unknown[]>([]);
 const [choices, setChoices] = createSignal<unknown[]>([]);
 const [disabled, setDisabled] = createSignal(false);
 const [agentUnavailable, setAgentUnavailable] = createSignal(false);
-const [agentLocked, setAgentLocked] = createSignal(false);
 const [agentsReloadable, setAgentsReloadable] = createSignal(false);
 const [streaming, setStreaming] = createSignal(false);
 const [modelsAvailable, setModelsAvailable] = createSignal(true);
@@ -31,7 +30,6 @@ render(() => <>
   <button onClick={() => setFocusRequest(value => value + 1)}>Focus message editor</button>
   <label><input type="checkbox" checked={disabled()} onChange={event => setDisabled(event.currentTarget.checked)} />Disable controls</label>
   <label><input type="checkbox" checked={agentUnavailable()} onChange={event => setAgentUnavailable(event.currentTarget.checked)} />Agent unavailable</label>
-  <label><input type="checkbox" checked={agentLocked()} onChange={event => setAgentLocked(event.currentTarget.checked)} />Agent locked</label>
   <label><input type="checkbox" checked={agentsReloadable()} onChange={event => setAgentsReloadable(event.currentTarget.checked)} />Agents reloadable</label>
   <label><input type="checkbox" checked={modelsAvailable()} onChange={event => setModelsAvailable(event.currentTarget.checked)} />Models available</label>
   <label><input type="checkbox" checked={reviewUnavailable()} onChange={event => setReviewUnavailable(event.currentTarget.checked)} />Review model unavailable</label>
@@ -47,8 +45,8 @@ render(() => <>
   <output aria-label="Sent messages">{JSON.stringify(sent())}</output>
   <output aria-label="Selected values">{JSON.stringify(choices())}</output>
   <div style={{ width: '600px', margin: '80px 150px' }}>
-    <Composer streaming={streaming()} queued={streaming() ? 2 : 0} pendingMessages={streaming() ? [{ id: "steer", message: "Steer", behavior: "steer" }, { id: "later", message: "Later", behavior: "followUp" }] : []} onChangePending={async () => {}} queuedCommands={["compact", "review"]} commands={[{ name: "clear", source: "extension", description: "Clear context" }, { name: "compact", source: "extension" }, { name: "skill:Research", source: "skill" }, { name: "skill:grill-me", source: "skill" }, { name: "review", source: "extension", options: [{ value: "", label: "[scope]", description: "Text that limits the review" }] }, { name: "fast", source: "extension", options: [{ value: "on", label: "on" }, { value: "off", label: "off" }, { value: "toggle", label: "toggle" }] }]} agents={[{ name: "default", tools: [] }, { name: "review", tools: [], unavailableReason: reviewUnavailable() ? 'Model missing/model is unavailable' : undefined }]} models={modelsAvailable() ? [{ provider: "provider", id: "gpt-small", name: "gpt-Small" }] : []} model={null} controlsDisabled={disabled()}
-      focusRequest={focusRequest()} thinkingLevel="off" thinkingLevels={['off', 'high']} agentUnavailable={agentUnavailable()} agentLocked={agentUnavailable() || agentLocked()} onReloadAgents={agentsReloadable() ? async () => {} : undefined} activeAgent="default"
+    <Composer streaming={streaming()} queued={streaming() ? 2 : 0} pendingMessages={streaming() ? [{ id: "steer", message: "Steer", behavior: "steer" }, { id: "later", message: "Later", behavior: "followUp" }] : []} onChangePending={async () => {}} commands={[{ name: "clear", source: "extension", description: "Clear context" }, { name: "compact", source: "extension" }, { name: "skill:Research", source: "skill" }, { name: "skill:grill-me", source: "skill" }, { name: "review", source: "extension", options: [{ value: "", label: "[scope]", description: "Text that limits the review" }] }, { name: "fast", source: "extension", options: [{ value: "on", label: "on" }, { value: "off", label: "off" }, { value: "toggle", label: "toggle" }] }]} queuedCommands={["compact"]} queuedWithPrompt={["review"]} agents={[{ name: "default", tools: [] }, { name: "review", tools: [], unavailableReason: reviewUnavailable() ? 'Model missing/model is unavailable' : undefined }]} models={modelsAvailable() ? [{ provider: "provider", id: "gpt-small", name: "gpt-Small" }] : []} model={null} controlsDisabled={disabled()}
+      focusRequest={focusRequest()} thinkingLevel="off" thinkingLevels={['off', 'high']} agentUnavailable={agentUnavailable()} onReloadAgents={agentsReloadable() ? async () => {} : undefined} activeAgent="default"
       onSend={async (message, behavior, images) => { setSent(values => [...values, [message, behavior, images]]);
         if (sendMode() === "refuse") return false;
         if (sendMode() === "hold") { try { await new Promise<void>((resolve, reject) => setPendingSend({ resolve, reject })); } finally { setPendingSend(undefined); } }

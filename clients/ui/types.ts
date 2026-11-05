@@ -70,7 +70,7 @@ export interface ProjectAgents { directory: string; revision: string; defaultAge
 
 export interface AgentConfig { revision?: string; project?: ProjectAgents; agents: AgentProfile[]; }
 
-export interface DefinedAgentsCapability { version: number; active: string; locked?: boolean; saved?: boolean; unavailable?: boolean; config: AgentConfig; }
+export interface DefinedAgentsCapability { version: number; active: string; saved?: boolean; unavailable?: boolean; config: AgentConfig; }
 
 
 export interface SettingsPublication { committed: true; durable: boolean; error?: string; }

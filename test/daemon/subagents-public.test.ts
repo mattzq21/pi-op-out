@@ -6,7 +6,7 @@ import { agentDaemon, agentDefinitions, called, text } from './agent-chats';
 import { stoppedJob } from './stopped-job';
 
 let agents: Awaited<ReturnType<typeof agentDaemon>>;
-beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('spawn_subagents'); }, 60000);
+beforeAll(async () => { agents = await agentDaemon(); await agents.enableAgentTools('spawn_subagents', 'list_peers'); }, 60000);
 afterAll(async () => { await agents?.close(); });
 const jobs: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of jobs.splice(0)) await close(); });
@@ -61,15 +61,15 @@ const delegating = (name: string, task: string) => (messages: any[]) => {
   return { text: delivered ? delivered[0] : 'Waiting for ' + name + '.' };
 };
 
-test.concurrent('a child gets no subagent tools', async () => {
+test.concurrent('a child gets no subagent or peer tools', async () => {
   agents.scripts.set('Start a helper', delegating('Helper', 'Help without help'));
   agents.scripts.set('Help without help', () => ({ text: 'Relay: done' }));
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Start a helper' });
   await root.until(history => text(history.at(-1)).startsWith('Relay: '));
   const names = (prompt: string) => agents.model.requests.find(request => text(request.messages.find((message: any) => message.role === 'user')) === prompt).tools.map((tool: any) => tool.function.name);
-  expect(names('Start a helper')).toContain('spawn_subagents');
-  expect(names('Help without help').filter((name: string) => /subagent|agent_profiles/.test(name))).toEqual([]);
+  expect(names('Start a helper')).toEqual(expect.arrayContaining(['spawn_subagents', 'list_peers']));
+  expect(names('Help without help').filter((name: string) => /subagent|agent_profiles|peer/.test(name))).toEqual([]);
 }, 120000);
 
 for (const delivery of ['steer', 'follow_up']) test.concurrent('a message to a busy child arrives ' + (delivery === 'steer' ? 'before its next model call when steered' : 'after its current work as a follow-up'), async () => {
@@ -221,7 +221,7 @@ test.concurrent('a parent sees its busy child in its agent list and can send the
   } finally { releaseFirst({ text: 'Feature built.' }); }
   const rootSeen = agents.model.requests.findLast(request => JSON.stringify(request.messages).includes('Delegate to a worker') && called(request.messages, 'message_subagent')).messages;
   const listed = JSON.parse(toolResult(rootSeen, 'list_subagents'));
-  expect(listed).toEqual([expect.objectContaining({ nickname: "Worker", status: 'running' })]);
+  expect(listed).toEqual([{ nickname: "Worker", status: 'running' }]);
   expect(JSON.parse(toolResult(rootSeen, 'message_subagent'))).toMatchObject({ accepted: true });
   for (let tries = 0; tries < 100 && !agents.model.requests.some(request => JSON.stringify(request.messages).includes('Also check the tests') && !JSON.stringify(request.messages).includes('Delegate to a worker')); tries++) await Bun.sleep(100);
   const childSaw = agents.model.requests.filter(request => JSON.stringify(request.messages).includes('Build the feature') && !JSON.stringify(request.messages).includes('Delegate to a worker'));

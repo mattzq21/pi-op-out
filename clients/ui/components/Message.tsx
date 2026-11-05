@@ -14,7 +14,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 import { Check, ChevronRight, CircleAlert, Copy, GitBranch, Pencil, Pin, Split, Wrench } from "lucide-solid";
 import { MessagePinContext, pinId, pinText } from "../lib/messagePins";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
-import { cacheHitStats, GOAL_PROMPT, isContextInjection, toolTitle } from "../lib/messages";
+import { cacheHitStats, COPIED_HISTORY, GOAL_PROMPT, isContextInjection, toolTitle } from "../lib/messages";
 import { CacheIcon } from "./CacheIcon";
 import type { ChatMessage } from "../types";
 import { IconButton } from "./IconButton";
@@ -362,5 +362,5 @@ export function Message(componentProps: Props) {
     </article>;
   };
 
-  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} actions={renderSentActions} /> : componentProps.message.customType === GOAL_PROMPT ? <GoalPrompt message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginView() ? <Dynamic component={pluginView()} details={componentProps.message.details} /> : componentProps.message.role === "system" && componentProps.message.customType === "compaction" ? renderCompaction() : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  return <>{componentProps.message.customType === "piop-agent-message" ? <AgentDelivery message={componentProps.message} actions={renderSentActions} /> : componentProps.message.customType === GOAL_PROMPT ? <GoalPrompt message={componentProps.message} /> : isContextInjection(componentProps.message) ? <ContextInjection title={componentProps.message.customType === "pi-project-files-watch" ? "Project files changed" : "Context added"} content={textOf(componentProps.message.content)} /> : componentProps.message.customType === "piop-subagent-result" ? <SubagentResults runs={subagentRuns(componentProps.message.details)} /> : pluginView() ? <Dynamic component={pluginView()} details={componentProps.message.details} /> : componentProps.message.customType === COPIED_HISTORY ? <div class="copied-history" role="separator"><span>{textOf(componentProps.message.content)}</span></div> : componentProps.message.role === "system" && componentProps.message.customType === "compaction" ? renderCompaction() : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? renderToolMessage() : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

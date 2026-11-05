@@ -135,3 +135,91 @@ test.concurrent('a side chat archived alone, and one archived with its main chat
   expect(await listed(chat.sessionId)).toBeDefined();
   expect([await listed(closed.sessionId), await listed(open.sessionId)]).toEqual([undefined, undefined]);
 }, 60000);
+
+test.concurrent('control of the main chat is control of its side chats, and taking either takes both with the views of that client', async () => {
+  const chat = await answeredChat('Plan the control');
+  const side = await sideChat(chat, '/btw');
+  const start = (runtimeId: string, clientId: string, target: any) => agents.daemon.invoke('start_pi', { runtimeId, clientId, cwd: side.cwd, ...target });
+  const event = (runtimeId: string, type: string, after: number) => agents.daemon.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.type === type && agents.daemon.events.findIndex(item => item.payload === payload) >= after, 10000);
+  expect((await start('control-laptop-side', 'laptop', { sessionPath: side.sessionPath })).owned).toBe(true);
+  expect((await start('control-phone-root', 'phone', { sessionId: chat.sessionId })).owned).toBe(false);
+  expect((await start('control-phone-side', 'phone', { sessionPath: side.sessionPath })).owned).toBe(false);
+
+  let mark = agents.daemon.events.length;
+  await agents.daemon.invoke('pi_command', { runtimeId: 'control-phone-root', command: { type: 'take_ownership' } });
+  await event('control-laptop-side', 'ownership_lost', mark);
+  await event(chat.runtimeId, 'ownership_lost', mark);
+  await event('control-phone-side', 'ownership_acquired', mark);
+  await expect(agents.daemon.invoke('pi_command', { runtimeId: 'control-laptop-side', command: { type: 'prompt', message: 'Still mine?' } })).rejects.toThrow();
+  expect((await agents.daemon.invoke('pi_command', { runtimeId: 'control-phone-side', command: { type: 'get_state' } })).sessionId).toBe(side.sessionId);
+  await agents.daemon.invoke('pi_command', { runtimeId: 'control-phone-side', command: { type: 'hold_queue', held: false } });
+
+  mark = agents.daemon.events.length;
+  await agents.daemon.invoke('pi_command', { runtimeId: 'control-laptop-side', command: { type: 'take_ownership' } });
+  await event('control-phone-root', 'ownership_lost', mark);
+  await event('control-phone-side', 'ownership_lost', mark);
+  await event(chat.runtimeId, 'ownership_acquired', mark);
+  await agents.daemon.invoke('pi_command', { runtimeId: chat.runtimeId, command: { type: 'hold_queue', held: false } });
+}, 60000);
+
+test.concurrent('/btw opens at once during a turn, with or without a question', async () => {
+  let finish!: () => void;
+  const finished = new Promise<void>(resolve => { finish = resolve; });
+  agents.scripts.set('Plan the queue', async messages => {
+    if (text(messages.at(-1)) !== 'Keep working') return { text: 'First answer.' };
+    await finished;
+    return { text: 'Done working.' };
+  });
+  const chat = await agents.rootChat({ visible: true });
+  await chat.command({ type: 'prompt', message: 'Plan the queue' });
+  await chat.until(history => text(history.at(-1)) === 'First answer.');
+  await chat.command({ type: 'prompt', message: 'Keep working' });
+  for (let tries = 0; !agents.model.requests.some(request => text(request.messages.at(-1)) === 'Keep working') && tries < 100; tries++) await Bun.sleep(100);
+
+  const bare = await sideChat(chat, '/btw');
+  expect(bare.task).toBeUndefined();
+  const asked = await sideChat(chat, '/btw Side question');
+  expect(asked).toMatchObject({ kind: 'btw', task: 'Side question' });
+  expect((await chat.command({ type: 'get_state' })).pendingMessageCount).toBe(0);
+  finish();
+  await chat.until(history => text(history.at(-1)) === 'Done working.');
+  expect((await chat.history()).map(text)).not.toContain('/btw Side question');
+}, 60000);
+
+test.concurrent('a pane that once took control by click does not take it back when another client takes control during a linked update', async () => {
+  const chat = await answeredChat('Plan the race');
+  const opened = async (message: string) => {
+    const side = await sideChat(chat, message);
+    const opening = agents.daemon.events.findLast(event => event.payload?.runtimeId === chat.runtimeId && event.payload.event?.title === OPEN);
+    await chat.command({ type: 'extension_ui_response', id: opening.payload.event.id, value: 'opened' });
+    return side;
+  };
+  const clicked = await opened('/btw');
+  const unopened = await opened('/btw');
+  const start = (runtimeId: string, clientId: string, side: any) => agents.daemon.invoke('start_pi', { runtimeId, clientId, cwd: side.cwd, sessionPath: side.sessionPath });
+  const take = (runtimeId: string) => agents.daemon.invoke('pi_command', { runtimeId, command: { type: 'take_ownership' } });
+  const controls = (runtimeId: string) => agents.daemon.invoke('pi_command', { runtimeId, command: { type: 'hold_queue', held: false } }).then(() => true, () => false);
+  expect((await start('race-laptop', 'laptop', clicked)).owned).toBe(true);
+  expect((await start('race-phone-clicked', 'phone', clicked)).owned).toBe(false);
+  await take('race-phone-clicked');
+  await take('race-laptop');
+  expect(await controls('race-phone-clicked')).toBe(false);
+  expect((await start('race-phone-unopened', 'phone', unopened)).owned).toBe(false);
+
+  const phone = take('race-phone-unopened');
+  await Bun.sleep(300);
+  await take('race-laptop');
+  await phone;
+  expect(await controls('race-laptop')).toBe(true);
+  expect(await controls('race-phone-clicked')).toBe(false);
+  expect(await controls('race-phone-unopened')).toBe(false);
+}, 60000);
+
+test.concurrent('a held queue does not hold /btw', async () => {
+  const chat = await answeredChat('Plan the hold');
+  await chat.command({ type: 'hold_queue', held: true });
+  const asked = await sideChat(chat, '/btw Held question');
+  expect(asked.task).toBe('Held question');
+  expect((await chat.command({ type: 'get_state' })).pendingMessageCount).toBe(0);
+  expect((await chat.history()).map(text)).not.toContain('/btw Held question');
+}, 60000);

@@ -2,6 +2,7 @@ import { onCleanup, type Accessor, type Setter } from "solid-js";
 import type { SplitPaneState } from "./appSupport";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { isMobile } from "./lib/platform";
+import { pluginKeybinds, withPluginKeybinds, type PluginKeybindBinding } from "./plugins/keybinds";
 import { createDependencyEffect } from "./lib/solid";
 import type { AppSettings } from "./types";
 
@@ -24,6 +25,9 @@ type KeyboardContext = {
   view: Accessor<"chat" | "settings">;
   terminalOpen: Accessor<boolean>;
   setTerminalOpen: (open: boolean) => void;
+  pluginHost: () => string;
+  pluginEnabled: (id: string) => boolean;
+  runPluginKeybind: (keybind: PluginKeybindBinding) => void;
 };
 
 function isTerminalKey(event: KeyboardEvent) {
@@ -34,8 +38,8 @@ function isTerminalKey(event: KeyboardEvent) {
 }
 
 export function useAppKeyboard(context: KeyboardContext) {
-  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
-  const blockTabFocus = (event: KeyboardEvent) => { if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault(); };
+  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen, pluginHost, pluginEnabled, runPluginKeybind } = context;
+  const blockTabFocus = (event: KeyboardEvent) => { if ((event.key === "Tab" || event.code === "Tab") && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault(); };
   window.addEventListener("keydown", blockTabFocus);
   onCleanup(() => window.removeEventListener("keydown", blockTabFocus));
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedActivePane = activePane(); const capturedSplitPane = splitPane();
@@ -64,6 +68,20 @@ export function useAppKeyboard(context: KeyboardContext) {
         if (!canLeaveSettings()) return;
         setView("chat"); setPanelOpen(true);
         window.setTimeout(() => document.querySelector<HTMLInputElement>('[aria-label="Search conversations"]')?.focus(), 0);
+
+        return;
+      }
+
+      const bindings = pluginKeybinds(pluginHost());
+      const shortcuts = withPluginKeybinds(capturedSettings.keybindings, bindings);
+      const pluginKeybind = bindings.find((item) => pluginEnabled(item.plugin.id) && matchesShortcut(event, shortcuts[item.action]));
+
+      if (pluginKeybind) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!canLeaveSettings()) return;
+        setView("chat"); runPluginKeybind(pluginKeybind);
 
         return;
       }

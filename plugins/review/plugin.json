@@ -5,8 +5,17 @@
     "after": "session"
   },
   "commands": {
-    "review": "queued"
+    "review": "queuedWithPrompt"
   },
+  "keybinds": [
+    {
+      "id": "open",
+      "label": "Start review",
+      "description": "Review the project files in a side pane",
+      "defaultShortcut": "Ctrl+Alt+R",
+      "command": "review"
+    }
+  ],
   "settings": {
     "reviewAgent": "reviewer"
   },

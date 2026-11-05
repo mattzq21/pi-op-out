@@ -269,8 +269,11 @@ export class Host implements SessionHost {
       throw new Error('The agent is working. Wait for it to finish before changing this conversation.');
     }
     const saved = session.savedState();
-    for (const [runtime] of session.views()) this.views.showReadonly(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
-    session.publish({ type: 'ownership_lost' }, null);
+    for (const [runtime] of session.views()) {
+      if (this.views.readonly(runtime)) continue;
+      this.views.showReadonly(runtime, { id, path: typeof saved?.sessionFile === 'string' ? saved.sessionFile : null });
+      this.events.runtimeEvent(runtime, { type: 'ownership_lost' });
+    }
     if (intent === 'transfer-local') return;
     if (!['archive', 'delete', 'relocate'].includes(intent) && (session.working() || session.compacting())) { try { await session.raw({ type: 'abort' }); } catch (error) { this.events.diagnostic(id + ': could not abort the response before stopping: ' + errorText(error)); } }
     await session.stop();
@@ -324,14 +327,7 @@ export class Host implements SessionHost {
       session.publish({ type: 'settings_pending', pending: true }, null);
       this.reconcile(session);
     }
-    await Promise.all(sessions.map(session => this.sendAgentDefinitions(session)));
     return revision;
-  }
-
-  private async sendAgentDefinitions(session: Session): Promise<void> {
-    if (session.transient() || session.closed() || session.stopping()) return;
-    try { await session.executeWorker({ type: 'agent_definitions_changed' }); }
-    catch (error) { if (!session.closed() && !session.stopping()) this.events.diagnostic('Could not give ' + session.key + ' the changed agent definitions: ' + errorText(error)); }
   }
 
   private availability: Promise<void> | null = null;
@@ -535,7 +531,25 @@ export class Host implements SessionHost {
     const target = structuredClone(current);
     if (flag(target.presence, 'readOnly')) throw new Error('This view is read-only');
     target.takeOwnership = true;
-    return attach(this, target);
+    const result = await attach(this, target);
+    const session = this.views.session(runtime);
+    if (flag(result, 'owned') && session) await this.attachLinkedViews(runtime, session.identity, text(target, 'clientId'));
+    return result;
+  }
+
+  // Taking a chat also takes the other chats of its tree that the same client shows read-only.
+  private async attachLinkedViews(taker: string, identity: string, client: string): Promise<void> {
+    for (const member of this.ownership().chatTree(identity)) for (const runtime of this.views.readonlyRuntimes(member)) {
+      const packet = this.views.request(runtime);
+      if (runtime === taker || packet?.clientId !== client || flag(packet.presence, 'readOnly')) continue;
+      try {
+        const attached = await attach(this, { ...structuredClone(packet), takeOwnership: false });
+        if (flag(attached, 'owned')) this.events.runtimeEvent(runtime, { type: 'ownership_acquired' });
+      } catch (error) {
+        this.events.diagnostic(member + ': could not take a chat of the same tree: ' + errorText(error));
+        this.events.runtimeEvent(runtime, { type: 'disconnected' });
+      }
+    }
   }
 
   async detach(runtime: string, session: Session, discardBlank: boolean, preserveRunning: boolean): Promise<any> {

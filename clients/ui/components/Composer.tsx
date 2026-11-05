@@ -2,6 +2,7 @@ import { CacheIcon } from "./CacheIcon";
 import "./composerField";
 import { queuedSegments, type ComposerFieldElement } from "./composerField";
 import { PendingMessageText } from "./PendingMessageText";
+import { createDelayedPresence, SendingStatus, type PendingStatus } from "./SendingStatus";
 import { required } from "../lib/required";
 import { trackToastMessage } from "../lib/toastHistory";
 import { createComposerPromptHistory } from "../lib/promptHistory";
@@ -9,7 +10,7 @@ import { createComposerEditorKey } from "../lib/composerKeyboard";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { createMemo,createSelector,createSignal,onMount,Show,splitProps } from "solid-js";
+import { createMemo,createSelector,createSignal,onCleanup,onMount,Show,splitProps } from "solid-js";
 import { createFilePaste } from "../lib/filePaste";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName,skillNames } from "../lib/composerPrompt";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
@@ -20,7 +21,7 @@ import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { ComposerPlugins } from "../plugins/composer";
 import { GoalActions, type GoalControls } from "./GoalControls";
 
-import { ArrowUp,Check,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,MoveVertical,Pause,Pencil,Play,RefreshCw,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
+import { ArrowUp,Check,ChevronDown,ChevronUp,CircleX,CornerDownRight,FileText,MoveVertical,Pause,Pencil,Play,RefreshCw,Square,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
@@ -43,15 +44,17 @@ interface Props {
   ownershipRequired?: boolean;
   onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
+  sendingStatus?: string;
+  starting?: boolean;
   goal?: GoalControls;
   streaming: boolean;
   compacting?: boolean;
   queued: number;
   commands: SlashCommand[];
   queuedCommands: readonly string[];
+  queuedWithPrompt?: readonly string[];
   agents: AgentProfile[];
   activeAgent?: string;
-  agentLocked?: boolean;
   agentSaved?: boolean;
   agentUnavailable?: boolean;
   modelAliases?: Record<string, string>;
@@ -73,6 +76,7 @@ interface Props {
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
   focusRequest?: number;
+  initialFocus?: boolean;
   queueHoldRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
   loadPendingImage?: import("./PendingImages").PendingImageLoader;
@@ -131,8 +135,8 @@ function skillMatches(commands: SlashCommand[], query: string) {
   return matches;
 }
 
-function composerDefaults({ streaming, compacting = false, queued, pendingMessages = [], onChangePending, commands, queuedCommands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
-  return { streaming, compacting, queued, pendingMessages, onChangePending, commands, queuedCommands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
+function composerDefaults({ streaming, compacting = false, queued, pendingMessages = [], onChangePending, commands, queuedCommands, queuedWithPrompt = [], agents, activeAgent, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+  return { streaming, compacting, queued, pendingMessages, onChangePending, commands, queuedCommands, queuedWithPrompt, agents, activeAgent, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
 }
 
 function composerControlState(controlsDisabled: boolean, stopping: boolean) {
@@ -143,6 +147,7 @@ function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
   return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
 }
 
+const STOP_AFTER_SEND_DELAY = 400;
 const queuedCompaction = (text: string) => /^\/compact(?:\s|$)/.test(text.trimStart());
 
 const pendingKey = (message: import("../types").PendingMessage) => message.goalSubmissionId ?? message.id;
@@ -175,8 +180,8 @@ function canPickCommand(event: KeyboardEvent) {
   return (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey;
 }
 
-function reviewBehavior(message: string, behavior: "steer" | "followUp", queuedCommands: readonly string[]) {
-  return queuedCommand(message, queuedCommands) ? "followUp" : behavior;
+function reviewBehavior(message: string, behavior: "steer" | "followUp", queuedCommands: readonly string[], queuedWithPrompt: readonly string[]) {
+  return queuedCommand(message, queuedCommands, queuedWithPrompt) ? "followUp" : behavior;
 }
 
 export function Composer(props: Props) {
@@ -247,7 +252,7 @@ export function Composer(props: Props) {
 
   const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, stopping());
 
-  return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
+  return { ...state, inputDisabled: state.inputDisabled || composer().compacting, stopDisabled: (composer().controlsDisabled && !props.starting) || stopping() }; });
 
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
@@ -415,7 +420,8 @@ export function Composer(props: Props) {
 
     return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", resize); window.visualViewport?.removeEventListener("resize", resize); };
   }, () => []);
-  let handledFocusRequest: number | undefined;
+  let handledFocusRequest: number | undefined = props.initialFocus === false ? composer().focusRequest ?? 0 : undefined;
+  const [focusPending, setFocusPending] = createSignal(false);
   createDependencyEffect(() => {
     const request = composer().focusRequest ?? 0;
 
@@ -424,9 +430,11 @@ export function Composer(props: Props) {
     return; }
 
     if (handledFocusRequest === request) return;
+    setFocusPending(!document.querySelector("dialog[open]"));
 
     const frame = requestAnimationFrame(() => {
       const editor = ref.current;
+      setFocusPending(false);
 
       if (!editor?.isConnected || props.ownershipRequired || document.querySelector("dialog[open]")) return;
       editor.focus({ preventScroll: true });
@@ -434,7 +442,7 @@ export function Composer(props: Props) {
       if (document.activeElement === editor) handledFocusRequest = request;
     });
 
-    return () => cancelAnimationFrame(frame);
+    return () => { cancelAnimationFrame(frame); setFocusPending(false); };
   }, () => [composer().focusRequest, props.ownershipRequired]);
   createDependencyEffect(() => {
     if (props.ownershipRequired) ref.current?.blur();
@@ -505,8 +513,29 @@ export function Composer(props: Props) {
     void props.onHoldQueue(held).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
 
-  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error()) || Boolean(props.queueHeld);
-  const renderQueueHold = (alone = false) => (<Show when={props.onHoldQueue}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), alone }}><span>{props.queueHeld ? "Queue on hold. Messages wait until you resume." : ""}</span><button type="button" disabled={queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} data-tooltip={props.queueHeld ? "Send the held messages" : "Keep messages in the queue until you resume"} onClick={() => holdQueue(!props.queueHeld)}>{props.queueHeld ? <><Play size={13} />Resume queue</> : <><Pause size={13} />Hold queue</>}</button></div></Show>);
+  const editingFirstPending = createMemo(() => { const id = editingPending()?.id; return id !== undefined && composer().pendingMessages[0]?.id === id; });
+  let editHoldRelease: ((held: boolean) => Promise<void>) | undefined;
+  const releaseEditHold = (report: boolean) => {
+    const release = editHoldRelease;
+    editHoldRelease = undefined;
+    if (!release) return;
+    void release(false).catch((reason) => { const text = reason instanceof Error ? reason.message : String(reason); if (report) setControlError(text); else console.error(text); });
+  };
+  createDependencyEffect(() => {
+    if (!editingFirstPending()) { releaseEditHold(true); return; }
+    if (props.queueHeld || !props.onHoldQueue || editHoldRelease) return;
+    editHoldRelease = props.onHoldQueue;
+    holdQueue(true);
+  }, () => [editingFirstPending()]);
+  onCleanup(() => releaseEditHold(false));
+  const toggleHold = () => { editHoldRelease = undefined; holdQueue(!props.queueHeld); };
+
+  const showPendingBox = () => composer().pendingMessages.length > 0 || Boolean(props.goal?.error());
+  const sendingPresence = createDelayedPresence(() => props.sendingStatus !== undefined);
+  const pendingStatus = createMemo<PendingStatus | undefined>(() => stopping() ? { text: "Stopping…", label: "Stopping piop" } : props.sendingStatus !== undefined ? { text: props.sendingStatus, label: "Preparing message" } : undefined);
+  const pendingPresence = createDelayedPresence(() => pendingStatus() !== undefined);
+  const holdBeforeSession = () => !props.onHoldQueue && sendingPresence.shown();
+  const renderQueueHold = () => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} onClick={toggleHold}>{props.queueHeld ? <><Play size={13} />Resume</> : <><Pause size={13} />Hold</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
   let handledQueueHoldRequest = props.queueHoldRequest ?? 0;
   createDependencyEffect(() => {
@@ -515,7 +544,7 @@ export function Composer(props: Props) {
     if (handledQueueHoldRequest === request) return;
     handledQueueHoldRequest = request;
 
-    if (!queueDisabled() && !changingPending()) holdQueue(!props.queueHeld);
+    if (!queueDisabled() && !changingPending()) toggleHold();
   }, () => [props.queueHoldRequest]);
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(queueDisabled(), changingPending(), composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().agentUnavailable || (props.submissionDisabled ?? composer().controlsDisabled) || composer().compacting || stopping();
@@ -552,7 +581,7 @@ export function Composer(props: Props) {
       const submission = capturedComposer.onStageSubmission ? await stageComposerDraft(capturedComposer.onStageSubmission, { rawText: submittedValue, uploads: submittedUploads, consume: true }, changeDraft, changeUploads) : undefined;
 
       if (submission) setSending(false);
-      const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? reviewBehavior(message, behavior, capturedComposer.queuedCommands) : undefined, images, submission);
+      const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? reviewBehavior(message, behavior, capturedComposer.queuedCommands, capturedComposer.queuedWithPrompt) : undefined, images, submission);
 
       if (accepted === false) throw new Error("Message was not submitted");
 
@@ -562,9 +591,17 @@ export function Composer(props: Props) {
     } finally { setSending(false); }
   };
 
+  const stopShown = createMemo(() => (composer().streaming || composer().compacting || Boolean(props.starting)) && !hasVisibleText(value()) && uploads().length === 0);
+  const sendDisabled = () => controlsBlocked() || readingUploads() > 0 || (!sending() && !hasVisibleText(value()) && uploads().length === 0);
+  let lastSendClick = -Infinity;
+  const clickSendOrStop = (event: MouseEvent) => {
+    if (!stopShown()) { lastSendClick = event.timeStamp; void submit(); }
+    else if (event.timeStamp - lastSendClick >= STOP_AFTER_SEND_DELAY) void abort();
+  };
+
   const abort = async () => { const capturedComposer = { ...composer() };
 
-    if (capturedComposer.controlsDisabled || stoppingRef.current) return;
+    if (controls().stopDisabled || stoppingRef.current) return;
     stoppingRef.current = true; setStopping(true); setControlError(undefined);
 
     try { await capturedComposer.onAbort(); }
@@ -585,6 +622,8 @@ export function Composer(props: Props) {
     ref.current?.setSelectionRange(caret, caret);
   };
 
+  const commandTyped = (command: SlashCommand | undefined) => Boolean(command) && reference()?.start === 0 && value().trim().toLowerCase() === `/${required(command).name.toLowerCase()}`;
+
   const handlePaletteKey = (event: KeyboardEvent<ComposerFieldElement>) => {
     if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
 
@@ -595,6 +634,8 @@ export function Composer(props: Props) {
     if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length);
 
     return true; }
+
+    if (event.key === "Enter" && commandTyped(matches()[selectedMatch()])) return false;
 
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]);
 
@@ -615,7 +656,7 @@ export function Composer(props: Props) {
   const handleEditorKey = createComposerEditorKey({ paste: filePaste.onKeyDown, ownershipRequired: () => props.ownershipRequired, palette: handlePaletteKey, history: event => editingPending() ? false : promptHistory.handleKey(event), submit });
 
   const renderStreamBanner = () => {
-    const statusText = () => stopping() ? "Stopping…" : composer().compacting ? "Compacting context…" : undefined;
+    const statusText = () => composer().compacting ? "Compacting context…" : undefined;
     const renderStreamStatus = () => (<span class="stream-status" role="status"><span class="pulse" />{statusText()}</span>);
 
     return (<Show when={statusText()} fallback={composer().streaming && <button type="button" class="working-dots" role="status" aria-label="piop is working" onClick={() => props.onJumpToLatest?.()}><span /><span /><span /></button>}><div class="stream-banner">
@@ -631,7 +672,7 @@ export function Composer(props: Props) {
     </div>}</Show>);
 
     const renderComposerEditor = () => (<div class="composer-editor">
-        <piop-composer-field ref={element => { ref.current = element; }} skills={knownSkills()} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder={props.ownershipRequired ? "" : composer().streaming || props.queueHeld ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
+        <piop-composer-field ref={element => { ref.current = element; }} skills={knownSkills()} classList={{ "pending-edit": Boolean(editingPending()) }} aria-label="Message piop" readOnly={props.ownershipRequired || savingEdit()} onFocus={() => { setPaletteDismissed(false); if (props.ownershipRequired) void props.onTakeOwnership?.(); }} placeholder="Ask piop to build, explain, or change anything…" value={value()} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }); setPaletteDismissed(false); setValue(event.currentTarget.value); }} onKeyDown={event => {
           if (editingPending() && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); return; }
           handleEditorKey(event);
         }} />
@@ -652,22 +693,21 @@ export function Composer(props: Props) {
       const ComposerTools = () => (<div class="composer-tools"><ComposerPlugins disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton class="composer-terminal" title={props.terminalDisabled ? "Unavailable in empty session" : ""} label="Open terminal" data-unavailable={props.terminalDisabled ? "" : undefined} disabled={props.terminalDisabled || (composer().controlsDisabled && !props.ownershipRequired)} onClick={(composer().onOpenTerminal)}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`} aria-label={`Cache ${cache().rate}%, ${cache().cachedTokens}/${cache().promptTokens}`} tabIndex={0} data-tooltip-tap data-tooltip={`${cache().cachedTokens.toLocaleString()} / ${cache().promptTokens.toLocaleString()} tokens cached`}><CacheIcon rate={cache().rate} />{cache().rate}%</span>}</Show></div>);
 
       const renderComposerActions = () => {
-        const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;
+        const agentSelectionDisabled = () => composer().streaming || controls().inputDisabled;
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
 
         const agentLabel = () => composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general";
 
-        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={agentLabel()} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || (props.onReloadAgents ? controls().inputDisabled : agentSelectionDisabled())} menuMinWidth={130} centered compact options={agentOptions().map(option => ({ ...option, disabled: option.disabled || agentSelectionDisabled() || reloadingAgents() }))} onChange={changeAgent} footer={props.onReloadAgents && <><div class="agent-definitions-host"><span>{props.agentHostLabel ?? "Local"}</span><button class="agent-definitions-reload" type="button" aria-label={reloadingAgents() ? "Reloading agent definitions" : "Reload agent definitions"} data-tooltip={`Reload definitions on ${props.agentHostLabel ?? "Local"} for new agents`} disabled={reloadingAgents()} onClick={() => void reloadAgents()}><RefreshCw size={13} class={reloadingAgents() ? "spinning" : ""} aria-hidden="true" /></button></div>{reloadError() && <p role="alert">{reloadError()}</p>}</>} />);
+        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={agentLabel()} value={composer().activeAgent ?? "general"} disabled={props.onReloadAgents ? controls().inputDisabled : agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions().map(option => ({ ...option, disabled: option.disabled || agentSelectionDisabled() || reloadingAgents() }))} onChange={changeAgent} footer={props.onReloadAgents && <><div class="agent-definitions-host"><span>{props.agentHostLabel ?? "Local"}</span><button class="agent-definitions-reload" type="button" aria-label={reloadingAgents() ? "Reloading agent definitions" : "Reload agent definitions"} data-tooltip={`Reload definitions on ${props.agentHostLabel ?? "Local"} for new agents`} disabled={reloadingAgents()} onClick={() => void reloadAgents()}><RefreshCw size={13} class={reloadingAgents() ? "spinning" : ""} aria-hidden="true" /></button></div>{reloadError() && <p role="alert">{reloadError()}</p>}</>} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" data-tooltip="2.5x more usage" aria-description={(composer().fastModeStatus)} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
 
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName(required((composer().model))) : undefined} value={composer().model ? `${required((composer().model)).provider}/${required((composer().model)).id}` : ""} disabled={controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value);
 
         if (next) composer().onModel(next); }} />);
 
-        const renderStopButton = () => (<Show when={composer().streaming || composer().compacting}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void abort()}><CircleStop size={17} /></IconButton></Show>);
         const renderEffortPicker = () => (<ContainedPicker label="Thinking level" selectedLabel={composer().thinkingLevel.charAt(0).toUpperCase() + composer().thinkingLevel.slice(1)} value={composer().thinkingLevel} disabled={controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} />);
 
-        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label="Send message" class="send" disabled={controlsBlocked() || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
+        const renderSend = () => <Show when={editingPending()} fallback={<IconButton title="" label={stopShown() ? "Stop piop" : "Send message"} class={`send send-stop${stopShown() ? " stop-compact" : ""}`} disabled={stopShown() ? controls().stopDisabled : sendDisabled()} onClick={clickSendOrStop}><ArrowUp class="send-icon send-arrow" size={18} /><Square class="send-icon send-square" size={12} fill="currentColor" /></IconButton>}>
           <IconButton title="" label="Cancel editing" disabled={savingEdit()} onClick={cancelEdit}><X size={18} /></IconButton>
           <IconButton title="" label="Save edited message" class="send" disabled={queueDisabled() || savingEdit() || readingUploads() > 0} onClick={() => void saveEdit()}><Check size={18} /></IconButton>
         </Show>;
@@ -682,7 +722,6 @@ export function Composer(props: Props) {
           <Show when={mobileLayout()}>{renderModelPicker()}</Show>
           <Show when={mobileLayout()}>{renderEffortPicker()}</Show>
           <span class="composer-divider" />
-          {renderStopButton()}
           {renderSend()}
         </div>);
       };
@@ -692,7 +731,7 @@ export function Composer(props: Props) {
       </div>);
     };
 
-    return (<div ref={element => { composerRef.current = element; }} classList={{ "editing-pending": Boolean(editingPending()) }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
+    return (<div ref={element => { composerRef.current = element; }} classList={{ "editing-pending": Boolean(editingPending()), "focus-pending": focusPending() }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
       onPaste={event => filePaste.onPaste(event)}>
       {renderComposerDropHint()}
       {renderCommandPalette()}
@@ -724,8 +763,10 @@ export function Composer(props: Props) {
     </Show>
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
+    <SendingStatus status={pendingStatus()} presence={pendingPresence} />
     {renderStreamBanner()}
-    {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{renderQueueHold()}{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
+    {renderQueueHold()}
+    {showPendingBox() ? <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => pendingMessageIdentitySchema.safeParse(message).success)} by={pendingKey}>{(message, _index) => {
       const text = createMemo(() => String(message().message ?? ""));
       const segments = createMemo(() => queuedSegments(text()));
       const label = createMemo(() => segments().map((segment) => "text" in segment ? segment.text : "skill" in segment ? segment.skill : segment.label).join(""));
@@ -745,7 +786,7 @@ export function Composer(props: Props) {
             <button type="button" class="pending-icon-button" disabled={disabled() || position() <= 0} aria-label={`Move queued message up: ${label()}`} data-tooltip="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
             <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${label()}`} data-tooltip="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
-          <Show when={!message().goal && (message().retry || !queuedCommand(text(), props.queuedCommands))}><button type="button" disabled={disabled()} data-tooltip={message().retry ? (props.queueHeld ? "Keep it in the held queue. It is sent when you resume." : "Send it again") : message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
+          <Show when={!message().goal && (message().retry || !queuedCommand(text(), props.queuedCommands, props.queuedWithPrompt))}><button type="button" disabled={disabled()} data-tooltip={message().retry ? (props.queueHeld ? "Keep it in the held queue. It is sent when you resume." : "Send it again") : message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
           <Show when={message().goal && props.goal?.goal()}><GoalActions controls={required(props.goal)} /></Show>
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${label()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);
@@ -753,10 +794,10 @@ export function Composer(props: Props) {
       return <div data-pending-id={message().id} class={pendingMessageClass(message().id, expandedPending(), pendingDrag.drop)} classList={{ "editing-pending": isEditingPending(message().id), "pending-goal": Boolean(message().goal), "pending-steer": message().behavior === "steer" && !message().goal }}>
         {renderPendingDragHandle()}
         <PendingImages message={message()} load={props.loadPendingImage} />
-        <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : label()} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <small class="goal-label">Goal · </small>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}<PendingMessageText segments={segments()} /></span>
+        <span class="pending-message-text" data-tooltip={message().recovered ? "This saved answer may not have reached the model. Check the conversation before retrying." : message().retry ? "piop could not confirm whether this message reached the model, for example after a restart, so it is not sent by itself. Retry sends it again. Remove it if the conversation already has it." : undefined} onDblClick={() => setExpandedPending((current) => current === message().id ? undefined : message().id)}>{message().goal && <small class="goal-label">Goal · </small>}{message().retry && <small>{message().recovered ? "Saved answer · " : "Retry needed · "}</small>}<PendingMessageText segments={segments()} /></span>
         {renderPendingMessageActions()}
       </div>;
-    }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : renderQueueHold(true)}
+    }}</Key>}<Show when={props.goal?.error()}>{message => <div class="pending-goal-error" role="alert">{message()}</div>}</Show></div> : null}
     {visualProps.toolbar}
     </div>
     <ComposerBody />

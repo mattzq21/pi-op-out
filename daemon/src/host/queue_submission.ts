@@ -4,7 +4,9 @@ import { CommandRefusedError } from '../pi_rejection';
 import { validateItem } from './queue_storage';
 import type { QueueDelivery } from './queue_delivery';
 
-export { queuedCommand } from '../plugin_contributions';
+import { queuedCommand } from '../plugin_contributions';
+
+export { queuedCommand };
 
 export function withImageIds(images: any[]): any[] {
   return images.map(image => image && typeof image === 'object' && typeof image.id === 'string' ? clone(image) : { ...clone(image), id: randomUUID() });
@@ -23,7 +25,7 @@ export async function enqueue(queue: QueueDelivery, command: any, name: string):
   const id = queue.record.nextId();
   const item = submissionPayload(command, id, name);
   try { validateItem(item); } catch (error) { throw new CommandRefusedError(error instanceof Error ? error.message : String(error), 'daemon'); }
-  if (!item.preparedGoal && queue.runsAtOnce(text(item, 'message'))) return runAtOnce(queue, item);
+  if (!item.preparedGoal && queue.runsAtOnce(text(item, 'message')) && !(state.held && queuedCommand(text(item, 'message')))) return runAtOnce(queue, item);
   if (name === 'follow_up' && state.queuedGoal() && !state.goals.waitingForInput) item.afterGoal = true;
   if (state.stopped && !item.afterGoal) { state.stopped = false; state.pending.unshift(item); } else state.pending.push(item);
   try { await queue.publish(); } catch (error) {

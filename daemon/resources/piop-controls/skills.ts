@@ -1,28 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-const CALL = /\/skill:(\S+)(?:\s+|$)/y;
-
-function leadingCalls(text: string) {
-  const names: string[] = [];
-  let at = 0;
-
-  for (let match; at < text.length; at = CALL.lastIndex) {
-    CALL.lastIndex = at;
-    match = CALL.exec(text);
-    if (!match) break;
-    names.push(match[1]);
-  }
-
-  return { names, rest: text.slice(at).trim() };
-}
+import { leadingCalls, skillPaths } from "./skill-calls.ts";
 
 export default function skills(pi: ExtensionAPI) {
   pi.on("input", (event, ctx) => {
     const { names, rest } = leadingCalls(event.text);
     if (!names.length) return;
-    const available = new Map(pi.getCommands().flatMap(command => command.source === "skill" ? [[command.name.replace(/^skill:/, ""), command.sourceInfo.path] as const] : []));
+    const available = skillPaths(pi);
     try {
       const blocks = [...new Set(names)].map(name => {
         const path = available.get(name);

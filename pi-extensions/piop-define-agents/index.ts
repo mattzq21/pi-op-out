@@ -1,7 +1,7 @@
 import { readAgentResources, readPluginAgentTools, resourcePath, type AgentResources } from "./resources.ts";
-import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
+import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, agentThinkingLevels, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState, agentSchema, subagentLimit, registerSubagentLimits, agentFlag, agentAccess, agentDescription, startRefusal } from "./state.ts";
 import { Type } from "typebox";
-import { Check, Parse } from "typebox/value";
+import { Check, Errors, Parse } from "typebox/value";
 import { agentDirectory, DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompts, ensureDefaultAgentPrompt, readPrompt, readConfigDocument, writeConfig, isNamedAgent, projectDirectory, readProjectDocument, type ProjectDocument } from "./prompts.ts";
 import { fallbackConfig, copySnapshot, selectedProfileState } from "./profiles.ts";
 import { mcpServers, type McpServers } from "./mcp-config.ts";
@@ -15,6 +15,8 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@e
 export type { Agent } from "./contracts.ts";
 
 const STATUS_KEY = "pi-define-agents";
+
+const OPEN_CHAT_AGENT = "__piop_chat_agent__";
 
 const sessionTools = ["spawn_subagents"];
 
@@ -154,6 +156,7 @@ function addBundledAgents(config: Config, pi: ConfigRuntime) {
     agent.model = "";
     agent.effort = "high";
     delete agent.isDefault;
+    delete agent.description;
     config.agents.push(agent);
   }
 
@@ -229,6 +232,43 @@ function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options
   options.skills = options.skills && invocationPolicy(options.skills);
 }
 
+const chatAgentSchema = Type.Object({ agent: Type.Omit(agentSchema, ["path_systemprompt", "path_agent_prompt"]), systemPrompt: Type.String(), agentPrompt: Type.String() });
+
+type SystemMessage = { role: "system"; content: string | Array<{ type: string; text?: string }>; sections?: Record<string, string | null>; toolsAdded?: Array<{ name: string }>; toolsRemoved?: Array<{ name: string }>; timestamp: number };
+
+const agentPromptSections = ["preamble", "instructions"];
+
+const isSystemMessage = (message: { role: string }): message is SystemMessage => message.role === "system";
+
+function replaySystemMessages(messages: SystemMessage[]): SystemMessage {
+  const content: string[] = [];
+  const sections = new Map<string, string>();
+  const tools = new Map<string, { name: string }>();
+
+  for (const message of messages) {
+    const text = typeof message.content === "string" ? message.content : message.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+
+    if (text) content.push(text);
+
+    for (const [name, value] of Object.entries(message.sections ?? {})) if (value === null) sections.delete(name); else sections.set(name, value);
+
+    for (const tool of message.toolsRemoved ?? []) tools.delete(tool.name);
+
+    for (const tool of message.toolsAdded ?? []) tools.set(tool.name, tool);
+  }
+
+  return { role: "system", content: content.join("\n\n"), ...(sections.size ? { sections: Object.fromEntries(sections) } : {}), ...(tools.size ? { toolsAdded: [...tools.values()] } : {}), timestamp: messages[0].timestamp };
+}
+
+function withAgentPromptAtHead<M extends { role: string }>(messages: M[]): M[] | undefined {
+  const cut = messages.findLastIndex((message, index) => index > 0 && isSystemMessage(message) && agentPromptSections.some(name => Object.hasOwn(message.sections ?? {}, name))) + 1;
+
+  if (!cut || !isSystemMessage(messages[0])) return undefined;
+  const prefix = messages.slice(0, cut);
+
+  return [replaySystemMessages(prefix.filter(isSystemMessage)) as unknown as M, ...prefix.filter(message => !isSystemMessage(message)), ...messages.slice(cut)];
+}
+
 export default async function defineAgents(pi: ExtensionAPI) {
   const extensions = agentExtensions(pi, agentDirectory);
   const initialResources = readAgentResources();
@@ -237,6 +277,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let cwd = process.cwd();
   const readConfigNow = async () => loadProjectConfig(await loadConfig(configRuntime, undefined, false, readOnlyStorage), cwd, configRuntime);
   let config = await readConfigNow();
+  const refreshConfig = async () => { config = await readConfigNow(); };
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
   let savedState: string | undefined;
@@ -296,32 +337,49 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
   });
 
+  const unknownProfile = (name: string) => `Unknown agent profile ${name}. Available profiles: ${config.agents.map(agent => agent.name).join(", ")}`;
+
   const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (request) => {
-    const agent = request.agent ? findAgent(request.agent) : currentAgent();
+    const name = request.agent;
 
-    if (!agent) { request.error = `Unknown agent profile ${request.agent ?? "(current)"}. Available profiles: ${config.agents.map(agent => agent.name).join(", ")}`;
+    if (!name) {
+      const agent = currentAgent();
 
-    return; }
+      if (!agent) { request.error = unknownProfile("(current)"); return; }
 
-    const refusal = request.purpose && startRefusal(currentAgent(), agent, request.purpose);
+      const refusal = request.purpose && startRefusal(agent, agent, request.purpose);
 
-    if (refusal) { request.error = refusal; return; }
+      if (refusal) { request.error = refusal; return; }
 
-    if (!request.agent) {
       request.state = { active: agent.name, locked: false, snapshot: snapshot && structuredClone(snapshot), modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel() };
 
       return;
     }
 
-    request.ready = selectedProfileState(agent, initialResources, readPrompt)
-      .then(state => { request.state = state; })
-      .catch(error => { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; });
+    request.ready = (async () => {
+      try { await refreshConfig(); }
+      catch (error) { request.error = `Cannot read agent definitions: ${error instanceof Error ? error.message : String(error)}`; return; }
+      const agent = findAgent(name);
+
+      if (!agent) { request.error = unknownProfile(name); return; }
+
+      const refusal = request.purpose && startRefusal(currentAgent(), agent, request.purpose);
+
+      if (refusal) { request.error = refusal; return; }
+
+      try { request.state = await selectedProfileState(agent, initialResources, readPrompt); }
+      catch (error) { request.error = `Cannot load agent profile ${agent.name}: ${String(error)}`; }
+    })();
   });
 
   const stopProfileCatalog = pi.events.on("piop:agents:profiles", request => {
-    const caller = currentAgent();
-    request.active = caller?.name;
-    request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {})}));
+    const list = () => {
+      const caller = currentAgent();
+      request.active = caller?.name;
+      request.profiles = config.agents.filter(agent => !startRefusal(caller, agent, request.purpose)).map(agent => ({ name: agent.name, ...(agent.description ? { description: agent.description } : {})}));
+    };
+
+    if (request.lastRead) list(); else request.ready = refreshConfig().then(list);
   });
 
   const stopContextCap = pi.events.on("piop:agents:context-cap", request => {
@@ -559,23 +617,26 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return activeToolError;
   };
 
-  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopContextCap(); await extensions.deactivate(ctx, event); });
-  pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
+  pi.on("session_shutdown", async (event, ctx) => { stopSubagentProfiles(); stopProfileCatalog(); stopContextCap(); stopFastModeUpdates(); await extensions.deactivate(ctx, event); });
+  pi.on("model_select", (event, ctx) => { const model = `${event.model.provider}/${event.model.id}`;
 
   if (applyingAgentModel === model) { applyingAgentModel = undefined;
 
   return; }
 
-  modelOverride = model; saveState(); saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
-  pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined;
+  modelOverride = model; saveState(); saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); publish(ctx); });
+  pi.on("thinking_level_select", (event, ctx) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined;
 
   return; }
 
-  effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
+  effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); publish(ctx); });
 
+  let stopFastModeUpdates = () => {};
   const restoreSession = async (ctx: ExtensionContext) => {
     cwd = ctx.cwd;
-    config = await readConfigNow();
+    stopFastModeUpdates();
+    stopFastModeUpdates = fastModeSession(pi)?.subscribe(() => publish(ctx), () => undefined) ?? (() => {});
+    await refreshConfig();
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
     const { states, stored, identity } = readAgentState(branch, runtimeSession);
@@ -604,6 +665,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", (_event, ctx) => restoreSession(ctx));
+  pi.on("session_tree", (_event, ctx) => { savedState = readAgentState(ctx.sessionManager.getBranch(), runtimeSession).identity; saveState(); });
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE;
 
   if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
@@ -637,9 +699,77 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (agent.codemode === "off") pi.setActiveTools(pi.getActiveTools().filter(name => name !== "codemode"));
     configureAgentSystemPrompt(activeSystemPrompt, activeAgentPrompt, event.systemPromptOptions, invocationPolicy);
   });
+  pi.on("context_with_system", event => {
+    const messages = withAgentPromptAtHead(event.messages);
+
+    return messages && { messages };
+  });
+  const agentPrompts = async (agent: Agent) => snapshot?.version === 1 ? { systemPrompt: snapshot.systemPrompt, agentPrompt: snapshot.agentPrompt } : {
+    systemPrompt: await readPrompt(resolvePromptPath(agent.path_systemprompt)),
+    agentPrompt: agent.path_agent_prompt ? await readPrompt(resolvePromptPath(agent.path_agent_prompt)) : "",
+  };
+
   pi.events.on("piop:rpc", request => {
-    if (request.command !== "agent_definitions_changed") return;
-    request.ready = readConfigNow().then(next => { config = next; });
+    if (request.command !== "chat_agent") return;
+    request.ready = (async () => {
+      restore(request.ctx);
+      const agent = currentAgent();
+
+      if (!agent) throw new Error(`Agent "${active}" is unavailable`);
+      const { path_systemprompt: _system, path_agent_prompt: _instructions, isDefault: _default, project: _project, unavailableReason: _reason, ...profile } = agent;
+
+      const fastMode = await fastModeSession(pi)?.getEnabled().catch(() => undefined);
+
+      return { agent: { ...profile, model: modelOverride || profile.model, effort: effortOverride || profile.effort, fastMode: fastMode ?? profile.fastMode }, ...await agentPrompts(agent) };
+    })();
+  });
+
+  const editChatAgent = async (payload: unknown, ctx: ExtensionCommandContext) => {
+    if (!ctx.isIdle()) throw new Error("Wait for the current response before changing the agent");
+    const errors = [...Errors(chatAgentSchema, payload)];
+
+    if (errors.length) throw new Error(`Invalid agent settings: ${errors.map(error => `${error.instancePath} ${error.message}`).join("; ")}`);
+    const input = Parse(chatAgentSchema, payload);
+
+    if (!/^[A-Za-z0-9_-]+$/.test(input.agent.name)) throw new Error("The agent name can only have letters, digits, - and _");
+
+    if (!input.systemPrompt.trim()) throw new Error("The system prompt cannot be empty");
+    const [definition] = normalizeAgents([{ ...input.agent, path_systemprompt: "chat", path_agent_prompt: "" }], configRuntime);
+    restore(ctx);
+    const error = await fastModeError(definition, definition.model.trim() || runtimeDefaults?.model || (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined));
+
+    if (error) throw new Error(error);
+    await extensions.prepare(extensionPaths(definition.extensions), ctx);
+    const previous = { active, snapshot, modelOverride, effortOverride, startingFastMode, tools: pi.getActiveTools() };
+    const next = await snapshotPrompts(snapshotDefinition(definition), input.systemPrompt, input.agentPrompt);
+    next.resources = structuredClone(resources());
+    active = definition.name; snapshot = next; startingFastMode = undefined; modelOverride = undefined; effortOverride = undefined;
+    const activationError = await useAgent(active, ctx, { persistSnapshot: false, applyFastMode: true, applyMcp: true });
+
+    if (activationError) {
+      ({ active, snapshot, modelOverride, effortOverride, startingFastMode } = previous);
+      pi.setActiveTools(previous.tools);
+      await useAgent(active, ctx, { persistSnapshot: false, applyMcp: true });
+      throw new Error(activationError);
+    }
+
+    if (locked) savedState = undefined;
+    saveState();
+    pi.events.emit("piop:agents:selected", { ctx });
+  };
+
+  pi.events.on("piop:rpc", request => {
+    if (request.command === "set_chat_agent") request.ready = editChatAgent(request.payload, request.ctx);
+  });
+  pi.registerCommand("agent", {
+    description: "Edit the agent of this conversation in the side pane",
+    handler: async (args, ctx) => {
+      if (args.trim()) { ctx.ui.notify("Use /agent without arguments", "error");
+
+      return; }
+
+      await ctx.ui.input(OPEN_CHAT_AGENT, "");
+    },
   });
   pi.events.on("piop:rpc", request => {
     if (request.command !== "select_agent") return;
@@ -653,12 +783,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const selectAgent = async (name: string, ctx: ExtensionCommandContext) => {
-    if (locked) {
-      if (name === active) return;
-      throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
-    }
+    if (locked && name === active) return;
 
-    config = await readConfigNow();
+    await refreshConfig();
     const agent = findAgent(name);
 
     if (!agent) throw new Error(`Unknown defined agent: ${name}`);

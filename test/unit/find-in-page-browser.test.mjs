@@ -50,6 +50,24 @@ test('recording Ctrl+F in Settings does not open conversation search', async t =
   assert.equal(await recorder.evaluate(node => node === document.activeElement), true);
 });
 
+test('Settings marks both shortcuts red when a key is assigned twice', async t => {
+  const page = await startupPage(t, 'development', {
+    entryPoint: 'test/fixtures/find-settings-browser.tsx', ready: '[aria-label="New conversation shortcut"]', holdStorage: false,
+  });
+  const recorder = page.getByRole('textbox', { name: 'New conversation shortcut', exact: true });
+  const other = page.getByRole('textbox', { name: 'Toggle conversations shortcut', exact: true });
+  const unrelated = page.getByRole('textbox', { name: 'Toggle terminal shortcut', exact: true });
+  const border = locator => locator.evaluate(node => getComputedStyle(node).borderTopColor);
+  const normal = await border(unrelated);
+  await recorder.focus();
+  await page.keyboard.press('Control+b');
+  await recorder.evaluate(node => node.blur());
+  assert.equal(await recorder.getAttribute('aria-invalid'), 'true');
+  assert.equal(await border(recorder), 'rgb(215, 120, 101)');
+  assert.equal(await border(other), 'rgb(215, 120, 101)');
+  assert.equal(await border(unrelated), normal);
+});
+
 const waitForCount = (page, expected) => page.evaluate(expected => new Promise((resolve, reject) => {
   const status = document.querySelector('[role="search"] [role="status"]');
   const observer = new MutationObserver(check);

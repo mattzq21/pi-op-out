@@ -149,10 +149,27 @@ export function appendQueuedProjectContext(messages: ChatMessage[], entry: PiEnt
   return result;
 }
 
+const skillMcpFailureSchema = z.object({ skill: z.string() });
+
+export function appendSkillMcpFailure(messages: ChatMessage[], entry: PiEntry, inPlace = false): ChatMessage[] {
+  if (entry.type !== "custom" || entry.customType !== "piop-skill-mcp-failed" || messages.some(message => message.id === entry.id)) return messages;
+  const { skill } = skillMcpFailureSchema.parse(entry.data);
+  const result = inPlace ? messages : messages.slice();
+  result.push({ id: entry.id, entryId: entry.id, role: "system", customType: "piop-skill-mcp-failed", content: `The embedded MCP of skill "${skill}" failed to load.`, timestamp: entry.timestamp ? Date.parse(entry.timestamp) : Date.now() });
+
+  return result;
+}
+
+export const COPIED_HISTORY = "piop-copied-history";
+
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, promptParts: SavedPromptParts) {
   if (entry.customType === "piop-queued-project-context") return appendQueuedProjectContext(messages, entry, true);
 
+  if (entry.customType === "piop-skill-mcp-failed") return appendSkillMcpFailure(messages, entry, true);
+
   if (entry.customType === "piop-compaction-timing") return applyCompactionTiming(messages, entry);
+
+  if (entry.customType === COPIED_HISTORY) return [...messages, { id: entry.id, entryId: entry.id, role: "system" as const, customType: COPIED_HISTORY, content: "Side chat" }];
 
   if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry, promptParts);
 

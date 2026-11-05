@@ -166,7 +166,7 @@ export async function agentFixture(t, options = {}) {
   };
 
   return {
-    root, dir, home, file, pi, ctx, entries, notices, messages, statuses, commands, tools, modelSelections, emit,
+    root, dir, home, file, pi, ctx, entries, notices, messages, statuses, commands, tools, modelSelections, emit, rpc,
     load, start: () => emit('session_start'), input: text => emit('input', { text }),
     reloadExtensions: async () => {
       await emit('session_shutdown');

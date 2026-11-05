@@ -90,21 +90,28 @@ test('explicit agent selection applies fast-mode defaults while input leaves man
   assert.equal(await f.emit('before_provider_request', { payload: { input: 'hello' } }), undefined);
 });
 
-test('session-tree changes keep the selected agent, prompt and lock', async t => {
+test('session-tree changes keep the selected agent, prompt and lock, and save them on the new branch', async t => {
   const f = await agentFixture(t, { config: null }); await f.load();
   await f.configure(configured([profile(), profile('reviewer')]));
   await f.start();
   await f.input('hello');
+  const saved = () => f.entries.findLast(entry => entry.customType === 'pi-define-agents-state')?.data;
   f.entries.splice(0, f.entries.length, { type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer', snapshot: { version: 1, definition: profile('reviewer', { tools: ['bash'] }), systemPrompt: 'Branch prompt', agentPrompt: '' } } });
   await f.emit('session_tree');
   assert.equal(f.capability().active, 'general'); assert.deepEqual(f.pi.getActiveTools(), ['read']);
   assert.equal((await f.prompt()).customPrompt, 'System instructions');
   assert.equal(f.capability().locked, true);
-  await assert.rejects(f.select('reviewer'), /agent is fixed/);
+  assert.equal(saved().active, 'general'); assert.equal(saved().snapshot.definition.name, 'general');
+  await f.select('reviewer');
+  assert.equal(f.capability().active, 'reviewer');
+  await f.select('general');
   f.entries.splice(0);
   await f.emit('session_tree');
   assert.equal(f.capability().locked, true);
-  await assert.rejects(f.select('reviewer'), /agent is fixed/);
+  assert.equal(saved().active, 'general');
+  await f.select('reviewer');
+  assert.equal(saved().active, 'reviewer');
+  f.entries.splice(0);
   f.ctx.sessionManager.getSessionFile = () => join(f.dir, 'new-session');
   f.ctx.sessionManager.getSessionId = () => 'new-session';
   await f.start();
@@ -208,6 +215,19 @@ test("an unknown subagent profile reports the available profiles without returni
   const request = { agent: 'missing' }; f.pi.events.emit('piop:agents:subagent', request); await request.ready;
   assert.equal(request.error, 'Unknown agent profile missing. Available profiles: general, reviewer');
   assert.equal(request.state, undefined);
+});
+
+test("a running chat starts and lists an agent added after it started", async t => {
+  const f = await agentFixture(t, { config: null }); await f.load();
+  await f.configure(configured([profile()]));
+  await f.start();
+  await f.configure(configured([profile(), profile('helper', { description: 'Finds files.' })]));
+  const known = { purpose: 'subagent', lastRead: true }; f.pi.events.emit('piop:agents:profiles', known);
+  assert.deepEqual(known.profiles.map(profile => profile.name), ['general']);
+  const catalog = { purpose: 'subagent' }; f.pi.events.emit('piop:agents:profiles', catalog); await catalog.ready;
+  assert.deepEqual(catalog.profiles.map(profile => profile.name), ['general', 'helper']);
+  const request = { agent: 'helper', purpose: 'subagent' }; f.pi.events.emit('piop:agents:subagent', request); await request.ready;
+  assert.equal(request.error, undefined); assert.equal(request.state.active, 'helper');
 });
 
 test("agent access rules decide which subagents and peers can start", async t => {

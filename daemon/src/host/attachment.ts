@@ -39,8 +39,9 @@ class Attachment {
     this.identity = specIdentity(this.spec, key);
     if (isUuid(key) && this.identity !== key) throw new Error('The saved path belongs to another conversation; resolve its identity again');
     this.path = argument(this.spec, '--session') ?? null;
-    this.stored = packet;
-    host.views.setRequest(this.runtime, packet);
+    const { takeOwnership: _take, ...stored } = packet;
+    this.stored = stored;
+    host.views.setRequest(this.runtime, stored);
     this.assertCurrent();
   }
 

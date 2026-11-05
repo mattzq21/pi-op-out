@@ -33,6 +33,7 @@ function manifest(text: string): PluginManifest {
   try { value = JSON.parse(text); } catch (error) { throw new Error('plugin.json is not valid JSON: ' + errorText(error)); }
   const parsed = pluginManifestSchema.safeParse(value);
   if (!parsed.success) throw new Error('Invalid plugin.json: ' + z.prettifyError(parsed.error));
+  for (const keybind of parsed.data.keybinds ?? []) if (!Object.hasOwn(parsed.data.commands ?? {}, keybind.command)) throw new Error(`Invalid plugin.json: the keybind ${keybind.id} runs /${keybind.command}, which is not a command of the plugin`);
   return parsed.data;
 }
 

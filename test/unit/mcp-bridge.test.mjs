@@ -13,7 +13,7 @@ installConnectionEvents(Connection);
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === '@earendil-works/pi-coding-agent' && context.parentURL?.endsWith('/resources/mcp-bridge.ts')) {
-      return { url: 'data:text/javascript,export const createMcpExtension = () => pi => globalThis.__PIOP_MCP_SDK__(pi);', shortCircuit: true };
+      return { url: 'data:text/javascript,export const CONFIG_DIR_NAME = ".pi"; export const getAgentDir = () => "/nonexistent"; export const createMcpExtension = () => pi => globalThis.__PIOP_MCP_SDK__(pi);', shortCircuit: true };
     }
 
     return nextResolve(specifier, context);
@@ -57,10 +57,11 @@ async function fixture(run) {
       void dispatch('mcp_servers_change');
     },
     unregisterMcpServer(name) { removed.push(name); servers.delete(name); },
+    getMcpServers: () => [...servers].map(([name, config]) => ({ name, config, extensionPath: 'bridge' })),
   };
 
   const entries = [];
-  const ctx = { cwd: process.cwd(), sessionManager: { getSessionId: () => 'session', getBranch: () => entries }, ui: { setStatus() {}, notify() {} }, abort() {} };
+  const ctx = { cwd: process.cwd(), isProjectTrusted: () => false, sessionManager: { getSessionId: () => 'session', getBranch: () => entries }, ui: { setStatus() {}, notify() {} }, abort() {} };
   const dispatch = async (name, event = {}) => { let result; for (const handler of handlers.get(name) ?? []) result = await handler(event, ctx) ?? result; return result; };
 
   const select = async (definitions, sessionId = 'session', codemode) => {
@@ -98,7 +99,7 @@ test('reading a skill through the bridge waits for SDK tools and retains them ac
   const dir = mkdtempSync(join(tmpdir(), 'piop-skill-bridge-'));
   try {
     const path = join(dir, 'SKILL.md'); writeFileSync(path, 'Use this skill.');
-    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { app: { command: 'server' } } }));
+    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { app: { command: 'server', exposure: 'direct' } } }));
     let release; const gate = new Promise(resolve => { release = resolve; });
     f.onChange(() => gate); let completed = false;
     const pending = f.dispatch('tool_result', { toolName: 'read', input: { path }, content: [], isError: false }).then(result => { completed = true; return result; });

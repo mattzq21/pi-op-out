@@ -99,3 +99,23 @@ test('a chat opens with the outline of its older answers, unless the client list
   expect(recentHistory(chat(8, 'x'.repeat(2000)), false, opened.before).outline).toBeUndefined();
   expect(recentHistory(chat(2, 'x'), false).outline).toBeUndefined();
 });
+
+test('a side chat shows only its own turns after a divider, and its older history stops at the copy', () => {
+  const copied = chat(2, 'Main reply');
+  const marker = { type: 'custom', customType: 'piop-auxiliary-parent', id: 'marker', parentId: copied.leafId, data: { kind: 'btw', parentSessionId: 'main' } };
+  const own = chat(7, 'x'.repeat(2000)).entries.map((entry: any) => ({ ...entry, id: 's' + entry.id, parentId: entry.parentId === null ? 'marker' : 's' + entry.parentId }));
+  const source = () => ({ entries: [...copied.entries, marker, ...own], leafId: own.at(-1).id });
+
+  const fresh = recentHistory({ entries: [...copied.entries, marker], leafId: 'marker' }, false);
+  expect(fresh.entries.map((entry: any) => entry.customType)).toEqual(['piop-copied-history']);
+  expect(fresh.before).toBeNull();
+  expect(fresh.olderUsage).toBeUndefined();
+
+  const recent = recentHistory(source(), false);
+  expect(users(recent)).toEqual(['Question 2', 'Question 3', 'Question 4', 'Question 5', 'Question 6']);
+  expect(historyOutline(source(), recent.before).responses).toHaveLength(2);
+  const older = olderHistory(source(), recent.before);
+  expect(older.entries[0].customType).toBe('piop-copied-history');
+  expect(users(older)).toEqual(['Question 0', 'Question 1']);
+  expect(older.before).toBeNull();
+});

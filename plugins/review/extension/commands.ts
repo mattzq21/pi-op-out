@@ -17,7 +17,7 @@ export function registerReviewCommands(pi: ExtensionAPI, reviews: ReviewSession)
     handler: (args, ctx) => start(args, ctx),
   });
   pi.events.on("piop:rpc", request => {
-    if (request.command !== "run_queued_command" || request.payload?.command !== "review") return;
+    if (request.command !== "run_command" || request.payload?.command !== "review") return;
     request.ready = (async () => {
       const payload = Parse(reviewRequestSchema, request.payload);
       await start(payload.args, request.ctx, payload.images);

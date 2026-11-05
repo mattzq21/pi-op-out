@@ -7,7 +7,7 @@ import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
 import { MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type TerminalTarget } from "./appSupport";
-import { DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
+import { DEFINED_AGENTS_STATUS_KEY, OPEN_CHAT_AGENT } from "./lib/agentProtocol";
 import { agentStatusReader } from "./lib/hostAgents";
 import { NativeTransport } from "./lib/nativeTransport";
 import { OPEN_AUXILIARY_CHAT } from "./lib/auxiliaryChats";
@@ -25,6 +25,7 @@ type AppEventsContext = {
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
   openAuxiliaryRequest: (owner: NativeTransport, request: { id: string; placeholder?: string }) => void;
+  openChatAgentRequest: (owner: NativeTransport, request: { id: string }) => void;
   activeHostIdRef: RefObject<string>;
   setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;
   setDefinedAgents: Dispatch<StateUpdate<DefinedAgentsCapability | undefined>>;
@@ -162,6 +163,8 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         if (request.method === "notify") return notifyExtension();
 
         if (request.method === "input" && request.title === OPEN_AUXILIARY_CHAT) return capturedOptions.openAuxiliaryRequest(capturedOptions.transport, request);
+
+        if (request.method === "input" && request.title === OPEN_CHAT_AGENT) return capturedOptions.openChatAgentRequest(capturedOptions.transport, request);
 
         if (request.method === "setStatus") return handleStatus();
 

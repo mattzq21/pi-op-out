@@ -5,8 +5,18 @@
     "after": "session"
   },
   "commands": {
-    "btw": "immediate"
+    "btw": "immediateWithImages"
   },
+  "keybinds": [
+    {
+      "id": "open",
+      "label": "Open side chat",
+      "description": "Start a /btw side chat for the current conversation",
+      "defaultShortcut": "Ctrl+Alt+S",
+      "command": "btw",
+      "needsMessages": true
+    }
+  ],
   "auxiliary": {
     "label": "Btw",
     "letter": "B",

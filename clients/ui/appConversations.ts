@@ -1,3 +1,4 @@
+import { switchChat } from "./lib/chatSwitch";
 import { z } from "zod";
 import { createMutable } from "solid-js/store";
 import { required } from "./lib/required";
@@ -18,8 +19,9 @@ import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialo
 import { isConversationChanged } from "./lib/conversationChanged";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { chatSubmission,waitForConversationReady } from "./lib/chatSubmission";
-import { createSidepaneTabs, localSubagentTabs } from "./lib/sidepaneTabs";
+import { createSidepaneTabs, localSubagentTabs, type SidepaneTab } from "./lib/sidepaneTabs";
 import { parseAuxiliaryOpening, withWorkingSideChats } from "./lib/auxiliaryChats";
+import { sendFirstMessageHidden } from "./lib/sideChatDelivery";
 import { promptWasAccepted, submitDraftPrompt } from "./lib/draftSubmission";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
@@ -35,6 +37,8 @@ import { useChatSession } from "./lib/useChatSession";
 import type { AppSettings, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, SessionSummary, SlashCommand } from "./types";
 import { useAppEvents } from "./useAppEvents";
 import { useAppKeyboard } from "./useAppKeyboard";
+import { pluginStatus } from "./plugins";
+import type { PluginKeybindBinding } from "./plugins/keybinds";
 import { useAppUsage } from "./useAppUsage";
 import { isDaemonRefusal } from "./lib/commandRejected";
 import { markRunning, reuseRows } from "./lib/sessionRows";
@@ -172,6 +176,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const [activePane, setActivePane] = createSignal<"main" | "split">("main");
   const [splitPane, setSplitPane] = createSignal<SplitPaneState>();
   const [subagentPane, setSubagentPane] = createSignal<SubagentTarget>();
+  const [agentPane, setAgentPane] = createSignal<SidepaneTab>();
   const sidepane = createSidepaneTabs({
     sessions,
     main: () => ({ hostId: activeHostId(), sessionId: chatSession().state.sessionId || undefined }),
@@ -185,7 +190,10 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     const tab = sidepane.shown() ? sidepane.selected() : undefined;
 
     untrack(() => {
-      if (!tab) { setSplitPane(undefined); setSubagentPane(undefined); if (activePane() === "split") setActivePane("main"); return; }
+      if (!tab) { setSplitPane(undefined); setSubagentPane(undefined); setAgentPane(undefined); if (activePane() === "split") setActivePane("main"); return; }
+
+      if (tab.kind === "agent") { setSplitPane(undefined); setSubagentPane(undefined); setAgentPane(tab); return; }
+      setAgentPane(undefined);
 
       if (tab.kind === "subagent") { setSplitPane(undefined); setSubagentPane({ name: tab.label, sessionId: tab.session.id, sessionPath: tab.session.path, hostId: tab.session.hostId ?? "local" }); return; }
       setSubagentPane(undefined);
@@ -388,7 +396,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     }
   };
 
-  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, openAuxiliaryRequest, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
+  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, openAuxiliaryRequest, openChatAgentRequest, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
   createDependencyEffect(() => {
     const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
     const shutdown = () => { for (const id of terminals.draftTerminalIds()) void capturedTransport.closeTerminal(id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); };
@@ -433,12 +441,33 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       const pendingImages = commandImages.get(owner);
       commandImages.delete(owner);
       pendingSidepaneRequests.current.set(request.id, owner);
-      sidepane.openAuxiliary(opening.session, { requestId: request.id, initialPrompt: opening.task, initialImages: opening.task ? opening.images ?? pendingImages : undefined });
-      setActivePane("split");
+
+      if (opening.background && opening.task && sidepane.shown() && activePane() === "split") {
+        sidepane.openAuxiliary(opening.session, undefined, false);
+        void sendFirstMessageHidden({ runtimePool: runtimePool(), drafts, settings: required(settings()), session: opening.session, prompt: opening.task, images: opening.images ?? pendingImages ?? [] }).then(
+          sideTransport => { respondToSplitRequest(request.id, { value: "opened" }); void releaseSplitTransport(sideTransport); },
+          reason => { respondToSplitRequest(request.id, { cancelled: true }); addNotice({ title: `Could not start “${opening.session.name}”`, message: reason instanceof Error ? reason.message : String(reason) }); },
+        );
+
+        return;
+      }
+      sidepane.openAuxiliary(opening.session, { requestId: request.id, initialPrompt: opening.task, initialImages: opening.task ? opening.images ?? pendingImages : undefined, background: opening.background });
+      if (!opening.background) setActivePane("split");
     } catch (reason) {
       void owner.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reason => reportBackgroundError("Could not cancel the side chat request", reason));
       addNotice({ title: "Could not open the side chat", message: reason instanceof Error ? reason.message : String(reason) });
     }
+  }
+
+  function openChatAgentRequest(owner: NativeTransport, request: { id: string }, session?: SessionSummary) {
+    void owner.command({ type: "extension_ui_response", id: request.id, value: "opened" }).catch(reason => addNotice({ title: "Could not finish /agent", message: reason instanceof Error ? reason.message : String(reason) }));
+    const hostId = owner.currentHostId();
+    const sessionId = session?.id ?? chatSession().state.sessionId;
+    const listed = session ?? sessions().find(item => item.id === sessionId && (item.hostId ?? "local") === hostId);
+
+    if (!sessionId) { addNotice({ title: "Could not open the agent settings", message: "Send the first message before you edit the agent of this conversation." }); return; }
+    sidepane.openAgentSettings(listed ?? { id: sessionId, path: owner.currentSessionPath() ?? "", hostId, name: chatSession().state.sessionName || "Conversation", project: "", cwd: owner.currentCwd() ?? "", preview: "", messageCount: 0, lastMessageAt: 0, apiCost: 0 });
+    setActivePane("split");
   }
 
   const closeSplitPane = () => { sidepane.setOpen(false); setActivePane("main"); };
@@ -686,7 +715,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
     const nextTransport = runtimePool().forSession(session);
     const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey);
-    batch(() => { activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport); });
+    switchChat(nextTransport, transport, () => { activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport); });
 
     return nextTransport;
   };
@@ -794,7 +823,24 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await capturedSession.refresh(); }).then(() => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) { setError(undefined); updateConnected(true); } }).catch((reason) => { if (!isConversationChanged(reason) && activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { reconnectPending.current.delete(ownerTransport); });
   };
 
-  useAppKeyboard({ settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen });
+  const commandRunner = createRef<((text: string) => Promise<unknown>) | undefined>(undefined);
+
+  const registerCommandRunner = (run: (text: string) => Promise<unknown>) => {
+    commandRunner.current = run;
+
+    return () => { if (commandRunner.current === run) commandRunner.current = undefined; };
+  };
+
+  const runPluginKeybind = (keybind: PluginKeybindBinding) => {
+    const run = commandRunner.current;
+
+    if (!run || (keybind.needsMessages && !chatSession().messages.length)) return;
+
+    if (!transport().ownsConversation()) { addNotice({ title: `Could not run “${keybind.label}”`, message: "This window does not control the chat. Click the message box to take control." }); return; }
+    void run(`/${keybind.command}`).catch((reason) => { if (!isDaemonRefusal(reason)) addNotice({ title: `Could not run “${keybind.label}”`, message: reason instanceof Error ? reason.message : String(reason) }); });
+  };
+
+  useAppKeyboard({ settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen, pluginHost: () => activeHostIdRef.current, pluginEnabled: (id) => pluginStatus(activeHostIdRef.current)?.enabled.includes(id) === true, runPluginKeybind });
   const extensionStateIsCurrent = createMemo(() => (extensionOwner() === transport()));
   const activeDialog = createMemo(() => dialogs()[0]);
   const projectCwd = createMemo(() => (selectedProjectCwd(activeCwd(), transport().isTemporaryChat())));
@@ -806,9 +852,9 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     return [...summaries.values()].filter(session => !archives.isArchived(session) && !session.isDraft && session.messageCount > 0);
   }, query);
 
-  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false };
+  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentSaved: false, agentUnavailable: false };
 
-    return { agents: (definedAgents()?.config.agents ?? []), activeAgent: definedAgents()?.active, agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
+    return { agents: (definedAgents()?.config.agents ?? []), activeAgent: definedAgents()?.active, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
 
   const chatModels = createMemo(() => modelVisibility.visibleModels(activeHostId(), chatSession().models));
 
@@ -862,14 +908,14 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
  // What the app shows, in groups, so each part of the page takes only the groups it uses.
   return {
-    conversation: { transport, runtimePool, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkSourceNameOf, forkPoints, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, openProject, resolveHomeDirectory, modelVisibility },
+    conversation: { transport, runtimePool, registerCommandRunner, chatAgentProps, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkSourceNameOf, forkPoints, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, openProject, resolveHomeDirectory, modelVisibility },
     sessions: { sessions, sidebar, listedRunningSessions, runningSessions, unseenSessions, selectSession, sessionAction, startNewSession, newSession, newChatRequest, createGroupRequest, setCreateGroupRequest, handleCreateGroup, archiveSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, syncSessionIndex, query, setQuery, archivesOpen, setArchivesOpen },
     layout: { view, setView, panelOpen, setPanelOpen, mobileSidebarOpen, canLeaveSettings, activePane, setActivePane, hasSidePane },
     settings: { settings, settingsSaving, debugModeSaving, setSettingsDirty, saveSettings, toggleDebugMode, toggleDebugFeature, pendingSettingsCount },
     usage: { codexUsage, anthropicUsage, usageClock, opencodeGoBadge, opencodexUsage, usageError, refreshUsage, refreshingUsage },
     notices: { notices, setNotices, addNotice, error, setError, reconnectMain, reconnectPending },
     dialogs: { setDialogs, activeDialog, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, renameSession, setRenameSession, projectOpen, setProjectOpen, projectOpenRef, missingDirectoryDialog },
-    side: { sidepane, splitPane, subagentPane, splitSessionId, respondToSplitRequest, closeSplitPane, releaseSplitTransport, openSubagent, splitComposerFocusRequest, splitQueueHoldRequest },
+    side: { sidepane, splitPane, subagentPane, agentPane, openChatAgentRequest, splitSessionId, respondToSplitRequest, closeSplitPane, releaseSplitTransport, openSubagent, splitComposerFocusRequest, splitQueueHoldRequest },
     terminal: { terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, terminalViewKey, toggleComposerTerminal },
   };
 

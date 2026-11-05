@@ -101,4 +101,16 @@ async function initialize(sessionPath, sessionId, fresh) {
   });
 }
 
-module.exports = { read, store, ensure, add, registerTranscript, initialize };
+// The chats of the tree of sessionId: its root chat and every side chat under that root. sessionId comes first.
+function tree(root, sessionId) {
+  const db = tables.connection(root);
+  const parent = db.prepare('SELECT parent_id FROM auxiliary_children WHERE child_id=?');
+  let top = sessionId;
+  const seen = new Set([sessionId]);
+  for (let row; (row = parent.get(top)) && !seen.has(row.parent_id);) { top = row.parent_id; seen.add(top); }
+  const rows = db.prepare(`WITH RECURSIVE tree(id) AS (SELECT ? UNION SELECT c.child_id FROM auxiliary_children c JOIN tree t ON c.parent_id=t.id)
+    SELECT id FROM tree`).all(top);
+  return [...new Set([sessionId, ...rows.map(row => row.id)])];
+}
+
+module.exports = { read, store, ensure, add, registerTranscript, initialize, tree };

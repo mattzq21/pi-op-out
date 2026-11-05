@@ -16,7 +16,8 @@ export const DEFAULT_KEYBINDINGS = {
   toggleQueueHold: "Ctrl+H",
 } as const;
 export type KeybindingAction = keyof typeof DEFAULT_KEYBINDINGS;
-export type Keybindings = Record<KeybindingAction, string>;
+// The shortcuts of the app's actions, and of plugin keybinds by "<plugin ID>.<keybind ID>". The client keeps the plugin ones.
+export type Keybindings = Record<KeybindingAction, string> & Record<string, string>;
 
 // Each plugin's own settings, under its plugin ID. Each plugin checks its own values.
 export const pluginSettingsSchema = z.record(z.string(), z.record(z.string(), z.unknown()));

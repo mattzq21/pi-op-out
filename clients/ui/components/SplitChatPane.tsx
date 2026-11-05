@@ -9,7 +9,7 @@ import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
 
 import { OPEN_AUXILIARY_CHAT } from "../lib/auxiliaryChats";
-import { DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
+import { DEFINED_AGENTS_STATUS_KEY, OPEN_CHAT_AGENT } from "../lib/agentProtocol";
 import { agentStatusReader } from "../lib/hostAgents";
 import { z } from "zod";
 
@@ -26,7 +26,7 @@ import { draftUploadsFromImages, stageDraftSubmission, submitDraftPrompt } from 
 import { agentStateSchema } from "../lib/responseSchemas";
 import { trackChatSubmission, updateChatPreparation, waitForConversationReady } from "../lib/chatSubmission";
 
-interface Props { drafts: ReturnType<typeof createConversationDrafts>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; modelVisibility: HostModelVisibility; draft: string; focusRequest?: number; queueHoldRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; initialPrompt?: string; initialImages?: ImageAttachment[]; onInitialClaim?: () => void; onReady?: () => void; onFailed?: (cause: unknown, unseen: boolean) => void; onClose: () => void; }
+interface Props { drafts: ReturnType<typeof createConversationDrafts>; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; modelVisibility: HostModelVisibility; draft: string; focusRequest?: number; queueHoldRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onChatAgentRequest: (owner: NativeTransport, request: { id: string }, session: SessionSummary) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; initialPrompt?: string; initialImages?: ImageAttachment[]; background?: boolean; onInitialClaim?: () => void; onReady?: () => void; onFailed?: (cause: unknown, unseen: boolean) => void; onClose: () => void; }
 
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
@@ -80,7 +80,7 @@ export function SplitChatPane(componentProps: Props) {
     };
 
     const reportConnectionFailure = (initial: boolean, cause: unknown) => {
-      if (initial) capturedOnFailed4?.(cause, closing);
+      if (initial) capturedOnFailed4?.(cause, closing && delivering);
 
       if (closing) return;
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -150,6 +150,8 @@ export function SplitChatPane(componentProps: Props) {
 
           return;
         }
+
+        if (request.method === "input" && request.title === OPEN_CHAT_AGENT) return componentProps.onChatAgentRequest(capturedTransport, request, capturedSession5);
 
         const showDialog = () => capturedOnDialogRequest9(request, capturedTransport, `Split: ${capturedSession5.name}`);
 
@@ -257,7 +259,7 @@ export function SplitChatPane(componentProps: Props) {
 
   const agentDefinitionHost = () => (componentProps.session.hostId ?? "local") === "local" ? localHostLabel() : componentProps.session.hostName || componentProps.session.hostId;
 
-  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView onNotice={(title, message) => setNotices((current) => [...current, { id: crypto.randomUUID(), title, message }])} followConversation={followSource} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={debugView(componentProps.settings)} agents={chatAgents()} activeAgent={definedAgents()?.active} agentLocked={definedAgents()?.locked} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} draftSelection={componentProps.drafts.selectionFor(transport())} onDraftSelectionChange={selection => componentProps.drafts.setSelection(transport(), selection)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} queueHoldRequest={componentProps.queueHoldRequest} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={() => undefined} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
+  const renderSplitPaneStatus = () => (error() ? <div class="split-pane-status error">{(error())}</div> : <ChatView onNotice={(title, message) => setNotices((current) => [...current, { id: crypto.randomUUID(), title, message }])} followConversation={followSource} agentHostLabel={agentDefinitionHost()} transport={transport()} state={transport().promptControls.state(session().state)} messages={session().messages} debug={debugView(componentProps.settings)} agents={chatAgents()} activeAgent={definedAgents()?.active} agentSaved={definedAgents()?.saved} agentUnavailable={definedAgents()?.unavailable} refreshError={session().error} capabilityErrors={session().capabilityErrors} capabilitiesLoading={session().capabilitiesLoading} onRetryCapabilities={session().retryCapabilities} modelAliases={componentProps.modelVisibility.aliases(componentProps.session.hostId ?? "local")} models={chatModels()} commands={chatCommands()} thinkingLevels={transport().promptControls.levels(session().thinkingLevels)} widgets={chatWidgets()} statuses={transport().promptControls.statuses(statuses(), fastModelNames(hostFastModels(componentProps.session.hostId ?? "local")()), transport().promptControls.state(session().state).model)} projectCwd={componentProps.session.cwd} controlsDisabled={!connected()} draft={componentProps.draft} onDraftChange={(update) => componentProps.drafts.setTransportDraft(transport(), update)} draftSelection={componentProps.drafts.selectionFor(transport())} onDraftSelectionChange={selection => componentProps.drafts.setSelection(transport(), selection)} focusRequest={(componentProps.focusRequest === undefined ? 0 : componentProps.focusRequest) + extensionFocusRequest()} initialFocus={!componentProps.background} queueHoldRequest={componentProps.queueHoldRequest} onActivate={componentProps.onActivate} uploads={uploads()} onUploadsChange={setUploads} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abort} onOpenTerminal={componentProps.onOpenTerminal} onOpenProject={() => undefined} onBranch={() => undefined} onAgent={(name) => void transport().command({ type: "select_agent", agent: name }).then(() => { transport().promptControls.reset();
 
   return session().refresh(); }).catch(reportControlError)} onModel={(model) => transport().promptControls.model(model, transport().promptControls.state(session().state).thinkingLevel)} onToggleFastMode={() => transport().promptControls.toggle(statuses())} onThinking={(level) => transport().promptControls.thinking(level)} />);
 

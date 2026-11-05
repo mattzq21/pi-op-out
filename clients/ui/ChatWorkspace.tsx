@@ -32,6 +32,7 @@ export const ChatView = lazy(() => import("./components/ChatView").then(module =
   return createComponent(module.ChatView, props);
 } })));
 
+const ChatAgentPane = lazy(() => import("./components/ChatAgentPane").then(module => ({ default: module.ChatAgentPane })));
 const SplitChatPane = lazy(() => import("./components/SplitChatPane").then(module => ({ default: module.SplitChatPane })));
 
 const SubagentPane = lazy(() => import("./components/SubagentPane").then(module => ({ default: module.SubagentPane })));
@@ -39,17 +40,17 @@ const SubagentPane = lazy(() => import("./components/SubagentPane").then(module 
 // The chat area: the main conversation, the side pane with side chats and subagents, and the terminal panel.
 export function ChatWorkspace(props: { app: Omit<AppConversations, "usage">; transcriptCache: TranscriptCache; pluginPane: PluginWorkspace }) {
   const { transcriptCache, pluginPane } = props;
-  const { transport, runtimePool, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkPoints, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, modelVisibility } = props.app.conversation;
+  const { transport, runtimePool, registerCommandRunner, chatAgentProps, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkPoints, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, modelVisibility } = props.app.conversation;
   const { sessions, archiveSession, isArchiving, setArchivesOpen, selectSession } = props.app.sessions;
   const { view, setPanelOpen, setActivePane } = props.app.layout;
   const { settings } = props.app.settings;
   const { addNotice } = props.app.notices;
   const { queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs } = props.app.dialogs;
-  const { sidepane, splitPane, subagentPane, respondToSplitRequest, closeSplitPane, releaseSplitTransport, splitComposerFocusRequest, splitQueueHoldRequest } = props.app.side;
+  const { sidepane, splitPane, subagentPane, agentPane, openChatAgentRequest, respondToSplitRequest, closeSplitPane, releaseSplitTransport, splitComposerFocusRequest, splitQueueHoldRequest } = props.app.side;
   const { terminals, terminalOpen, terminalLocationState, startTerminal, addTerminal, selectTerminal, deleteTerminal, terminalViewKey, toggleComposerTerminal } = props.app.terminal;
 
   const closeTab = async (tab: SidepaneTab) => {
-    if (tab.kind === "subagent") { sidepane.forget(tab.key); return; }
+    if (tab.kind === "subagent" || tab.kind === "agent") { sidepane.forget(tab.key); return; }
 
     if (sidepane.workingTree(tab.session) && !window.confirm(`“${tab.label}” or one of its subagents is working. Stop them and archive it?`)) return;
     await archiveSession(tab.session);
@@ -63,7 +64,7 @@ export function ChatWorkspace(props: { app: Omit<AppConversations, "usage">; tra
 
   const renderChatWorkspace = () => {
     const renderChatPanes = () => {
-      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView transcripts={transcriptCache} onNotice={(title, message) => addNotice({ title, message })} transcriptActions={<div class="transcript-actions">{agentsIndicator()}{sidepaneButton()}</div>} agentHostLabel={activeHostId() === "local" ? localHostLabel() : required(settings()).hosts.find(host => host.id === activeHostId())?.name ?? activeHostId()} transport={transport()}  state={composerView.state()} messages={chatSession().messages} debug={debugView(required(settings()))} {...composerView.agentProps()} refreshError={chatSession().error} capabilityErrors={chatSession().capabilityErrors} capabilitiesLoading={chatSession().capabilitiesLoading} onRetryCapabilities={chatSession().retryCapabilities} modelAliases={modelVisibility.aliases(activeHostId())} models={composerView.models()} commands={chatCommands()} thinkingLevels={composerView.thinkingLevels()} widgets={chatWidgets()} statuses={composerView.statuses()} projectCwd={projectCwd()} controlsDisabled={!connected()} draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} draftSelection={drafts.selectionFor(transport())} onDraftSelectionChange={selection => drafts.setSelection(transport(), selection)} focusRequest={mainComposerFocusRequest()} queueHoldRequest={mainQueueHoldRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onOpenTerminal={() => toggleComposerTerminal("main", { sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() })} hosts={hostChoices(required(settings()))} onChooseHost={hostId => void chooseChatHost(hostId)} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onFork={message => branch(message, "fork")} forkSourceName={forkSourceName()} forkPoints={forkPoints()} onOpenForkSource={openForkSource} revealEntryId={revealEntryId()} onEntryRevealed={entryRevealed} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => transport().promptControls.toggle(composerControls.statuses(statuses(), composerControls.state(chatSession().state).model))} onThinking={setThinking} />}</Rerun>);
+      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView loaded={chatSession().loaded || Boolean(chatSession().error)} transcripts={transcriptCache} onNotice={(title, message) => addNotice({ title, message })} transcriptActions={<div class="transcript-actions">{agentsIndicator()}{sidepaneButton()}</div>} agentHostLabel={activeHostId() === "local" ? localHostLabel() : required(settings()).hosts.find(host => host.id === activeHostId())?.name ?? activeHostId()} transport={transport()}  state={composerView.state()} messages={chatSession().messages} debug={debugView(required(settings()))} {...composerView.agentProps()} refreshError={chatSession().error} capabilityErrors={chatSession().capabilityErrors} capabilitiesLoading={chatSession().capabilitiesLoading} onRetryCapabilities={chatSession().retryCapabilities} modelAliases={modelVisibility.aliases(activeHostId())} models={composerView.models()} commands={chatCommands()} thinkingLevels={composerView.thinkingLevels()} widgets={chatWidgets()} statuses={composerView.statuses()} projectCwd={projectCwd()} controlsDisabled={!connected()} draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} draftSelection={drafts.selectionFor(transport())} onDraftSelectionChange={selection => drafts.setSelection(transport(), selection)} focusRequest={mainComposerFocusRequest()} queueHoldRequest={mainQueueHoldRequest()} registerCommandRunner={registerCommandRunner} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onOpenTerminal={() => toggleComposerTerminal("main", { sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() })} hosts={hostChoices(required(settings()))} onChooseHost={hostId => void chooseChatHost(hostId)} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onFork={message => branch(message, "fork")} forkSourceName={forkSourceName()} forkPoints={forkPoints()} onOpenForkSource={openForkSource} revealEntryId={revealEntryId()} onEntryRevealed={entryRevealed} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => transport().promptControls.toggle(composerControls.statuses(statuses(), composerControls.state(chatSession().state).model))} onThinking={setThinking} />}</Rerun>);
 
       const renderSplitChatPane = () => (<Show when={splitPane()}><Rerun on={() => splitPane()?.key}>{(_key) => {
         const pane = required(splitPane());
@@ -83,8 +84,8 @@ export function ChatWorkspace(props: { app: Omit<AppConversations, "usage">; tra
           onOpenTerminal={() => { const current = currentPane();
 
             if (current) toggleComposerTerminal("split", { sessionKey: splitConversationKey(current), cwd: current.session.cwd, hostId: current.session.hostId ?? "local" }); }}
-          onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
-          onReleaseTransport={releaseSplitTransport} initialPrompt={pane.request?.initialPrompt} initialImages={pane.request?.initialImages}
+          onDialogRequest={queueExtensionDialog} onChatAgentRequest={openChatAgentRequest} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
+          onReleaseTransport={releaseSplitTransport} initialPrompt={pane.request?.initialPrompt} initialImages={pane.request?.initialImages} background={pane.request?.background}
           onInitialClaim={() => sidepane.finishOpening(pane.key)} onReady={() => finishOpening({ value: "opened" })}
           onFailed={(cause, unseen) => { finishOpening({ cancelled: true }); if (unseen) addNotice({ title: `Could not start “${pane.session.name}”`, message: cause instanceof Error ? cause.message : String(cause) }); }}
           onClose={() => { if (currentPane()) sidepane.forget(pane.key); }} />;
@@ -97,6 +98,7 @@ export function ChatWorkspace(props: { app: Omit<AppConversations, "usage">; tra
         <Sidepane open={sideVisible() && view() === "chat"}>
           <SidepaneTabs tabs={sidepane.tabs()} selected={sidepane.selected()?.key} error={pluginPane.error() || undefined} onSelect={key => { sidepane.select(key); setActivePane("split"); }} onClose={tab => void closeTab(tab)}>
             {renderSplitChatPane()}
+            <Show when={agentPane()} keyed>{tab => <ChatAgentPane session={tab.session} runtimePool={runtimePool()} settings={required(settings())} agentNames={chatAgentProps().agents.map(agent => agent.name)} onActivate={() => setActivePane("split")} />}</Show>
             <Show when={subagentPane()} keyed>{(target) => <SubagentPane target={target} debug={debugView(required(settings()))} onActivate={() => setActivePane("split")} onShowArchive={() => { setArchivesOpen(true); setPanelOpen(true); }} />}</Show>
           </SidepaneTabs>
         </Sidepane>

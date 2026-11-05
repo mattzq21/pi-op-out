@@ -126,6 +126,8 @@ export class DraftRuntime {
     if (command.type === "set_model" || command.type === "set_thinking_level") this.chosen = true;
     this.changes.set(command.type, command); this.revision++;
 
+    if (command.type === "set_model") { this.changes.delete("set_thinking_level"); this.changes.set("set_thinking_level", { type: "set_thinking_level", level: this.state.thinkingLevel }); }
+
     return {};
   }
 
@@ -150,7 +152,7 @@ export class DraftRuntime {
 
   private publishAgents() {
     const agents = this.catalog?.config.agents ?? [];
-    const capability = { version: 1, active: this.agent, locked: false, saved: false, unavailable: !agents.some(agent => agent.name === this.agent && !agent.unavailableReason) };
+    const capability = { version: 1, active: this.agent, saved: false, unavailable: !agents.some(agent => agent.name === this.agent && !agent.unavailableReason) };
     this.emit({ type: "extension_ui_request", id: crypto.randomUUID(), method: "setStatus", statusKey: DEFINED_AGENTS_STATUS_KEY, statusText: `json:${encodeAgentValue(capability)}` });
   }
 }

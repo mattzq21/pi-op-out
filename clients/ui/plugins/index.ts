@@ -5,10 +5,14 @@ import { loadPluginClients } from "./clientModules";
 import type { AuxiliaryLook, PluginStatus } from "../../../protocol/plugins";
 
 // True when the host runs this slash command only after the current response, never as a steering message.
-export function queuedCommand(text: string, queuedCommands: readonly string[]) {
+// The commands in withPrompt are queued only when text follows them.
+export function queuedCommand(text: string, queuedCommands: readonly string[], withPrompt: readonly string[] = []) {
   const [word] = text.trim().split(/\s/, 1);
 
-  return word.startsWith("/") && queuedCommands.includes(word.slice(1));
+  if (!word.startsWith("/")) return false;
+  const name = word.slice(1);
+
+  return queuedCommands.includes(name) || (withPrompt.includes(name) && /^\/\S+\s+\S/.test(text.trimStart()));
 }
 
 export type { PluginStatus };
