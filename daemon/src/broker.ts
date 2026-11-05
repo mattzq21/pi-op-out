@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { reserve, releaseReservation } from "./session_registry";
-import { STORAGE_DIRECTORY, BROKER_QUEUE_DEPTH, BROKER_WORKERS } from './config';
+import { STORAGE_DIRECTORY, BROKER_REQUEST_LIMIT } from './config';
 import { buildPiCommand, launchSpec } from './pi_launch';
 import { homeDir } from './environment';
 import { loadAppSettings } from './settings';
@@ -90,7 +90,7 @@ export function clientBrokerRequest(app: App, path: string, body: any): Promise<
 async function brokerRequest(app: App, broker: BrokerRuntime, path: string, body: any): Promise<any> {
   // A watch only waits for a chat to change, often for long; it does no work, so it does not use a work slot.
   const counted = !(path === '/orchestration' && body?.action === 'watch');
-  if (broker.closing || (counted && broker.active >= BROKER_WORKERS + BROKER_QUEUE_DEPTH)) throw new BrokerBusyError('Session broker is busy');
+  if (broker.closing || (counted && broker.active >= BROKER_REQUEST_LIMIT)) throw new BrokerBusyError('Session broker is busy');
   if (counted) broker.active += 1;
   try {
     if (path === '/orchestration') return await enqueueOrchestration(app, broker, body);
@@ -120,7 +120,6 @@ async function enqueueOrchestration(app: App, broker: BrokerRuntime, value: any)
     return brokerOrchestration(app, broker, value);
   }
   const worker = value?.action === 'send' || value?.action === 'branch_off';
-  if (worker && broker.messageCount >= BROKER_WORKERS) throw new BrokerBusyError('Session broker is busy');
   const delivery = registerDelivery(broker, value);
   if (worker) broker.messageCount += 1;
   try {

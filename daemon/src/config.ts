@@ -6,8 +6,7 @@ export const PROJECT_DIR: string = typeof __PIOP_PROJECT_DIR__ === 'string' ? __
 export const STORAGE_DIRECTORY = DEVELOPMENT ? developmentStorageDirectory() : '.piop';
 
 export const MAX_TERMINALS = 8;
-export const BROKER_WORKERS = 8;
-export const BROKER_QUEUE_DEPTH = 32;
+export const BROKER_REQUEST_LIMIT = 40;
 export const MAX_AGENT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export { PROTOCOL_VERSION, PEER_PROTOCOL_VERSION, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES } from '../../protocol/connection';
