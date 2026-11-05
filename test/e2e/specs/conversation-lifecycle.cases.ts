@@ -10,9 +10,9 @@ describe("Conversation lifecycle", () => {
   });
 
   it("keeps a separate composer draft for each conversation", async () => {
-    const current = { id: "ae9071ac-0954-4e01-bf92-bd969ed50c47", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 0, hostId: "local" };
-    const target = { id: "1d26ae02-2dfe-48df-a5d3-b8c77fd764b4", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 0, hostId: "local" };
-    const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, sessionFile: sessionId === current.id ? current.path : target.path, messageCount: 0, pendingMessageCount: 0 });
+    const current = { id: "ae9071ac-0954-4e01-bf92-bd969ed50c47", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 1, hostId: "local" };
+    const target = { id: "1d26ae02-2dfe-48df-a5d3-b8c77fd764b4", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 1, hostId: "local" };
+    const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, sessionFile: sessionId === current.id ? current.path : target.path, messageCount: 1, pendingMessageCount: 0 });
     await mockBackend({ list_sessions: [current, target], load_app_settings: { ...defaultSettings, defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
 
     try {
@@ -132,9 +132,7 @@ describe("Conversation lifecycle", () => {
       await updateBackendResponse("pi_command:get_state", state(current.id));
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
-      await expect(app.terminalPanel).not.toBeDisplayed();
-      await expect(app.openTerminalButton).toBeEnabled();
-      await app.openTerminalButton.click();
+      await expect(app.terminalPanel).toBeDisplayed();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
       await app.closeTerminalButton.click();
     } finally {

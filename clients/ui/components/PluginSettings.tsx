@@ -118,6 +118,6 @@ function RestartTerminalsDialog(props: { count: number; onCancel: () => void; on
   return <dialog ref={dialog} class="extension-dialog" aria-label="Close terminals and restart?" onCancel={event => { event.preventDefault(); props.onCancel(); }}>
     <h2>Close terminals and restart?</h2>
     <p>Restarting this daemon will close {props.count} running {props.count === 1 ? "terminal" : "terminals"}, including any commands running in them.</p>
-    <div class="dialog-actions"><button autofocus onClick={props.onCancel}>Cancel</button><button class="primary-button" onClick={props.onConfirm}>Close terminals and restart</button></div>
+    <div class="dialog-actions"><button autofocus onClick={() => props.onCancel()}>Cancel</button><button class="primary-button" onClick={() => props.onConfirm()}>Close terminals and restart</button></div>
   </dialog>;
 }

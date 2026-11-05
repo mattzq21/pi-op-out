@@ -4,13 +4,13 @@ import { queuedSegments, type ComposerFieldElement } from "./composerField";
 import { PendingMessageText } from "./PendingMessageText";
 import { createDelayedPresence, SendingStatus, type PendingStatus } from "./SendingStatus";
 import { required } from "../lib/required";
-import { trackToastMessage } from "../lib/toastHistory";
+import { createToastMessageTracker } from "../lib/toastHistory";
 import { createComposerPromptHistory } from "../lib/promptHistory";
 import { createComposerEditorKey } from "../lib/composerKeyboard";
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { createMemo,createSelector,createSignal,onCleanup,onMount,Show,splitProps } from "solid-js";
+import { createMemo,createSelector,createSignal,onCleanup,onMount,Show,splitProps,untrack } from "solid-js";
 import { createFilePaste } from "../lib/filePaste";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName,skillNames } from "../lib/composerPrompt";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
@@ -234,7 +234,7 @@ export function Composer(props: Props) {
   });
   const attachments = useComposerAttachments(attachmentOptions);
   const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
-  trackToastMessage("Composer", "Image input error", () => imageInputError() ? "This model does not support image inputs. Try a different model" : undefined);
+  createToastMessageTracker("Composer", "Image input error", () => imageInputError() ? "This model does not support image inputs. Try a different model" : undefined);
   const [sending, setSending] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
   const stoppingRef = createRef(false);
@@ -256,7 +256,7 @@ export function Composer(props: Props) {
 
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
-  const savedSelection = props.draftSelection && { start: Math.min(props.draftSelection.start, value().length), end: Math.min(props.draftSelection.end, value().length) };
+  const savedSelection = untrack(() => props.draftSelection && { start: Math.min(props.draftSelection.start, value().length), end: Math.min(props.draftSelection.end, value().length) });
   const [selection, setSelection] = createSignal<DraftSelection | undefined>(savedSelection);
   const ref = createRef<ComposerFieldElement>(null);
   onMount(() => { if (savedSelection) ref.current?.setSelectionRange(savedSelection.start, savedSelection.end); });
@@ -381,7 +381,7 @@ export function Composer(props: Props) {
 
       void (async () => {
         if (files.length) await addFiles(files);
-        else await nativeDropRef.current.addPaths(paths);
+        else await addPaths(paths);
       })().catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
       focusOwnedEditor();
     };
@@ -448,10 +448,6 @@ export function Composer(props: Props) {
     if (props.ownershipRequired) ref.current?.blur();
   }, () => [props.ownershipRequired]);
 
-  const nativeDropRef = createRef({ inputDisabled: controls().inputDisabled, addPaths });
-  createDependencyEffect(() => {
-    const capturedControls = { ...controls() };
- nativeDropRef.current = { inputDisabled: capturedControls.inputDisabled, addPaths }; });
   createDependencyEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
@@ -467,12 +463,12 @@ export function Composer(props: Props) {
       const x = payload.position.x / window.devicePixelRatio;
       const y = payload.position.y / window.devicePixelRatio;
       const inside = insideBounds(bounds, x, y);
-      const enabled = inside && !nativeDropRef.current.inputDisabled;
+      const enabled = inside && !untrack(controls).inputDisabled;
       setDraggingFiles(payload.type !== "drop" && enabled);
 
       if (payload.type !== "drop" || !enabled) return;
-      void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError((reason instanceof Error ? reason.message : String(reason))); });
-      focusOwnedEditor();
+      void addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError((reason instanceof Error ? reason.message : String(reason))); });
+      untrack(focusOwnedEditor);
     }).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
       .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${(reason instanceof Error ? reason.message : String(reason))}`); });
 
@@ -537,7 +533,7 @@ export function Composer(props: Props) {
   const holdBeforeSession = () => !props.onHoldQueue && sendingPresence.shown();
   const renderQueueHold = () => (<Show when={props.onHoldQueue || sendingPresence.shown()}><div class="pending-queue-hold" classList={{ held: Boolean(props.queueHeld), "presence-in": holdBeforeSession(), leaving: holdBeforeSession() && sendingPresence.leaving() }}><button type="button" disabled={!props.onHoldQueue || queueDisabled() || changingPending()} aria-pressed={Boolean(props.queueHeld)} onClick={toggleHold}>{props.queueHeld ? <><Play size={13} />Resume</> : <><Pause size={13} />Hold</>}</button></div></Show>);
   const queueDisabled = () => props.queueControlsDisabled ?? composer().controlsDisabled;
-  let handledQueueHoldRequest = props.queueHoldRequest ?? 0;
+  let handledQueueHoldRequest = untrack(() => props.queueHoldRequest ?? 0);
   createDependencyEffect(() => {
     const request = props.queueHoldRequest ?? 0;
 

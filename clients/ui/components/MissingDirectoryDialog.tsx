@@ -33,6 +33,6 @@ export function MissingDirectoryDialog(props: { request: MissingDirectoryRequest
     <p>Continue the chat in a new empty folder on this session’s host. This keeps the chat history. Missing files will not be restored.</p>
     {error() && <p class="dialog-error" role="alert">{error()}</p>}
     {busy() && <p role="status">Creating folder…</p>}
-    <div class="dialog-actions"><button disabled={busy()} onClick={props.request.cancel}>Cancel</button><button class="primary-button" disabled={busy()} onClick={() => void recover()}>Create empty folder</button></div>
+    <div class="dialog-actions"><button disabled={busy()} onClick={() => props.request.cancel()}>Cancel</button><button class="primary-button" disabled={busy()} onClick={() => void recover()}>Create empty folder</button></div>
   </dialog>;
 }

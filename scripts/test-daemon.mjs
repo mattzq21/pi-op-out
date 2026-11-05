@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { daemonTestTimings } from './daemon-test-timings.mjs';
 import { testPi } from '../test/pi-install.mjs';
@@ -39,7 +40,7 @@ async function main() {
     const timings = join(directory, 'timings.json');
     const saveTimings = await daemonTestTimings(files, timings, 'target/test-cache/daemon-timings.json');
     const result = await new Promise((resolve, reject) => {
-      const child = spawn('bun', ['test', '--preload', './test/daemon/typebox-preload.cjs', '--parallel=' + jobs, '--parallel-delay=0', '--timeout', '60000',
+      const child = spawn('bun', ['test', '--preload', fileURLToPath(new URL('../test/daemon/typebox-preload.cjs', import.meta.url)), '--parallel=' + jobs, '--parallel-delay=0', '--timeout', '60000',
         '--timings=' + timings, '--update-timings', ...(values.filter ? ['-t', values.filter] : []), ...files], { env, stdio: 'inherit' });
       child.once('error', reject);
       child.once('close', (code, signal) => resolve({ code, signal }));

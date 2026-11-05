@@ -321,14 +321,14 @@ describe("Conversation acceptance", () => {
   });
 
   it("assembles incremental assistant text and exposes the completed response actions", async () => {
-    await startTemporaryConversation({});
+    const { sessionId } = await startTemporaryConversation({});
     await setBridgeValue("E2E calls", "[]");
     const finalHistory = {
       entries: [{ type: "message", id: "incremental-final", parentId: null, message: { role: "assistant", content: "Incremental answer", timestamp: 200 } }],
       leafId: "incremental-final",
     };
 
-    await mockBackend({ ...connectedSessionResponses("incremental-session"), "pi_command:get_entries": finalHistory });
+    await mockBackend({ ...connectedSessionResponses(sessionId), "pi_command:get_entries": finalHistory });
 
     try {
       await emitPiEvent({ type: "agent_start" });

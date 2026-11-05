@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import * as storageDatabase from '../../daemon/resources/session-database/index.ts';
-import { onMainThread } from '../../daemon/resources/session-database/index.ts';
+import * as storageDatabase from '../session-database/index.ts';
+import { onMainThread, storageChannel } from '../session-database/index.ts';
 export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
 
 // The agent definitions in the storage database: the global ones, and those of each project. Only the daemon's main
@@ -27,6 +27,21 @@ function storedBody(root: string, name: string): string | undefined {
 
 function storedProject(root: string, directory: string): string | undefined {
   return bodyText(storageDatabase.projectAgentDefinition(root, directory));
+}
+
+// The saved global agent definitions of root as text; undefined when they or the storage database do not exist.
+export function savedDefinitions(root: string): string | undefined {
+  return storageDatabase.databaseExists(root) ? storedBody(root, DEFINITIONS) : undefined;
+}
+
+// The saved agent definitions of the project directory as text; undefined when they or the storage database do not exist.
+export function savedProject(root: string, directory: string): string | undefined {
+  return storageDatabase.databaseExists(root) ? storedProject(root, directory) : undefined;
+}
+
+// The saved agent prompt with the digest; undefined when it or the storage database does not exist.
+export function savedPromptSnapshot(root: string, digest: string): string | undefined {
+  return storageDatabase.databaseExists(root) ? storageDatabase.agentPromptSnapshot(root, digest) : undefined;
 }
 
 function transaction<T>(root: string, change: () => T): T {
@@ -135,3 +150,8 @@ export const saveMove = onMainThread("agent-definitions.saveMove", (root: string
 
   return saved ? saved.revision : undefined;
 }));
+
+// Saves an agent prompt by its digest. Pi asks the daemon to save it.
+export function savePromptSnapshot(digest: string, contents: string): void {
+  storageChannel.call("settings.promptSnapshot", { digest, contents });
+}

@@ -8,6 +8,7 @@ export * from './registry.ts';
 export * from './storage.ts';
 export * from './goals.ts';
 export * from './queue.ts';
+export * from './session-state.ts';
 export * from './transcripts.ts';
 export * from './settings.ts';
 export { onMainThread, connectWorker, serveWorker, linkedWorker, currentCaller } from './main-thread.ts';

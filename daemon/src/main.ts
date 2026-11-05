@@ -1,7 +1,7 @@
 import * as restartArtifacts from './restart';
 import * as daemonLog from './service';
 import { installFailureHandlers, runDaemon } from './lifecycle';
-import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError } from './service';
+import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError, connection } from './service';
 import { PROCESS_TAG } from './process';
 import { errorText } from './util/sync';
 import { isHostOperationWorker, runHostOperationWorker } from './host_operations';
@@ -30,6 +30,11 @@ async function main(): Promise<void> {
   // The other modes (start, stop, the client, the restart coordinator and checks) only read the storage.
   if (!OWNERS.has(first ?? '')) readOnlyStorage();
   installFailureHandlers();
+  // Prints, for the desktop app, how to connect to the running daemon.
+  if (first === '--connection') {
+    try { process.stdout.write(JSON.stringify(connection()) + '\n'); } catch (error) { fail('piopd: ', error); }
+    return;
+  }
   if (first === '--daemon-log-sink' || first === '--daemon-log-writer') {
     try {
       if (first === '--daemon-log-sink') await daemonLog.runSink(); else await daemonLog.runLogWriter();

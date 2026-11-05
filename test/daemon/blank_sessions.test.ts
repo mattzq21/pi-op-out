@@ -30,16 +30,14 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(() => daemon?.stop());
 
-test('closing never deletes a transcript outside the session store', async () => {
+test('a Pi that saves its transcript outside the session store does not start, and its transcript stays', async () => {
   writeFileSync(join(daemon.home, 'pi-mode.json'), JSON.stringify({ outside: true }));
   const runtimeId = 'outside-chat';
-  const applied = daemon.waitEvent('pi://event', payload => payload.runtimeId === runtimeId && payload.event?.type === 'settings_pending' && payload.event.pending === false);
-  await daemon.invoke('start_pi', { runtimeId, clientId: 'client', cwd: daemon.home });
-  await applied;
-  await daemon.invoke('pi_command', { runtimeId, command: { type: 'get_state' } });
-  const file = readFileSync(join(daemon.home, 'pi-file.txt'), 'utf8');
-  await expect(daemon.invoke('stop_pi', { runtimeId, discardBlank: true }))
+  await expect(daemon.invoke('start_pi', { runtimeId, clientId: 'client', cwd: daemon.home }))
     .rejects.toThrow('Conversation is outside session storage');
+  const file = readFileSync(join(daemon.home, 'pi-file.txt'), 'utf8');
   expect(file.startsWith(join(daemon.home, 'outside'))).toBe(true);
+  expect(existsSync(file)).toBe(true);
+  expect(await daemon.invoke('stop_pi', { runtimeId, discardBlank: true })).toBe(false);
   expect(existsSync(file)).toBe(true);
 }, 30_000);

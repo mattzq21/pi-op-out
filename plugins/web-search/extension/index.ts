@@ -3,7 +3,7 @@ import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { records } from "../../../daemon/resources/session-database/index.ts";
+import { readApplicationJson } from "../../../daemon/resources/piop-storage/index.ts";
 import { anthropic } from "./anthropic.ts";
 import { openai } from "./openai.ts";
 import type { Post, RawSource, SearchBackend } from "./interface.ts";
@@ -18,7 +18,7 @@ const settingsSchema = Schema.Object({ webSearchModel: Schema.Optional(Schema.St
 type Source = { title: string; url: string };
 
 function searchModelRef() {
-  const settings = records.readJson(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"), "settings")?.plugins?.["web-search"] ?? {};
+  const settings = readApplicationJson(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"), "settings")?.plugins?.["web-search"] ?? {};
 
   if (!Check(settingsSchema, settings)) throw new Error(`The saved web search model is not text. ${PICK_MODEL}`);
   const ref = settings.webSearchModel?.trim() || DEFAULT_MODEL;

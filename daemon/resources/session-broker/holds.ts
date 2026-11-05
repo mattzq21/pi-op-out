@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export const INPUT_HOLD = "piop-input-hold";
+import { INPUT_HOLD } from "../piop-storage/index.ts";
 
 export interface InputHold {
   held(ctx: ExtensionContext): boolean;

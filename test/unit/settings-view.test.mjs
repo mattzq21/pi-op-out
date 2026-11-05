@@ -163,15 +163,15 @@ describe('settings editor', () => {
     assert.equal(saves[0][0].plugins.review.reviewAgent, 'reviewer');
   });
 
-  test('the Web search sub-tab of Plugins offers the host OpenAI models, starts on gpt-6.1-sol and saves the choice', async () => {
-    await render({ models: [{ provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' }, { provider: 'openai', id: 'gpt-5.4', name: 'GPT-5.4' }, { provider: 'anthropic', id: 'claude', name: 'Claude' }] });
+  test('the Web search sub-tab of Plugins offers the host OpenAI and Anthropic models, starts on openai/gpt-6.1-sol and saves the choice', async () => {
+    await render({ models: [{ provider: 'openai', id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' }, { provider: 'openai', id: 'gpt-5.4', name: 'GPT-5.4' }, { provider: 'anthropic', id: 'claude', name: 'Claude' }, { provider: 'google', id: 'gemini', name: 'Gemini' }] });
     await section('Web search');
     const model = control('Search model');
-    assert.equal(model.value, 'gpt-6.1-sol');
-    assert.deepEqual([...model.options].map(option => option.textContent), ['GPT-6.1 Sol', 'GPT-5.4']);
-    await select('Search model', 'gpt-5.4');
+    assert.equal(model.value, 'openai/gpt-6.1-sol');
+    assert.deepEqual([...model.options].map(option => option.textContent), ['GPT-6.1 Sol', 'GPT-5.4', 'Claude']);
+    await select('Search model', 'anthropic/claude');
     await click(save());
-    assert.equal(saves[0][0].plugins['web-search'].webSearchModel, 'gpt-5.4');
+    assert.equal(saves[0][0].plugins['web-search'].webSearchModel, 'anthropic/claude');
   });
 
   test('the review agent choice follows the selected host plugin state without clearing saved choices', async () => {

@@ -1,4 +1,4 @@
-import { batch, createSignal, untrack } from "solid-js";
+import { batch, createSignal, untrack, type Accessor, type Setter } from "solid-js";
 import { capSessionName, promptName, promptTitle } from "./sessionName";
 import { agentStateSchema } from "./responseSchemas";
 import { extensionUiSchema } from "./extensionUiSchema";
@@ -52,11 +52,22 @@ export class SessionRuntimePool {
   private readonly idleTransports = new Map<NativeTransport, () => boolean>();
   private readonly listeners = new Set<() => void>();
   // Solid signals, so the views that read them update without a separate subscription.
-  private readonly runningSessionKeys = createSignal<ReadonlySet<string>>(new Set());
-  private readonly unseenSessionKeys = createSignal<ReadonlySet<string>>(new Set());
-  private readonly liveRevision = createSignal(0);
-  liveSessionRevision() { return this.liveRevision[0](); }
-  private liveChanged() { this.liveRevision[1](revision => revision + 1); this.notify(); }
+  private readonly runningSessionKeys: Accessor<ReadonlySet<string>>;
+  private readonly setRunningSessionKeys: Setter<ReadonlySet<string>>;
+  private readonly unseenSessionKeys: Accessor<ReadonlySet<string>>;
+  private readonly setUnseenSessionKeys: Setter<ReadonlySet<string>>;
+  private readonly liveRevision: Accessor<number>;
+  private readonly setLiveRevision: Setter<number>;
+  constructor() {
+    const [runningSessionKeys, setRunningSessionKeys] = createSignal<ReadonlySet<string>>(new Set());
+    const [unseenSessionKeys, setUnseenSessionKeys] = createSignal<ReadonlySet<string>>(new Set());
+    const [liveRevision, setLiveRevision] = createSignal(0);
+    this.runningSessionKeys = runningSessionKeys; this.setRunningSessionKeys = setRunningSessionKeys;
+    this.unseenSessionKeys = unseenSessionKeys; this.setUnseenSessionKeys = setUnseenSessionKeys;
+    this.liveRevision = liveRevision; this.setLiveRevision = setLiveRevision;
+  }
+  liveSessionRevision() { return this.liveRevision(); }
+  private liveChanged() { this.setLiveRevision(revision => revision + 1); this.notify(); }
   private liveSessions = new Map<NativeTransport, SessionSummary>();
   private readonly releasedSessions = new Map<string, SessionSummary>();
   private removedPaths = new Set<string>();
@@ -101,11 +112,11 @@ export class SessionRuntimePool {
     }
 
     const same = (next: Set<string>, previous: ReadonlySet<string>) => next.size === previous.size && [...next].every((key) => previous.has(key));
-    const runningChanged = !same(running, untrack(this.runningSessionKeys[0]));
-    const unseenChanged = !same(unseen, untrack(this.unseenSessionKeys[0]));
+    const runningChanged = !same(running, untrack(this.runningSessionKeys));
+    const unseenChanged = !same(unseen, untrack(this.unseenSessionKeys));
 
     if (!runningChanged && !unseenChanged) return;
-    batch(() => { if (runningChanged) this.runningSessionKeys[1](running); if (unseenChanged) this.unseenSessionKeys[1](unseen); });
+    batch(() => { if (runningChanged) this.setRunningSessionKeys(running); if (unseenChanged) this.setUnseenSessionKeys(unseen); });
     this.notify();
   }
 
@@ -391,8 +402,8 @@ export class SessionRuntimePool {
   subscribe(listener: () => void) { this.listeners.add(listener);
 
   return () => this.listeners.delete(listener); }
-  runningSessions() { return this.runningSessionKeys[0](); }
-  unseenSessions() { return this.unseenSessionKeys[0](); }
+  runningSessions() { return this.runningSessionKeys(); }
+  unseenSessions() { return this.unseenSessionKeys(); }
 
   async disconnectAll(strict = false) {
     const results = await Promise.allSettled([...this.transports].map((transport) => transport.dispose()));

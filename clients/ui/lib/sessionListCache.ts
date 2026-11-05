@@ -35,15 +35,15 @@ function restore(key?: string): SessionSummary[] {
 
 export function createCachedSessionList() {
   const key = cacheKey();
-  const signal = createSignal<SessionSummary[]>(restore(key));
+  const [sessions, setSessions] = createSignal<SessionSummary[]>(restore(key));
   let saved: string | undefined;
   createEffect(() => {
-    const sessions = signal[0]();
+    const current = sessions();
 
     if (!key) return;
 
     try {
-      const serialized = JSON.stringify(sessions.filter(session => !session.isDraft).map(session => ({ ...session, isRunning: false })));
+      const serialized = JSON.stringify(current.filter(session => !session.isDraft).map(session => ({ ...session, isRunning: false })));
 
       if (serialized === saved) return;
       localStorage.setItem(key, serialized);
@@ -51,5 +51,5 @@ export function createCachedSessionList() {
     } catch { }
   });
 
-  return signal;
+  return [sessions, setSessions] as const;
 }

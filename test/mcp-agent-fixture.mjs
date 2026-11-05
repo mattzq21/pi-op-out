@@ -41,6 +41,7 @@ export async function installAgentMcp({ dir, pi, tools, servers: catalog = {}, s
     registered.set(name, structuredClone(config));
     if (!deferToolsUntilStart || started) publish(name, config);
   };
+  pi.getMcpServers = () => [...registered].map(([name, config]) => ({ name, config, extensionPath: 'bridge' }));
   pi.unregisterMcpServer = name => {
     registered.delete(name);
     const removed = new Set((catalog[name] ?? []).map(tool => tool.name));

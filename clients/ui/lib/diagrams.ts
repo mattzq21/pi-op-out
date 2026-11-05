@@ -28,12 +28,14 @@ function cacheDiagram(key: string, svg: string) {
   cacheCharacters += characters;
 }
 
+const SANITIZE = {
+  USE_PROFILES: { svg: true, svgFilters: true },
+  FORBID_TAGS: ["foreignObject", "image", "a", "script"],
+  FORBID_ATTR: ["href", "xlink:href", "tabindex"],
+};
+
 function cleanSvg(svg: string) {
-  const clean = DOMPurify.sanitize(svg, {
-    USE_PROFILES: { svg: true, svgFilters: true },
-    FORBID_TAGS: ["foreignObject", "image", "a", "script"],
-    FORBID_ATTR: ["href", "xlink:href", "tabindex"],
-  });
+  const clean = DOMPurify.sanitize(svg, SANITIZE);
 
   return clean.replace(/url\(([^)]*)\)/gi, (match, target: string) => /^['"]?#[\w-]+['"]?$/.test(target.trim()) ? match : "none").replace(/@import[^;]*;/gi, "");
 }
@@ -81,16 +83,20 @@ export function renderDiagram(source: string, current: () => boolean): Promise<s
     if (!current()) return;
     const cached = cache.get(source);
 
-    if (cached) return instanceSvg(cached);
+    if (cached) return cached;
     const svg = await render(source);
     cacheDiagram(source, svg);
 
-    return instanceSvg(svg);
+    return svg;
   });
 
   queue = result.then(() => undefined, () => undefined);
 
   return result;
+}
+
+export function diagramElement(svg: string) {
+  return DOMPurify.sanitize(instanceSvg(svg), { ...SANITIZE, RETURN_DOM_FRAGMENT: true }).firstElementChild ?? undefined;
 }
 
 export function diagramFenceClosed(raw: string) {

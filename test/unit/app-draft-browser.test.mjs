@@ -125,11 +125,13 @@ test('local and remote drafts remain separate across full browser reloads', asyn
   await editor.waitFor();
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   assert.equal(await editor.inputValue(), 'Local unsent 日本語\nsecond line');
+  await page.getByRole('button', { name: 'Host: Local', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Host: Local', exact: true }).count(), 1);
   await page.goto(home + '?target=' + encodeURIComponent(JSON.stringify({ hostId })));
   await editor.waitFor();
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   assert.equal(await editor.inputValue(), 'Remote unsent draft');
+  await page.getByRole('button', { name: 'Host: Remote', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Host: Remote', exact: true }).count(), 1);
 });
 

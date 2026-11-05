@@ -67,10 +67,15 @@ export async function publishedTrace(t, content, { folder = '', home: existingHo
     const name = names.findLast(entry => entry.name?.trim())?.name;
     if (name) sessionNames.nameSession(fork.sessionPath, fork.sessionId, name);
     const parents = new Map(names.filter(entry => typeof entry.id === 'string').map(entry => [entry.id, entry.parentId]));
-    const transcript = lines.filter(({ entry }) => entry?.type !== 'session_info').map(({ line, entry }) => {
-      if (!entry || !parents.has(entry.parentId)) return line;
-      return JSON.stringify(stateRecords.history([...names, entry]).at(-1));
+    const records = [];
+    let after = null;
+    const transcript = lines.filter(({ entry }) => entry?.type !== 'session_info').flatMap(({ line, entry }) => {
+      if (stateRecords.isRecord(entry)) { records.push({ after, entry }); return []; }
+      if (typeof entry?.id === 'string') after = entry.id;
+      if (!entry || !parents.has(entry.parentId)) return [line];
+      return [JSON.stringify(stateRecords.history([...names, entry]).at(-1))];
     }).join('\n');
+    if (records.length) stateRecords.seed(fork.sessionPath, fork.sessionId, records);
     await writeFile(fork.sessionPath, publishedHeader + '\n' + transcript);
     return fork.sessionPath;
   };

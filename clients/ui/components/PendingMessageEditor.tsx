@@ -33,7 +33,7 @@ export function PendingMessageAttachments(props: Props) {
     <Show when={props.edit.keep.length + props.edit.files.length + props.edit.added.length > 0}><div class="attachments" aria-label="Attachments of the edited message">
       <Index each={props.edit.keep}>{index => <span class="attachment-image">
         <PendingImagePreview message={props.message} index={index()} load={props.load} />
-        <button type="button" disabled={props.saving} aria-label={`Remove ${props.message.images?.[index()]?.name ?? "image"}`} onClick={() => props.onChange(edit => ({ ...edit, keep: edit.keep.filter(kept => kept !== index()) }))}><X size={11} /></button>
+        <button type="button" disabled={props.saving} aria-label={`Remove ${props.message.images?.[index()]?.name ?? "image"}`} onClick={() => { const removed = index(); props.onChange(edit => ({ ...edit, keep: edit.keep.filter(kept => kept !== removed) })); }}><X size={11} /></button>
       </span>}</Index>
       <For each={props.edit.files}>{file => <span>
         <FileText size={12} /><b>{file.name}</b>

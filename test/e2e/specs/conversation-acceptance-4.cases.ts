@@ -3,7 +3,7 @@ import { $, $$, browser, expect } from "@wdio/globals";
 import { randomUUID } from "node:crypto";
 
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, connectedSessionResponses, isUserPrompt, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, pressShortcut, startTemporaryConversation, withClientSettingsWriteFailure } from './acceptance-fixture.js';
+import { isUserPrompt, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, pressShortcut, startTemporaryConversation, withClientSettingsWriteFailure } from './acceptance-fixture.js';
 
 describe("Conversation acceptance", () => {
   beforeEach(async () => {
@@ -128,15 +128,13 @@ describe("Conversation acceptance", () => {
   });
 
   it("queues extension dialogs behind the project picker", async () => {
-    const sessionId = randomUUID();
-    await mockBackend({ ...connectedSessionResponses(sessionId), home_directory: "/tmp",
-      list_sessions: [{ id: sessionId, path: `/tmp/${sessionId}.jsonl`, cwd: "/tmp", name: "Empty extension session", project: "tmp", preview: "", messageCount: 0 }],
-    });
+    await startTemporaryConversation({});
 
     try {
-      await app.conversationSearch.setValue("Empty extension session");
-      await $('.session-main[aria-label^="Empty extension session,"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).some(call => call.command === "start_pi" && call.mocked));
+      const sessionId = randomUUID();
+      await updateBackendResponse("pi_command:get_entries", { entries: [], leafId: null });
+      await updateBackendResponse("pi_command:get_state", { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, sessionFile: `/tmp/${sessionId}.jsonl`, cwd: "/tmp", messageCount: 0, pendingMessageCount: 0 });
+      await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
       await emitPiEvent({ type: "extension_ui_request", id: "queued-confirm", method: "confirm", title: "Confirm extension action" });
       await expect($$("dialog[open]")).toBeElementsArrayOfSize(1);

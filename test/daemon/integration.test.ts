@@ -50,6 +50,32 @@ test('Codex usage reports a Codex program that cannot start', async () => {
   finally { rmSync(installed); }
 });
 
+test('Codex usage completes the server handshake and returns the limiting window', async () => {
+  fakeProgram(daemon.bin, 'codex', `#!/usr/bin/env node
+if (process.argv[2] !== 'app-server') process.exit(9);
+let initialized = false;
+let ready = false;
+require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+  const packet = JSON.parse(line);
+  const reply = result => console.log(JSON.stringify({ id: packet.id, result }));
+  const reject = message => console.log(JSON.stringify({ id: packet.id, error: { code: -32600, message } }));
+  if (packet.method === 'initialize') {
+    if (!packet.params?.clientInfo?.name || !packet.params.clientInfo.version) return reject('Client identity is required');
+    initialized = true;
+    console.log('startup noise');
+    return reply({});
+  }
+  if (packet.method === 'initialized') { ready = initialized; return; }
+  if (packet.method === 'account/rateLimits/read') {
+    if (!ready) return reject('Initialize the server before reading account limits');
+    return reply({ rateLimits: { primary: { usedPercent: 20, resetsAt: 100 }, secondary: { usedPercent: 75, resetsAt: 200 } } });
+  }
+  reject('Unsupported test server method');
+});
+`);
+  expect((await refreshedUsage(daemon, 'codex')).usage).toEqual({ remainingPercent: 25, resetAt: 200 });
+});
+
 const FAKE_XDG_OPEN = `#!/bin/sh
 printf '%s\\0' "$@" >> "$HOME/.xdg-open-calls"
 [ ! -f "$HOME/.xdg-open-fail" ] || { cat "$HOME/.xdg-open-fail" >&2; exit 3; }

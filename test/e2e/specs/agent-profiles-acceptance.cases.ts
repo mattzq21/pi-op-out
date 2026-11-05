@@ -115,7 +115,9 @@ describe("Agent profiles acceptance", () => {
       "provider_auth:draft_catalog": catalogWith(agentCapability().config),
       "pi_command:set_model": {}, save_agent_definitions: { revision: "saved-agent-revision", warnings: [] }, save_app_settings: { settings }, stop_pi: false, start_pi: {}, list_sessions: [], load_app_settings: settings,
     });
-    await emitPiEvent({ type: "session_switched" });
+    await browser.execute(async settings => {
+      await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://settings-changed", payload: { settings } });
+    }, settings);
     await enableAgents(agentCapability());
     await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
     await app.openSettings();
@@ -143,6 +145,7 @@ describe("Agent profiles acceptance", () => {
       await app.waitUntilReady();
       await resetBackend();
       await mockBackend({ "provider_auth:draft_catalog": "native" });
+      await browser.execute(() => window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://agent-definitions-changed", payload: { hostId: "local" } }));
       await app.openSettings();
       await app.openSettingsSection("Agents");
       await browser.waitUntil(async () => (await backendCalls()).some(call => !call.mocked && call.command === "provider_auth" && z.object({ action: z.string() }).safeParse(call.args.request).data?.action === "draft_catalog"),

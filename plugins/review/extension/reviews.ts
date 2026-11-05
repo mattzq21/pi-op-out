@@ -4,12 +4,11 @@ import { join } from "node:path";
 import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { createChat, reserveSessionId, AUXILIARY_PARENT, auxiliaryParent, records, children } from "../../../daemon/resources/piop-storage/index.ts";
+import { createChat, reserveSessionId, AUXILIARY_PARENT, auxiliaryParent, records, chatChildren, readApplicationJson } from "../../../daemon/resources/piop-storage/index.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { currentHost, childFastModeEntry, locateConversation, openAuxiliaryChat } from "../../../daemon/resources/session-broker/index.ts";
-import { records as applicationRecords, storageRoot } from "../../../daemon/resources/session-database/index.ts";
 import type { ReviewImage, ReviewSession } from "./interface.ts";
 import reviewPrompt from "./review-prompt.txt";
 
@@ -50,7 +49,7 @@ async function requireSavedReviewParent(ctx: ExtensionContext) {
 
 function reviewName(ctx: ExtensionContext, parentPath: string, scope: string | undefined) {
   if (scope) return `Review ${scope}`;
-  const reviews = children(storageRoot(parentPath), ctx.sessionManager.getSessionId()).filter(child => child.kind === "review");
+  const reviews = chatChildren(parentPath, ctx.sessionManager.getSessionId()).filter(child => child.kind === "review");
   const unscoped = reviews.filter(child => !auxiliaryParent(records(parentPath, child.sessionId).map(record => record.entry), child.sessionId)?.scope).length;
 
   return `Review ${unscoped + 1}`;
@@ -95,7 +94,7 @@ async function openReview(ctx: ExtensionContext, record: ReviewRecord, name: str
 }
 
 async function reviewSettings() {
-  const settings = Parse(settingsSchema, applicationRecords.readJson(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"), "settings")?.plugins?.review ?? {});
+  const settings = Parse(settingsSchema, readApplicationJson(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"), "settings")?.plugins?.review ?? {});
 
   const agent = settings.reviewAgent?.trim() || "reviewer";
   return { agent, prompt: reviewPrompt };

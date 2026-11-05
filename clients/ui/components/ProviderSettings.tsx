@@ -6,7 +6,6 @@ import { createDependencyEffect } from "../lib/solid";
 
 import { ExternalLink, RefreshCw, Search } from "lucide-solid";
 import { openExternalUrl } from "../lib/nativeTransport";
-import { isMobile } from "../lib/platform";
 import { useProviderAuth, type AuthFlow, type AuthNotice, type ProviderAccount } from "../lib/providerAuth";
 import "../provider-settings.css";
 import type { RemoteHost, UsageIndicator } from "../types";
@@ -116,9 +115,9 @@ function ProviderList(componentProps: { providers: ProviderAccount[]; auth: Auth
   return <><div class="config-list"><Key each={componentProps.providers} by={provider => provider.id}>{provider => <section class="provider-group" aria-label={provider().name}>
     <div class="provider-account provider-heading">
       <div><strong>{provider().name}</strong><small>{provider().configured ? "Configured" : "Not configured"}{provider().source && <> · <span class={provider().source === "stored" ? "provider-stored" : undefined}>{provider().source}</span></>}</small></div>
-      <div class="provider-account-actions"><Show when={componentProps.usage && USAGE_INDICATOR[provider().id]}>{indicator => <UsageToggle name={provider().name} indicator={indicator()} usage={componentProps.usage!} />}</Show><Index each={provider().methods}>{method => method().interactive
-        ? <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.begin(provider().id, method().type)}>{provider().configured ? "Replace login" : "Sign in"} · {method().name}</button>
-        : <small>Configured through the host environment</small>}</Index>
+      <div class="provider-account-actions"><Show when={componentProps.usage && USAGE_INDICATOR[provider().id]}>{indicator => <UsageToggle name={provider().name} indicator={indicator()} usage={componentProps.usage!} />}</Show><Index each={provider().methods}>{method => <Show when={method().interactive} fallback={<small>Configured through the host environment</small>}>
+        <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.begin(provider().id, method().type)}>{provider().configured ? "Replace login" : "Sign in"} · {method().name}</button>
+      </Show>}</Index>
         {provider().storedType && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.logout(provider().id)}>Remove saved login</button>}
         {provider().custom && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => { if (window.confirm(`Remove ${provider().name}? Its saved login is removed too.`)) void componentProps.auth.remove(provider().id); }}>Remove provider</button>}
       </div>

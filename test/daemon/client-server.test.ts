@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
-import { fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
+import { addProviderLogin, fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
 
 let daemon: TestDaemon;
 
@@ -147,6 +147,7 @@ test('stop, abort and cancel requests still run when every work slot is busy, wi
   const codex = await arrivalSocket();
   const ssh = await arrivalSocket();
   fakeProgram(daemon.bin, 'codex', codex.program);
+  addProviderLogin(daemon.home, 'openai-codex', 'oauth');
   const slow = join(daemon.home, '.test-remotes', 'slow');
   mkdirSync(slow, { recursive: true }); fakeProgram(slow, '.ssh-hold', ssh.program);
   const settings = await daemon.invoke('load_app_settings');

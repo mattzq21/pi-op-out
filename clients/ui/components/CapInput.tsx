@@ -16,7 +16,7 @@ function readCap(text: string): { value: number | null | undefined; error?: stri
 }
 
 export function CapInput(props: Props) {
-  const [text, setText] = createSignal(formatCap(props.value));
+  const [text, setText] = createSignal("");
   const [error, setError] = createSignal<string>();
 
   createComputed(() => {

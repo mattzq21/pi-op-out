@@ -57,7 +57,9 @@
     "pretest:e2e": "bun run setup:dependencies",
     "test:e2e": "python3 scripts/test-run.py node scripts/test-e2e.mjs",
     "pretest:e2e:build": "bun run setup:dependencies",
-    "test:e2e:build": "node scripts/test-e2e.mjs --build --list"
+    "test:e2e:build": "node scripts/test-e2e.mjs --build --list",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

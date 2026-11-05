@@ -25,10 +25,6 @@ function sessionGoal(root: string, sessionId: string): SessionGoalRow | null {
   return { id: row.id, sessionId: row.sessionId, objective: row.objective, status: row.status, ...row.submissionId === null ? {} : { submissionId: row.submissionId } };
 }
 
-function goalInputHold(root: string, sessionId: string): string | undefined {
-  return get<{ entry_json: string }>(root, "SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-input-hold'", sessionId)?.entry_json;
-}
-
 function removeSessionGoal(root: string, sessionId: string): void { connection(root).prepare('DELETE FROM session_goals WHERE session_id=?').run(sessionId); }
 
 function saveSessionGoal(root: string, sessionId: string, goal: { id: string; objective: string; status: string; submissionId?: string }): void {
@@ -48,4 +44,4 @@ function goalObjectives(root: string): string[] {
   return connection(root).prepare('SELECT DISTINCT objective FROM session_goals').all().map(row => row.objective as string);
 }
 
-export { goalSessionId, sessionGoal, goalInputHold, removeSessionGoal, saveSessionGoal, goalObjectives };
+export { goalSessionId, sessionGoal, removeSessionGoal, saveSessionGoal, goalObjectives };

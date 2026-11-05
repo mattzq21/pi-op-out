@@ -2,9 +2,12 @@ import * as database from '../session-database/index.ts';
 import { onMainThread } from '../session-database/index.ts';
 import { randomUUID } from 'node:crypto';
 
+// The state record that holds a chat's input until the user releases it.
+export const INPUT_HOLD = 'piop-input-hold';
+
 interface StateRecord { after: string | null; entry: { type: string; id: string; customType?: string; [key: string]: unknown } }
 
-const coreTypes = ['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries', 'piop-skill-mcp'];
+const coreTypes = ['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-openai-cache-fork', 'piop-codemode-abilities', INPUT_HOLD, 'piop-fork-retries', 'piop-skill-mcp'];
 // The daemon adds the state records of its plugins to the environment of each process.
 let pluginTypes: string | undefined;
 let currentTypes = new Set(coreTypes);

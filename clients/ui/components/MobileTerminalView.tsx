@@ -182,15 +182,19 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
   };
 
-  const historyLine = (key: string, before: string) => new Promise<string | undefined>(resolve => {
-    lineWaiter?.resolve(undefined);
-    const waiter = { outputEnd: componentProps.outputEnd, before, created: Date.now(), resolve: (line: string | undefined) => {
-      if (lineWaiter === waiter) lineWaiter = undefined;
-      resolve(line);
-    } };
-    lineWaiter = waiter;
-    componentProps.onData(key).then(accepted => { if (!accepted) waiter.resolve(undefined); }, () => waiter.resolve(undefined));
-  });
+  const historyLine = (key: string, before: string) => {
+    const outputEnd = componentProps.outputEnd; const sendData = componentProps.onData;
+
+    return new Promise<string | undefined>(resolve => {
+      lineWaiter?.resolve(undefined);
+      const waiter = { outputEnd, before, created: Date.now(), resolve: (line: string | undefined) => {
+        if (lineWaiter === waiter) lineWaiter = undefined;
+        resolve(line);
+      } };
+      lineWaiter = waiter;
+      sendData(key).then(accepted => { if (!accepted) waiter.resolve(undefined); }, () => waiter.resolve(undefined));
+    });
+  };
 
   const moveHistory = async (direction: -1 | 1) => {
     if (disabled() || sending() || (lineWaiter && Date.now() - lineWaiter.created < historyReplyTime)) return;

@@ -11,12 +11,21 @@ pub(crate) fn directory() -> Result<PathBuf, String> {
     Ok(root.join("daemons").join(piop_protocol::development_endpoint_key(project)))
 }
 
-mod database;
 
-pub(crate) fn read() -> Result<Endpoint, String> { database::endpoint() }
+// What the daemon program reports for a client that has no connection yet. Only the daemon reads its database.
+#[derive(Deserialize)]
+pub(crate) struct Connection {
+    pub(crate) endpoint: Option<Endpoint>,
+    pub(crate) restarting: bool,
+}
 
-pub(crate) fn restart_active() -> bool {
-    let Ok(status) = database::restart_status() else { return false; };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    matches!(status["phase"].as_str(), Some("preparing" | "armed" | "restarting")) && status["expiresAt"].as_u64().unwrap_or(0) > now
+pub(crate) async fn connection(executable: &Path) -> Result<Connection, String> {
+    let output = tokio::time::timeout(Duration::from_secs(10), tokio::process::Command::new(executable)
+        .arg("--connection").stdin(Stdio::null()).kill_on_drop(true).output()).await
+        .map_err(|_| "Reading the Piop daemon connection timed out")?
+        .map_err(|error| format!("Could not read the Piop daemon connection: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("Could not read the Piop daemon connection: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("The Piop daemon connection is not valid: {error}"))
 }

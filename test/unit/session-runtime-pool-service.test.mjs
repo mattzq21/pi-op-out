@@ -66,8 +66,7 @@ test('settings reconnect only transports whose remote connection changed', async
   ] });
   const local = pool.create({});
   const remote = pool.create({ hostId: 'remote' });
-  await local.connect();
-  await remote.connect();
+  await Promise.all([local.connect(), remote.connect()]);
   const previous = await daemon.invoke('load_app_settings');
   const renamed = { ...previous, hosts: previous.hosts.map(host => host.id === 'remote' ? { ...host, name: 'Renamed' } : host) };
   await daemon.invoke('save_host_settings', { hostId: 'local', settings: renamed });

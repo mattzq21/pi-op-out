@@ -1,5 +1,5 @@
 import { Archive, Bug, FolderPlus, MessageSquare, Server, Settings } from "lucide-solid";
-import { Show } from "solid-js";
+import { Show, untrack } from "solid-js";
 import type { AppConversations } from "./appConversations";
 import { LimitBadge, OpencodexBadges, UsageError } from "./appSupport";
 import { ArchivedSessionPanel } from "./components/ArchivedSessionPanel";
@@ -14,11 +14,11 @@ import { preloadSettingsResources } from "./lib/settingsResources";
 
 // The left rail: navigation buttons, the conversation list and the usage badges.
 export function AppSidebar(props: { layout: AppConversations["layout"]; sessions: AppConversations["sessions"]; settings: AppConversations["settings"]; usage: AppConversations["usage"]; conversation: Pick<AppConversations["conversation"], "transport" | "activeConversationKey" | "activeHostId"> }) {
-  const { view, setView, panelOpen, setPanelOpen, canLeaveSettings } = props.layout;
-  const { sidebar, listedRunningSessions, unseenSessions, selectSession, sessionAction, startNewSession, newSession, newChatRequest, createGroupRequest, setCreateGroupRequest, handleCreateGroup, isArchiving, query, setQuery, archivesOpen, setArchivesOpen } = props.sessions;
-  const { settings, settingsSaving, debugModeSaving, toggleDebugMode, toggleDebugFeature } = props.settings;
-  const { codexUsage, anthropicUsage, usageClock, opencodeGoBadge, opencodexUsage, usageError, refreshUsage, refreshingUsage } = props.usage;
-  const { transport, activeConversationKey, activeHostId } = props.conversation;
+  const { view, setView, panelOpen, setPanelOpen, canLeaveSettings } = untrack(() => props.layout);
+  const { sidebar, listedRunningSessions, unseenSessions, selectSession, sessionAction, startNewSession, newSession, newChatRequest, createGroupRequest, setCreateGroupRequest, handleCreateGroup, isArchiving, query, setQuery, archivesOpen, setArchivesOpen } = untrack(() => props.sessions);
+  const { settings, settingsSaving, debugModeSaving, toggleDebugMode, toggleDebugFeature } = untrack(() => props.settings);
+  const { codexUsage, anthropicUsage, usageClock, opencodeGoBadge, opencodexUsage, usageError, refreshUsage, refreshingUsage } = untrack(() => props.usage);
+  const { transport, activeConversationKey, activeHostId } = untrack(() => props.conversation);
 
   const renderArchiveButton = () => {
     const active = () => archivesOpen() && view() === "chat";
