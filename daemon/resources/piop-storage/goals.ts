@@ -1,5 +1,6 @@
 import * as database from '../session-database.ts';
 import { onMainThread } from '../main-thread.ts';
+import { INPUT_HOLD } from '../session-broker/input-hold.ts';
 import { randomUUID } from 'node:crypto';
 
 export interface Goal { id: string; sessionId: string; objective: string; status: 'active' | 'complete'; submissionId?: string }
@@ -44,7 +45,7 @@ function restore(file: string): { goal: Goal | null; waitingForInput: boolean } 
   if (!id) return { goal: null, waitingForInput: false };
   const goal = database.sessionGoal(root, id);
   validate(goal);
-  const hold = database.goalInputHold(root, id);
+  const hold = database.currentSessionState(root, id, INPUT_HOLD);
   return { goal, waitingForInput: hold ? JSON.parse(hold)?.data?.held === true : false };
 }
 

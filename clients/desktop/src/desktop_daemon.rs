@@ -263,30 +263,33 @@ fn incompatible_daemon(error: &str) -> bool {
     error.starts_with("Incompatible Piop daemon") || error.starts_with("Piop daemon is from another build")
 }
 
-async fn existing_local_socket(build_id: &str) -> Result<Option<Socket>, String> {
-    if let Ok(endpoint) = tokio::task::spawn_blocking(daemon_endpoint::read).await.map_err(|error| error.to_string())? {
+// The socket of the running daemon, if it accepts this app; and if a restart runs now.
+async fn existing_local_socket(executable: &Path, build_id: &str) -> Result<(Option<Socket>, bool), String> {
+    let Ok(state) = daemon_endpoint::connection(executable).await else { return Ok((None, false)); };
+    if let Some(endpoint) = state.endpoint {
         match open(&endpoint, build_id).await {
-            Ok(socket) => return Ok(Some(socket)),
+            Ok(socket) => return Ok((Some(socket), state.restarting)),
             Err(error) if incompatible_daemon(&error) => return Err(error),
             Err(_) => {},
         }
     }
-    Ok(None)
+    Ok((None, state.restarting))
 }
 
 async fn local_socket(app: &AppHandle, executable: &Path, build_id: &str, startup: &AsyncMutex<()>) -> Result<Socket, String> {
-    if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
+    if let (Some(socket), _) = existing_local_socket(executable, build_id).await? { return Ok(socket); }
     let _startup = startup.lock().await;
-    if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
-    while tokio::task::spawn_blocking(daemon_endpoint::restart_active).await.map_err(|error| error.to_string())? {
+    loop {
+        let (socket, restarting) = existing_local_socket(executable, build_id).await?;
+        if let Some(socket) = socket { return Ok(socket); }
+        if !restarting { break; }
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if let Some(socket) = existing_local_socket(build_id).await? { return Ok(socket); }
     }
-    let (app, executable) = (app.clone(), executable.to_owned());
+    let (app, owned) = (app.clone(), executable.to_owned());
     let (log_path, mut startup_child) = tokio::task::spawn_blocking(move || {
-        spawn_local_daemon(&app, &executable).map(|(path, child)| (path, StartupChild(Some(child))))
+        spawn_local_daemon(&app, &owned).map(|(path, child)| (path, StartupChild(Some(child))))
     }).await.map_err(|error| error.to_string())??;
-    let result = wait_local_socket(&log_path, startup_child.0.as_mut().unwrap(), build_id).await;
+    let result = wait_local_socket(executable, &log_path, startup_child.0.as_mut().unwrap(), build_id).await;
     if result.is_ok() {
         let mut child = startup_child.0.take().unwrap();
         tokio::spawn(async move {
@@ -333,17 +336,23 @@ impl Drop for StartupChild {
 
 const ALREADY_RUNNING_EXIT_CODE: i32 = 3;
 
-async fn wait_local_socket(log_path: &Path, child: &mut tokio::process::Child, build_id: &str) -> Result<Socket, String> {
+async fn wait_local_socket(executable: &Path, log_path: &Path, child: &mut tokio::process::Child, build_id: &str) -> Result<Socket, String> {
     let deadline = tokio::time::Instant::now() + daemon_endpoint::STARTUP_TIMEOUT;
     let mut retry_delay = Duration::from_millis(10);
     let mut other_daemon = false;
+    let mut failure = None;
     while tokio::time::Instant::now() < deadline {
-        if let Ok(endpoint) = tokio::task::spawn_blocking(daemon_endpoint::read).await.map_err(|error| error.to_string())? {
-            match tokio::time::timeout_at(deadline, open(&endpoint, build_id)).await {
-                Ok(Ok(socket)) => return Ok(socket),
-                Ok(Err(error)) if incompatible_daemon(&error) => return Err(error),
-                _ => {},
-            }
+        match daemon_endpoint::connection(executable).await {
+            Ok(daemon_endpoint::Connection { endpoint: Some(endpoint), .. }) => {
+                failure = None;
+                match tokio::time::timeout_at(deadline, open(&endpoint, build_id)).await {
+                    Ok(Ok(socket)) => return Ok(socket),
+                    Ok(Err(error)) if incompatible_daemon(&error) => return Err(error),
+                    _ => {},
+                }
+            },
+            Ok(_) => failure = None,
+            Err(error) => failure = Some(error),
         }
         if !other_daemon {
             if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
@@ -354,7 +363,8 @@ async fn wait_local_socket(log_path: &Path, child: &mut tokio::process::Child, b
         tokio::time::sleep(retry_delay).await;
         retry_delay = (retry_delay * 2).min(Duration::from_millis(100));
     }
-    Err(format!("Piop daemon did not start. See {}", log_path.display()))
+    let cause = failure.map(|error| format!(" Last error: {error}.")).unwrap_or_default();
+    Err(format!("Piop daemon did not start.{cause} See {}", log_path.display()))
 }
 fn spawn_local_daemon(_app: &AppHandle, executable: &Path) -> Result<(PathBuf, tokio::process::Child), String> {
     let mut command = Command::new(executable);

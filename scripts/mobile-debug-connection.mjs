@@ -3,10 +3,13 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { developmentEndpointKey } from "../protocol/connection.ts";
+import { readJson } from "../daemon/resources/application-records.ts";
+import { readOnlyStorage } from "../daemon/resources/session-database.ts";
+
+readOnlyStorage();
 
 const project = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 
@@ -23,20 +26,7 @@ if (result.error || result.status !== 0) {
 }
 
 function readDaemonEndpoint() {
-  let database;
-
-  try {
-    database = new DatabaseSync(join(endpointDirectory, "sessions.sqlite"), { readOnly: true });
-    database.exec("PRAGMA busy_timeout=2000");
-
-    const row = database.prepare("SELECT body FROM application_settings WHERE name=?").get("debug-mobile");
-
-    return row?.body ? JSON.parse(Buffer.from(row.body).toString("utf8")) : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    database?.close();
-  }
+  try { return readJson(endpointDirectory, "debug-mobile"); } catch { return undefined; }
 }
 
 async function ready(url, token) {

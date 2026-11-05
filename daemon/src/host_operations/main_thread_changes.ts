@@ -1,6 +1,6 @@
 // The modules whose database changes worker threads ask the main thread to run. The main thread loads them here, so
 // it knows each change by name before a worker asks for it.
-import '../../resources/agent-definitions-writes.ts';
+import '../../resources/agent-definitions.ts';
 import '../../resources/application-records.ts';
 import '../../resources/chat-branch-history.ts';
 import '../../resources/conversation-storage.ts';

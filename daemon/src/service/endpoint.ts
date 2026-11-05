@@ -48,12 +48,24 @@ export function debugRuntime(): any {
   return runtime;
 }
 
-export function read(): Endpoint {
+// The saved connection of the running daemon; null when no daemon saved one.
+function saved(): Endpoint | null {
   const body = records.read(directory(), 'daemon');
-  if (!body) throw new Error('Daemon connection is not available');
+  if (!body) return null;
   const endpoint = JSON.parse(body.toString('utf8'));
   if (!Check(endpointSchema, endpoint)) throw new Error('The saved daemon connection is not valid');
   return endpoint;
+}
+
+export function read(): Endpoint {
+  const endpoint = saved();
+  if (!endpoint) throw new Error('Daemon connection is not available');
+  return endpoint;
+}
+
+// What a client that has no connection yet needs: the daemon's connection, and if a restart runs now.
+export function connection(): { endpoint: Endpoint | null; restarting: boolean } {
+  return { endpoint: saved(), restarting: restartEnds() !== undefined };
 }
 
 // When the restart that runs now must end at the latest, in ms since 1970; undefined when no restart runs.

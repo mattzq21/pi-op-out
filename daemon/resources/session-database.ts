@@ -7,5 +7,6 @@ export * from './session-database/registry.ts';
 export * from './session-database/storage.ts';
 export * from './session-database/goals.ts';
 export * from './session-database/queue.ts';
+export * from './session-database/session-state.ts';
 export * from './session-database/transcripts.ts';
 export * from './session-database/settings.ts';

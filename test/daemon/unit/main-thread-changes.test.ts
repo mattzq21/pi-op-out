@@ -12,5 +12,7 @@ test('the daemon main thread loads every module whose database changes worker th
   const naming = [...new Glob('daemon/resources/**/*.{cjs,mjs,ts}').scanSync(root)]
     .filter(file => !file.includes('main-thread.') && readFileSync(join(root, file), 'utf8').includes('onMainThread('));
   expect(naming.length).toBeGreaterThan(0);
-  expect(naming.filter(file => !loaded.includes(`import '${relative(join(root, 'daemon/src/host_operations'), join(root, file))}';`))).toEqual([]);
+  // The submodules of the storage database load with session-database.ts.
+  const module = (file: string) => file.startsWith('daemon/resources/session-database/') ? 'daemon/resources/session-database.ts' : file;
+  expect(naming.filter(file => !loaded.includes(`import '${relative(join(root, 'daemon/src/host_operations'), join(root, module(file)))}';`))).toEqual([]);
 });

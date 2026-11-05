@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import * as storageDatabase from "../../daemon/resources/session-database.ts";
 import { call } from "../../daemon/resources/storage-channel.ts";
-import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "../../daemon/resources/agent-definitions-writes.ts";
+import { isNamedAgent, revisionOf, saveConfig, saveMove, saveProject, savedDefinitions, savedProject, savedPromptSnapshot } from "../../daemon/resources/agent-definitions.ts";
 import { execFile } from "node:child_process";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -42,15 +41,10 @@ export const storageRoot = process.env.PIOP_STORAGE_ROOT || dirname(dirname(file
 
 export const agentDirectory = join(storageRoot, "piop-define-agents");
 
-// read's result, or undefined when the storage database of root does not exist.
-function stored<T>(root: string, read: () => T): T | undefined {
-  return storageDatabase.databaseExists(root) ? read() : undefined;
-}
-
 export { isNamedAgent };
 
 export async function readConfigDocument() {
-  const body = bodyText(stored(storageRoot, () => storageDatabase.applicationSetting(storageRoot, DEFINITIONS)));
+  const body = savedDefinitions(storageRoot);
 
   if (body === undefined) throw Object.assign(new Error("Agent definitions are unavailable"), { code: "ENOENT" });
 
@@ -69,7 +63,7 @@ export type ProjectDocument = { agents: unknown[]; defaultAgent?: string };
 export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
 
 export function readProjectDocument(directory: string): ProjectDocument & { revision: string } {
-  const body = bodyText(stored(storageRoot, () => storageDatabase.projectAgentDefinition(storageRoot, directory)));
+  const body = savedProject(storageRoot, directory);
 
   if (body === undefined) return { agents: [], revision: "missing" };
   const { agents, defaultAgent } = JSON.parse(body);
@@ -207,7 +201,7 @@ export async function readPrompt(path: string): Promise<string> {
 
   if (basename(dirname(path)) !== "prompt-snapshots" || !/^[a-f0-9]{64}\.md$/.test(basename(path))) return readFile(path, "utf8");
   const root = snapshotRoot(path);
-  const saved = stored(root, () => storageDatabase.agentPromptSnapshot(root, digest));
+  const saved = savedPromptSnapshot(root, digest);
   const contents = saved === undefined ? null : verifiedPrompt(String(saved), digest);
 
   if (contents === null) throw Object.assign(new Error(`Saved agent prompt is unavailable: ${path}`), { code: "ENOENT" });

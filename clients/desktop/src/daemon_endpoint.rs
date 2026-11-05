@@ -12,33 +12,20 @@ pub(crate) fn directory() -> Result<PathBuf, String> {
 }
 
 
-// The daemon's connection record. The daemon is the only writer of its database, so the app opens it read-only.
-pub(crate) fn read() -> Result<Endpoint, String> {
-    use rusqlite::OptionalExtension;
-    let file = directory()?.join("sessions.sqlite");
-    if !file.exists() { return Err("Daemon connection is not available".into()); }
-    let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| error.to_string())?;
-    db.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
-    let body: Option<Option<Vec<u8>>> = db.query_row("SELECT body FROM application_settings WHERE name='daemon'", [], |row| row.get(0))
-        .optional().map_err(|error| error.to_string())?;
-    let body = body.flatten().ok_or("Daemon connection is not available")?;
-    serde_json::from_slice(&body).map_err(|error| error.to_string())
+// What the daemon program reports for a client that has no connection yet. Only the daemon reads its database.
+#[derive(Deserialize)]
+pub(crate) struct Connection {
+    pub(crate) endpoint: Option<Endpoint>,
+    pub(crate) restarting: bool,
 }
 
-pub(crate) fn restart_active() -> bool {
-    let Ok(directory) = directory() else { return false; };
-    let Ok(status) = restart_status(&directory) else { return false; };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    matches!(status["phase"].as_str(), Some("preparing" | "armed" | "restarting")) && status["expiresAt"].as_u64().unwrap_or(0) > now
-}
-
-fn restart_status(directory: &Path) -> Result<Value, String> {
-    use rusqlite::OptionalExtension;
-    let directory = directory.canonicalize().map_err(|error| error.to_string())?;
-    let file = directory.join("sessions.sqlite");
-    let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| error.to_string())?;
-    db.busy_timeout(Duration::from_secs(2)).map_err(|error| error.to_string())?;
-    let body: Option<String> = db.query_row("SELECT record_json FROM restart_records WHERE name='status'", [], |row| row.get(0))
-        .optional().map_err(|error| error.to_string())?;
-    serde_json::from_str(&body.ok_or("Restart status is missing")?).map_err(|error| error.to_string())
+pub(crate) async fn connection(executable: &Path) -> Result<Connection, String> {
+    let output = tokio::time::timeout(Duration::from_secs(10), tokio::process::Command::new(executable)
+        .arg("--connection").stdin(Stdio::null()).kill_on_drop(true).output()).await
+        .map_err(|_| "Reading the Piop daemon connection timed out")?
+        .map_err(|error| format!("Could not read the Piop daemon connection: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("Could not read the Piop daemon connection: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("The Piop daemon connection is not valid: {error}"))
 }

@@ -25,6 +25,21 @@ function storedProject(root, directory) {
   return bodyText(storageDatabase.projectAgentDefinition(root, directory));
 }
 
+// The saved global agent definitions of root as text; undefined when they or the storage database do not exist.
+export function savedDefinitions(root: string): string | undefined {
+  return storageDatabase.databaseExists(root) ? storedBody(root, DEFINITIONS) : undefined;
+}
+
+// The saved agent definitions of the project directory as text; undefined when they or the storage database do not exist.
+export function savedProject(root: string, directory: string): string | undefined {
+  return storageDatabase.databaseExists(root) ? storedProject(root, directory) : undefined;
+}
+
+// The saved agent prompt with the digest; undefined when it or the storage database does not exist.
+export function savedPromptSnapshot(root: string, digest: string): string | undefined {
+  return storageDatabase.databaseExists(root) ? storageDatabase.agentPromptSnapshot(root, digest) : undefined;
+}
+
 function transaction(root, change) {
   return storageDatabase.transaction(root, "IMMEDIATE", change);
 }

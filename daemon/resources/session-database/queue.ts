@@ -7,7 +7,7 @@ export type QueueRow = { id: number; message: string; behavior: "steer" | "follo
 export type SubmissionState = "received" | "accepted" | "rejected";
 
 
-// Queued input, submission outcomes, agent mail, subagent runs and the per-chat state records.
+// Queued input, submission outcomes, agent mail and subagent runs.
 
 // ---- Queued input ----
 
@@ -188,46 +188,4 @@ function saveSubagentRun(root: string, sessionId: string, runId: string, started
     DO UPDATE SET started_at=excluded.started_at, run_json=excluded.run_json`).run(sessionId, runId, startedAt, runJson);
 }
 
-// ---- Chat state records ----
-
-function sessionStateRecord(root: string, sessionId: string, entryId: string): { after_id: string | null; entry_json: string } | undefined {
-  return connection(root).prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?').get(sessionId, entryId) as { after_id: string | null; entry_json: string } | undefined;
-}
-
-// Adds a state record; does nothing when the chat has a record with its ID.
-function seedSessionStateRecord(root: string, sessionId: string, entryId: string, after: string | null, entryJson: string): void {
-  connection(root).prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING')
-    .run(sessionId, entryId, after, entryJson);
-}
-
-function appendSessionStateRecord(root: string, sessionId: string, entryId: string, after: string | null, entryJson: string): void {
-  connection(root).prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?)').run(sessionId, entryId, after, entryJson);
-}
-
-function sessionStateRecords(root: string, sessionId: string): Array<{ after_id: string | null; entry_json: string }> {
-  return connection(root).prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? ORDER BY sequence').all(sessionId) as Array<{ after_id: string | null; entry_json: string }>;
-}
-
-function sessionStateSequence(root: string, sessionId: string): number {
-  return (connection(root).prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId) as { revision: number }).revision;
-}
-
-function currentSessionStates(root: string, sessionId: string): Array<{ state_key: string; entry_json: string }> {
-  return connection(root).prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId) as Array<{ state_key: string; entry_json: string }>;
-}
-
-function saveCurrentSessionState(root: string, sessionId: string, key: string, entryJson: string): void {
-  connection(root).prepare(`INSERT INTO session_extension_state (session_id, state_key, entry_json) VALUES (?, ?, ?)
-    ON CONFLICT(session_id, state_key) DO UPDATE SET entry_json=excluded.entry_json`).run(sessionId, key, entryJson);
-}
-
-function branchSelection(root: string, sessionId: string): { tip_id: string | null; leaf_id: string | null } | undefined {
-  return connection(root).prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId) as { tip_id: string | null; leaf_id: string | null } | undefined;
-}
-
-function saveBranchSelection(root: string, sessionId: string, tipId: string | null, leafId: string | null): void {
-  connection(root).prepare(`INSERT INTO session_branch_selection (session_id, tip_id, leaf_id) VALUES (?, ?, ?)
-    ON CONFLICT(session_id) DO UPDATE SET tip_id=excluded.tip_id, leaf_id=excluded.leaf_id`).run(sessionId, tipId, leafId);
-}
-
-export { savedQueue, queuedInputs, queuedInput, queuedSessionIds, nextQueueItemId, isQueueHeld, setQueueHeld, clearQueue, writeQueue, bindRecoveredQueue, pruneSubmissionOutcomes, receivedSubmissions, submissionOutcome, saveSubmissionOutcome, isGoalSubmissionQueued, mailboxReceipts, addMailboxReceipt, replaceMailboxReceipts, mailboxDeliveries, mailboxDelivery, nextMailboxSequence, addMailboxDelivery, removeMailboxDelivery, subagentRun, subagentRuns, saveSubagentRun, sessionStateRecord, seedSessionStateRecord, appendSessionStateRecord, sessionStateRecords, sessionStateSequence, currentSessionStates, saveCurrentSessionState, branchSelection, saveBranchSelection };
+export { savedQueue, queuedInputs, queuedInput, queuedSessionIds, nextQueueItemId, isQueueHeld, setQueueHeld, clearQueue, writeQueue, bindRecoveredQueue, pruneSubmissionOutcomes, receivedSubmissions, submissionOutcome, saveSubmissionOutcome, isGoalSubmissionQueued, mailboxReceipts, addMailboxReceipt, replaceMailboxReceipts, mailboxDeliveries, mailboxDelivery, nextMailboxSequence, addMailboxDelivery, removeMailboxDelivery, subagentRun, subagentRuns, saveSubagentRun };

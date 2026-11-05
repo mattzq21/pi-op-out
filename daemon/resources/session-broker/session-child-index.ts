@@ -15,7 +15,10 @@ function children(root: string, parentId: string): IndexedChild[] {
   return tables.descendantSessionRows(root, parentId).map(row => ({ sessionId: row.sessionId, kind: row.kind, archived: row.archived }));
 }
 
+// children, for the parent chat saved at parentPath.
+function chatChildren(parentPath: string, parentId: string): IndexedChild[] { return children(tables.storageRoot(parentPath), parentId); }
+
 // The chats of the tree of sessionId: its root chat and every side chat under that root. sessionId comes first.
 function tree(root: string, sessionId: string): string[] { return tables.sessionTreeIds(root, sessionId); }
 
-export { register, children, tree };
+export { register, children, chatChildren, tree };
