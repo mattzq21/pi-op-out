@@ -8,7 +8,7 @@ import { newProcessTag, PROCESS_TAG, signalProcessGroup } from './process_cleanu
 
 type Kind = 'setup' | 'cleanup';
 
-const FOLDERS: Record<Kind, string> = { setup: 'wtree-setup', cleanup: 'wtree-cleanup' };
+const FOLDERS: Record<Kind, string> = { setup: 'worktree-setup', cleanup: 'worktree-cleanup' };
 const OUTPUT_LIMIT = 64 * 1024;
 const NOTE_LIMIT = 2000;
 const STOP_GRACE_MS = 5000;

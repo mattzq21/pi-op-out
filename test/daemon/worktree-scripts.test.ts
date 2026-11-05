@@ -41,11 +41,11 @@ test('setup merges the global and repository folders by name, runs them in name 
   const profile = join(daemon.home, '.piop');
   const repo = realpathSync(gitRepository(join(daemon.home, 'project')));
   const log = join(daemon.home, 'setup.log');
-  script(join(profile, 'wtree-setup', '10-global'), `echo global >> ${log}`);
-  script(join(profile, 'wtree-setup', '20-shared'), `echo replaced global >> ${log}`);
-  script(join(repo, '.piop', 'wtree-setup', '20-shared'), `echo "repository $PIOP_REPOSITORY $(pwd)" >> ${log}`);
-  script(join(repo, '.piop', 'wtree-setup', '30-broken'), 'echo missing dependency; exit 3');
-  script(join(repo, '.piop', 'wtree-setup', '40-late'), `echo late >> ${log}`);
+  script(join(profile, 'worktree-setup', '10-global'), `echo global >> ${log}`);
+  script(join(profile, 'worktree-setup', '20-shared'), `echo replaced global >> ${log}`);
+  script(join(repo, '.piop', 'worktree-setup', '20-shared'), `echo "repository $PIOP_REPOSITORY $(pwd)" >> ${log}`);
+  script(join(repo, '.piop', 'worktree-setup', '30-broken'), 'echo missing dependency; exit 3');
+  script(join(repo, '.piop', 'worktree-setup', '40-late'), `echo late >> ${log}`);
   git(repo, 'add', '.');
   git(repo, 'commit', '--quiet', '-m', 'scripts');
   const chat = publish(daemon.home, repo);
@@ -70,8 +70,8 @@ test('archive runs cleanup before its snapshot, a failed cleanup keeps the chat 
   rememberProjectRepository(profile, worktree, { root: worktree, gitDir: repository.gitCommonDir });
   Records.activate(chat.id, profile);
   await daemon.invoke('relocate_session', { hostId: 'local', sessionPath: chat.path, cwd: worktree, clientId: 'scripts-test' });
-  script(join(profile, 'wtree-cleanup', '10-release'), '[ -e block ] && { echo still in use; exit 1; }; rm -f cache.txt');
-  script(join(profile, 'wtree-setup', '10-prepare'), 'echo prepared > prepared.txt');
+  script(join(profile, 'worktree-cleanup', '10-release'), '[ -e block ] && { echo still in use; exit 1; }; rm -f cache.txt');
+  script(join(profile, 'worktree-setup', '10-prepare'), 'echo prepared > prepared.txt');
   writeFileSync(join(worktree, 'cache.txt'), 'made by setup');
   writeFileSync(join(worktree, 'notes.txt'), 'user work');
   writeFileSync(join(worktree, 'block'), '');
@@ -100,7 +100,7 @@ test('a new worktree chat holds its first message until setup ends, then tells t
   const agents = await agentDaemon();
   try {
     const repo = realpathSync(gitRepository(join(agents.daemon.home, 'project')));
-    script(join(repo, '.piop', 'wtree-setup', '10-wait'), 'while [ ! -e "$PIOP_REPOSITORY/go" ]; do sleep 0.1; done; echo broken dependency; exit 2');
+    script(join(repo, '.piop', 'worktree-setup', '10-wait'), 'while [ ! -e "$PIOP_REPOSITORY/go" ]; do sleep 0.1; done; echo broken dependency; exit 2');
     git(repo, 'add', '.');
     git(repo, 'commit', '--quiet', '-m', 'setup');
     const requests: any[][] = [];
@@ -130,7 +130,7 @@ test('the user can stop a running setup, and the waiting message is then sent', 
   const agents = await agentDaemon();
   try {
     const repo = realpathSync(gitRepository(join(agents.daemon.home, 'project')));
-    script(join(repo, '.piop', 'wtree-setup', '10-hang'), 'echo installing; exec sleep 600');
+    script(join(repo, '.piop', 'worktree-setup', '10-hang'), 'echo installing; exec sleep 600');
     git(repo, 'add', '.');
     git(repo, 'commit', '--quiet', '-m', 'setup');
     const requests: any[][] = [];

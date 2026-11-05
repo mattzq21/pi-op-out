@@ -8,7 +8,7 @@ A chat worktree starts without ignored files, such as installed dependencies, an
 
 ## Scripts
 
-- Setup scripts are in `.piop/wtree-setup/`. Cleanup scripts are in `.piop/wtree-cleanup/`.
+- Setup scripts are in `.piop/worktree-setup/`. Cleanup scripts are in `.piop/worktree-cleanup/`.
 - Each folder has a global copy in Piop's storage folder (`~/.piop/`, `~/.piop-dev/` for debug builds) on the host that holds the repository. It also has a repository copy in the chat worktree.
 - Piop merges the global and repository folders by file name. A repository file replaces a global file with the same name. Piop runs each file of the merged list in name order and stops at the first failure. A file that is not executable is a failure. Names that start with `.` are ignored.
 - Setup scripts come from the files of the new chat worktree. Cleanup scripts come from the current files of the worktree, including uncommitted changes.
