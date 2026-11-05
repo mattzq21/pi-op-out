@@ -6,7 +6,6 @@ import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
 import { daemonScript } from './daemon_executable';
 import { lockFile } from './util/flock';
-import { untilStorageChange } from './util/storage_change';
 
 function validateEndpoint(protocol: number, token: string, address: string): void {
   let url: URL;
@@ -97,7 +96,6 @@ async function startDaemon(mode: string): Promise<[string, ChildProcess]> {
 // that one, or starts again once it has stopped.
 async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]> {
   const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
-  const directory = endpoint.directory();
   let lastError = '';
   const attempt = async () => { try { return await openSocket(scope); } catch (error: any) { lastError = error?.message ?? String(error); return undefined; } };
   let relaunched = false;
@@ -105,11 +103,11 @@ async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]>
     const [logPath, child] = await startDaemon(mode);
     let exit: number | null | undefined;
     const ended = new Promise<void>(resolve => child.once('exit', code => { exit = code; resolve(); }));
-    const opened = await untilStorageChange(directory, async () => (await attempt()) ?? (exit !== undefined ? null : undefined), deadline - Date.now(), ended);
+    const opened = await endpoint.untilChange(async () => (await attempt()) ?? (exit !== undefined ? null : undefined), deadline - Date.now(), { also: ended });
     if (opened) return opened;
     if (exit === undefined) throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath);
     if (exit !== endpoint.ALREADY_RUNNING_EXIT_CODE || relaunched) throw new Error('Piop daemon exited with code ' + exit + '. See ' + logPath);
-    const other = await untilStorageChange(directory, async () => (await attempt()) ?? (claimed() ? null : undefined), deadline - Date.now());
+    const other = await endpoint.untilChange(async () => (await attempt()) ?? (claimed() ? null : undefined), deadline - Date.now(), { released: true });
     if (other) return other;
     if (other === undefined) throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath);
     relaunched = true;
@@ -120,7 +118,7 @@ async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]>
 async function afterRestart(scope: string): Promise<[Socket, any] | undefined> {
   const ends = endpoint.restartEnds();
   if (ends === undefined) return undefined;
-  const opened = await untilStorageChange(endpoint.directory(), async () => (await tryOpen(scope)) ?? (endpoint.restartEnds() === undefined ? null : undefined), ends - Date.now());
+  const opened = await endpoint.untilChange(async () => (await tryOpen(scope)) ?? (endpoint.restartEnds() === undefined ? null : undefined), ends - Date.now());
   return opened ?? await tryOpen(scope);
 }
 
@@ -139,7 +137,7 @@ async function controlSocket(action: string): Promise<Socket | undefined> {
   if (action === 'stop' && claimed()) return undefined;
   if (action === 'start') return (await startAndOpen('--serve', 'control'))[0];
   // A daemon holds the lock but has no endpoint yet: it is starting.
-  const started = await untilStorageChange(endpoint.directory(), async () => (await tryOpen('control'))?.[0] ?? (action === 'stop' && claimed() ? null : undefined), 15_000);
+  const started = await endpoint.untilChange(async () => (await tryOpen('control'))?.[0] ?? (action === 'stop' && claimed() ? null : undefined), 15_000, { released: action === 'stop' });
   if (started) return started;
   if (started === null || (action === 'stop' && claimed())) return undefined;
   throw new Error('Could not contact the daemon. See ' + join(endpoint.directory(), 'daemon.log'));

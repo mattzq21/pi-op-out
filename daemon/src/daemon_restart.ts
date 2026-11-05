@@ -26,7 +26,9 @@ type Plan = restartStorage.RestartPlan;
 
 async function write(name: 'status', value: restartStorage.RestartStatus, condition?: () => boolean): Promise<void> {
   const lock = await artifacts.publicationLock();
-  try { if (!condition || condition()) restartStorage.write(endpoint.directory(), name, value); } finally { lock.release(); }
+  try {
+    if (!condition || condition()) { restartStorage.write(endpoint.directory(), name, value); endpoint.signal(); }
+  } finally { lock.release(); }
 }
 
 function readPlan(): Plan {

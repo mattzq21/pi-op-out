@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { closeSync, futimesSync, openSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Type, type Static } from 'typebox';
 import { Check } from 'typebox/value';
@@ -9,6 +10,8 @@ import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import * as records from '../resources/application-records.cjs';
 import * as restartStorage from './restart_storage';
 import { tryLockFileSync, type FileLock } from './util/flock';
+import { libcName } from './util/libc';
+import { untilSignal } from './util/storage_change';
 import { extensionBase } from './extensions';
 
 export const STARTUP_TIMEOUT = 90_000;
@@ -72,10 +75,58 @@ export function identity(): string {
   return value.toLowerCase();
 }
 
+const SIGNAL = 'daemon.signal';
+const LOCK = 'daemon.lock';
+
+// Tells waiters that the endpoint or restart records changed. Call after the change is committed.
+export function signal(): void {
+  const fd = openSync(join(directory(), SIGNAL), 'a', 0o600);
+  try { futimesSync(fd, new Date(), new Date()); } finally { closeSync(fd); }
+}
+
+// A process that waits until it gets the daemon lock and then lets it go at once: the end of the process tells that
+// the daemon lock is free, also when its holder crashed.
+function lockFreed(): { freed: Promise<void>; cancel: () => void } {
+  const source = `
+import { dlopen, read } from 'bun:ffi';
+import { constants, openSync } from 'node:fs';
+const library = dlopen(${JSON.stringify(libcName())}, {
+  flock: { args: ['i32', 'i32'], returns: 'i32' },
+  __errno_location: { args: [], returns: 'ptr' },
+});
+const fd = openSync(process.argv[1], constants.O_RDONLY | constants.O_CREAT, 0o600);
+let error;
+do { error = library.symbols.flock(fd, 2) === 0 ? 0 : read.i32(library.symbols.__errno_location()); } while (error === 4);
+if (error) throw new Error('flock failed (errno ' + error + ')');
+`;
+  const child = spawn(process.execPath, ['-e', source, join(directory(), LOCK)], { env: { ...process.env, BUN_BE_BUN: '1' }, stdio: ['ignore', 'ignore', 'pipe'] });
+  let cancelled = false;
+  const errors: Buffer[] = [];
+  child.stderr!.on('data', chunk => errors.push(chunk));
+  const freed = new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      if (cancelled) return;
+      if (code === 0) resolve();
+      else reject(new Error('Could not wait for the daemon lock: ' + (Buffer.concat(errors).toString().trim() || 'code ' + code + ', signal ' + signal)));
+    });
+  });
+  return { freed, cancel: () => { cancelled = true; child.kill('SIGKILL'); } };
+}
+
+// Runs check now and after each signal, until it gives a value or ms pass; see untilSignal. With released, check also
+// runs when the daemon lock becomes free.
+export async function untilChange<T>(check: () => Promise<T | undefined> | T | undefined, ms: number, options: { also?: Promise<unknown>; released?: boolean } = {}): Promise<T | undefined> {
+  const lock = options.released ? lockFreed() : undefined;
+  try {
+    return await untilSignal(directory(), SIGNAL, check, ms, [options.also, lock?.freed].filter(promise => promise !== undefined));
+  } finally { lock?.cancel(); }
+}
+
 export function claim(): FileLock {
   const root = directory();
   ensurePrivateDir(root);
-  const file = join(root, 'daemon.lock');
+  const file = join(root, LOCK);
   const lock = tryLockFileSync(file, 0o600);
   if (!lock) throw new DaemonAlreadyRunningError(DEVELOPMENT ? 'A Piop debug daemon is already running for this worktree' : 'A Piop daemon is already running for this configuration directory');
   setPrivateFilePermissions(file);
@@ -93,8 +144,10 @@ function endpointRecord(address: string, port: number, token: string): string {
 
 export function publish(address: string, port: number, token: string): void {
   records.save(directory(), 'daemon', endpointRecord(address, port, token));
+  signal();
 }
 
 export function unpublish(address: string, port: number, token: string): void {
   records.removeIfEqual(directory(), 'daemon', endpointRecord(address, port, token));
+  signal();
 }
