@@ -1,7 +1,8 @@
-import { $, expect } from "@wdio/globals";
+import { $, browser, expect } from "@wdio/globals";
 
+import { draftCatalog } from "../bridge/draft-catalog.js";
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, backendCalls, resetBackend, resetApp } from './acceptance-fixture.js';
+import { mockBackend, backendCalls, resetBackend, resetApp, acceptanceAgents } from './acceptance-fixture.js';
 
 describe("Settings behavior", () => {
   before(async () => {
@@ -9,7 +10,8 @@ describe("Settings behavior", () => {
   });
 
   it("keeps edited settings and explains when the backend rejects saving", async () => {
-    await mockBackend({ save_app_settings: { error: "Settings disk is read-only" } });
+    await mockBackend({ save_app_settings: { error: "Settings disk is read-only" }, "provider_auth:draft_catalog": { ...draftCatalog, config: acceptanceAgents().config } });
+    await browser.execute(() => window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://agent-definitions-changed", payload: { hostId: "local" } }));
 
     try {
       await app.openSettings();

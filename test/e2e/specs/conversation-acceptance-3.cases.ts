@@ -48,7 +48,8 @@ describe("Conversation acceptance", () => {
   });
 
   it("updates the thinking selector when piop changes effort", async () => {
-    await startTemporaryConversation({});
+    const { sessionId } = await startTemporaryConversation({});
+    await updateBackendResponse("pi_command:get_state", { model: { provider: "e2e", id: "acceptance", name: "Acceptance model", reasoning: true }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 1, pendingMessageCount: 0 });
 
     try {
       await emitPiEvent({ type: "session_switched" });
@@ -207,6 +208,7 @@ describe("Conversation acceptance", () => {
       await copyResponse.click();
       await expect($('.assistant-message button[aria-label^="Assistant response"][aria-label$=" copied"]')).toBeDisplayed();
       expect(await browser.execute(() => window.__e2eClipboard)).toBe(response);
+      await $(".assistant-message .code-block").moveTo();
       await $('button[aria-label="Copy code"]').click();
       await expect($('button[aria-label="Code copied"]')).toBeDisplayed();
       expect(await browser.execute(() => window.__e2eClipboard)).toBe("const answer = 42;");
@@ -222,7 +224,7 @@ describe("Conversation acceptance", () => {
 
     const history = {
       entries: [
-        { type: "message", id: "work-user", parentId: null, message: { role: "user", content: '<skill name="ponytail" location="/tmp/ponytail/SKILL.md">\nReferences are relative to /tmp/ponytail.\n\nhidden skill instructions</skill>\n\nReview the implementation', timestamp: 1_000 } },
+        { type: "message", id: "work-user", parentId: null, message: { role: "user", content: '<skill name="ponytail" location="/tmp/ponytail/SKILL.md">\nReferences are relative to /tmp/ponytail.\n\nhidden skill instructions\n</skill>\n\nReview the implementation', timestamp: 1_000 } },
         { type: "message", id: "work-thinking", parentId: "work-user", message: { role: "assistant", content: [{ type: "thinking", thinking: "Inspecting the behavior carefully" }], timestamp: 1_500 } },
         { type: "message", id: "work-tool-one", parentId: "work-thinking", message: { role: "toolResult", toolName: "read", content: "First file inspected", timestamp: 2_000 } },
         { type: "message", id: "work-tool-two", parentId: "work-tool-one", message: { role: "toolResult", toolName: "read", content: "Second file inspected", timestamp: 2_500 } },
@@ -242,9 +244,10 @@ describe("Conversation acceptance", () => {
       const work = $(".work-group");
       await expect(work.$("summary")).toHaveText("Worked for 3s");
       await work.$("summary").click();
-      await expect(work.$(".reasoning-text p")).toHaveText("Inspecting the behavior carefully");
+      await expect(work.$(".reasoning-text")).not.toBeExisting();
       await expect(work.$(".tool-summary strong")).toHaveText(expect.stringContaining("read x2"));
       await $('button[aria-label="Enable debug mode"]').click();
+      await expect(work.$(".reasoning-text p")).toHaveText("Inspecting the behavior carefully");
       await expect(work.$$(".tool-event")).toBeElementsArrayOfSize(2);
       let index = 0;
 

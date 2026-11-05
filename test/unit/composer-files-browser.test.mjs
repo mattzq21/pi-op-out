@@ -7,12 +7,13 @@ import { startupPage } from '../startup-browser-fixture.mjs';
 import { testBrowserName, chromiumOnly } from '../test-browser.mjs';
 import { nativeFileCommand } from '../native-file-command.mjs';
 
-async function fileComposer(t, contextOptions, engine = undefined) {
+async function fileComposer(t, contextOptions, engine = undefined, { clipboardImage } = {}) {
   const native = await nativeFileCommand(t, { desktop: true });
   const reads = [], pending = new Set(), gates = new Map();
   const page = await startupPage(t, 'development', {
     entryPoint: 'test/fixtures/composer-files-browser.tsx', ready: '[aria-label="Message piop"]', holdStorage: false, contextOptions, engine,
     prepare: page => page.exposeFunction('nativeCommand', async (command, args) => {
+      if (command === 'read_clipboard_image' && clipboardImage) return clipboardImage;
       if (command === 'read_dropped_file') reads.push(args.path);
       const gate = command === 'read_dropped_file' ? gates.get(args.path) : undefined;
       const request = native.invoke(command, args).finally(async () => {
@@ -282,13 +283,13 @@ test('ordinary text paste keeps the browser default behavior', async t => {
 });
 
 test('pasting an image without a capable model shows a dismissible error', async t => {
-  const { page } = await fileComposer(t);
+  const image = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+  const { page } = await fileComposer(t, undefined, undefined, { clipboardImage: image });
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.evaluate(async () => {
-    const image = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+  await page.evaluate(async image => {
     const bytes = Uint8Array.from(atob(image), char => char.charCodeAt(0));
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
-  });
+  }, image);
   await page.getByRole('textbox', { name: 'Message piop' }).focus();
   await page.keyboard.press('Control+v');
   const dismiss = page.getByRole('button', { name: 'Dismiss image input error' });

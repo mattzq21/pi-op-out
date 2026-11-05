@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { installDom, renderComponent, act, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
@@ -164,11 +164,11 @@ test('bulk deletion keeps an unreadable archive and removes only readable chats'
   await settle();
   const report = await daemon.invoke('storage_report');
   const unsafe = report.hosts.find(host => host.hostId === 'local').archives.find(chat => chat.name === 'Unsafe chat');
-  appendFileSync(unsafe.path, 'not JSON\n');
+  writeFileSync(unsafe.path, 'not JSON\n' + readFileSync(unsafe.path, 'utf8'));
   const button = text => [...view.container.querySelectorAll('button')].find(button => button.textContent === text);
   await act(() => button('Refresh').click());
   await settle();
-  assert.equal(view.container.querySelector('[aria-label^="Cannot safely delete Unsafe chat"]').disabled, true);
+  assert.equal(view.container.querySelector('[aria-label^="Cannot safely delete Unreadable conversation"]').disabled, true);
   await act(() => button('Delete available').click());
   assert.match(view.container.querySelector('dialog').textContent, /2 archived conversations on Local/);
   await act(() => view.container.querySelector('dialog button.primary-button').click());
@@ -176,9 +176,9 @@ test('bulk deletion keeps an unreadable archive and removes only readable chats'
   assert.equal(view.container.querySelector('[role="alert"]'), null);
   assert.equal(view.container.querySelector('[aria-label="Permanently delete First chat"]'), null);
   assert.equal(view.container.querySelector('[aria-label="Permanently delete Second chat"]'), null);
-  assert.ok(view.container.querySelector('[aria-label^="Cannot safely delete Unsafe chat"]'));
+  assert.ok(view.container.querySelector('[aria-label^="Cannot safely delete Unreadable conversation"]'));
   const after = await daemon.invoke('storage_report');
-  assert.deepEqual(after.hosts.find(host => host.hostId === 'local').archives.map(chat => chat.name), ['Unsafe chat']);
+  assert.deepEqual(after.hosts.find(host => host.hostId === 'local').archives.map(chat => chat.id), [unsafe.id]);
 });
 
 test('a failed bulk deletion reports the error and keeps the archived chats visible', async t => {

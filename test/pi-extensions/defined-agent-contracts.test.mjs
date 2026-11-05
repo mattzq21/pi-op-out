@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFile, readdir, stat, mkdir, rm } from 'node:fs/promises';
 import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { agentFixture, profile, configured, encoded } from '../defined-agent-fixture.mjs';
 import { installAgentMcp } from '../mcp-agent-fixture.mjs';
@@ -175,11 +176,12 @@ test('invalid configuration and filesystem failures surface instead of silently 
   const f = await agentFixture(t); f.corruptConfig('{bad'); await assert.rejects(f.load(), SyntaxError);
   assert.equal(f.rawConfig(), '{bad');
 
-  for (const name of ['sessions.sqlite', 'sessions.sqlite-wal', 'sessions.sqlite-shm']) await rm(join(f.root, name), { force: true });
-  await mkdir(join(f.root, 'sessions.sqlite')); await assert.rejects(f.load(), /Storage database is not a regular file/);
-  await rm(join(f.root, 'sessions.sqlite'), { recursive: true }); await f.file('config.json', JSON.stringify(configured([profile('general', { path_agent_prompt: '~/.agents/AGENTS.md' })])));
+  await f.file('config.json', JSON.stringify(configured([profile('general', { path_agent_prompt: '~/.agents/AGENTS.md' })])));
   await f.load(); await rm(join(f.home, '.agents/AGENTS.md')); await mkdir(join(f.home, '.agents/AGENTS.md'));
   await f.start(); assert.match(f.notices.at(-1).message, /cannot read agent prompt .*AGENTS\.md: EISDIR/); assert.deepEqual(await f.input('hello'), { action: 'handled' });
+
+  const g = await agentFixture(t, { config: null });
+  await mkdir(join(g.root, 'sessions.sqlite')); await assert.rejects(g.load(), /Storage database is not a regular file/);
 });
 
 for (const state of ['not JSON', { model: 7, effort: 'low' }, { model: 'test/review/model', effort: 7 }]) test(`runtime defaults reject stale or malformed cache ${JSON.stringify(state)}`, async t => {
@@ -348,29 +350,6 @@ test('extension tools bypass the global builtin allow-list and remain available 
   const request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready; assert.deepEqual(f.pi.getActiveTools(), ['read', 'extra']);
   assert.equal(await f.tools.get('extra').execute(), 'ok');
 });
-
-test('a read-only settings directory rejects edits and preserves saved and running profiles', async t => {
-  const f = await agentFixture(t, { config: null }); await f.load();
-  await f.configure(configured([profile(), profile('reviewer')]));
-  await f.start();
-  const before = await f.configuration();
-  const paths = [f.root, ...(await readdir(f.root, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => join(f.root, entry.name))];
-  const permissions = await Promise.all(paths.map(async path => [path, (await stat(path)).mode & 0o777]));
-  try {
-    for (const [path, mode] of permissions) await chmod(path, mode & ~0o222);
-    await assert.rejects(f.configure({ agents: [profile('replacement', { tools: ['bash'] })] }), error => error.code === 'EACCES');
-  } finally {
-    for (const [path, mode] of permissions) await chmod(path, mode);
-  }
-  assert.deepEqual(await f.configuration(), before);
-  assert.equal(f.capability().active, 'general');
-  assert.deepEqual(f.pi.getActiveTools(), ['read']);
-  assert.equal((await f.prompt()).customPrompt, 'System instructions');
-  await f.configure({ agents: [profile('replacement', { tools: ['bash'] })] });
-  await f.select('replacement');
-  assert.deepEqual(f.pi.getActiveTools(), ['bash']);
-});
-
 
 test('explicit general and default profiles remain distinct', async t => {
     const f = await agentFixture(t, { config: null, entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'default' } }] });
@@ -668,24 +647,26 @@ test('first-run prompt write denial is reported and loading succeeds after acces
   assert.deepEqual(f.notices, []);
 });
 
-test('a denied storage write preserves the original error and the saved agent configuration', async t => {
-  const fs = (await import('node:fs')).default;
-  const f = await agentFixture(t, { config: null }); await f.load(); await f.start();
+test('a failed storage write reports its error and preserves the saved and running agents', async t => {
+  const f = await agentFixture(t, { config: null }); await f.load();
+  await f.configure(configured([profile(), profile('reviewer')]));
+  await f.start();
   const before = await f.configuration();
   const capability = structuredClone(f.capability());
-  const actualOpen = fs.openSync;
-  const denied = Object.assign(new Error('fixture settings write denied'), { code: 'EACCES' });
-  const opening = t.mock.method(fs, 'openSync', (path, flags, ...args) => {
-    if (String(path).startsWith(f.root + '/') && (typeof flags === 'number' ? flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR) : /[wa+]/.test(flags))) throw denied;
-    return actualOpen(path, flags, ...args);
-  });
+  const db = new DatabaseSync(join(f.root, 'sessions.sqlite'));
+  t.after(() => db.close());
+  db.exec(`CREATE TRIGGER deny_insert BEFORE INSERT ON application_settings BEGIN SELECT RAISE(ABORT, 'fixture settings write denied'); END;
+    CREATE TRIGGER deny_update BEFORE UPDATE ON application_settings BEGIN SELECT RAISE(ABORT, 'fixture settings write denied'); END;`);
   try {
-    await assert.rejects(f.configure(configured([profile('general', { effort: 'low' })])), error => error === denied);
-  } finally { opening.mock.restore(); }
+    await assert.rejects(f.configure({ agents: [profile('replacement', { tools: ['bash'] })] }), /fixture settings write denied/);
+  } finally { db.exec('DROP TRIGGER deny_insert; DROP TRIGGER deny_update;'); }
   assert.deepEqual(await f.configuration(), before);
   assert.deepEqual(f.capability(), capability);
-  await f.configure(configured([profile('general', { effort: 'low' })]));
-  assert.equal((await f.configuration()).agents[0].effort, 'low');
+  assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  assert.equal((await f.prompt()).customPrompt, 'System instructions');
+  await f.configure({ agents: [profile('replacement', { tools: ['bash'] })] });
+  await f.select('replacement');
+  assert.deepEqual(f.pi.getActiveTools(), ['bash']);
 });
 
 test("an agent description is saved trimmed, and one over 500 characters is rejected", async t => {
@@ -1165,7 +1146,7 @@ test('first run reports a read-only settings directory and succeeds after access
   await f.file('home/.agents/prompts/system/default.md', 'Existing instructions');
   await chmod(f.root, 0o500);
   try {
-    await assert.rejects(f.load(), { code: 'EACCES' });
+    await assert.rejects(f.load(), { code: 'ERR_SQLITE_ERROR', message: 'unable to open database file' });
     assert.deepEqual(f.pi.getActiveTools(), []);
   } finally { await chmod(f.root, 0o700); }
   await f.load(); await f.start();
