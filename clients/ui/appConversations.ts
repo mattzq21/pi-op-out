@@ -501,24 +501,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
     return source ? forkSourceSession(source)?.name : undefined; });
 
-  const branchedEntries = createMemo(() => { const result = new Map<string, Set<string>>();
-
-    for (const session of [...liveSessions(), ...sessions()]) {
-      if (!session.forkSourceId || !session.forkEntryId) continue;
-      const key = `${session.hostId ?? "local"}:${session.forkSourceId}`;
-      let entries = result.get(key);
-
-      if (!entries) result.set(key, entries = new Set());
-      entries.add(session.forkEntryId);
-    }
-
-    return result; });
-  const forkPoints = createMemo(() => { const state = chatSession().state;
-    const entries = new Set(branchedEntries().get(`${activeHostId()}:${state.sessionId}`));
-
-    if (state.forkSource) entries.add(state.forkSource.entryId);
-
-    return entries; }, undefined, { equals: (previous, next) => previous.size === next.size && [...next].every(entry => previous.has(entry)) });
+  const forkEntryId = createMemo(() => chatSession().state.forkSource?.entryId);
 
   const openForkSource = (source: ForkSource, hostId = activeHostId()) => {
     const session = forkSourceSession(source, hostId);
@@ -908,7 +891,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
  // What the app shows, in groups, so each part of the page takes only the groups it uses.
   return {
-    conversation: { transport, runtimePool, registerCommandRunner, chatAgentProps, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkSourceNameOf, forkPoints, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, openProject, resolveHomeDirectory, modelVisibility },
+    conversation: { transport, runtimePool, registerCommandRunner, chatAgentProps, chatSession, chatViewKey, activeConversationKey, activeHostId, connected, composerView, composerState, composerControls, chatCommands, chatWidgets, statuses, projectCwd, send, abortInteraction, setModel, setThinking, setAgent, branch, forkSourceName, forkSourceNameOf, forkEntryId, openForkSource, revealEntryId, entryRevealed, draftChangeFor, uploadsChangeFor, drafts, uploadsByTransport, setComposerUploads, mainComposerFocusRequest, mainQueueHoldRequest, chooseChatHost, chooseChatProject, clearChatProject, openProject, resolveHomeDirectory, modelVisibility },
     sessions: { sessions, sidebar, listedRunningSessions, runningSessions, unseenSessions, selectSession, sessionAction, startNewSession, newSession, newChatRequest, createGroupRequest, setCreateGroupRequest, handleCreateGroup, archiveSession: (session: SessionSummary) => archives.archiveSession(session), isArchiving: archives.isPending, syncSessionIndex, query, setQuery, archivesOpen, setArchivesOpen },
     layout: { view, setView, panelOpen, setPanelOpen, mobileSidebarOpen, canLeaveSettings, activePane, setActivePane, hasSidePane },
     settings: { settings, settingsSaving, debugModeSaving, setSettingsDirty, saveSettings, toggleDebugMode, toggleDebugFeature, pendingSettingsCount },

@@ -37,7 +37,7 @@ import { loadHistoryOutline, loadOlderHistory, useHistoryOutline } from "../lib/
 import { MessageFileContext } from "../lib/messageFiles";
 import { applyPlace, savedPlace, savePlace, type ScrollPlace } from "./scrollPlace";
 
-interface Props { loaded?: boolean; transcripts?: TranscriptCache; refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; draftSelection?: DraftSelection; onDraftSelectionChange?: (selection: DraftSelection) => void; focusRequest?: number; initialFocus?: boolean; queueHoldRequest?: number; registerCommandRunner?: (run: (text: string) => Promise<unknown>) => () => void; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; forkPoints?: ReadonlySet<string>; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+interface Props { loaded?: boolean; transcripts?: TranscriptCache; refreshError?: string; capabilityErrors?: string[]; capabilitiesLoading?: boolean; onRetryCapabilities?: () => void; transport?: NativeTransport; agentHostLabel?: string; state: AgentState; messages: ChatMessage[]; debug?: DebugView; agents?: AgentProfile[]; activeAgent?: string; agentSaved?: boolean; agentUnavailable?: boolean; modelAliases?: Record<string, string>; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; draftSelection?: DraftSelection; onDraftSelectionChange?: (selection: DraftSelection) => void; focusRequest?: number; initialFocus?: boolean; queueHoldRequest?: number; registerCommandRunner?: (run: (text: string) => Promise<unknown>) => () => void; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[], submission?: DraftSubmissionHandle) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onOpenTerminal?: () => void; hosts?: Array<{ id: string; name: string; disabled?: boolean }>; onChooseHost?: (hostId: string) => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onFork?: (message: ChatMessage) => void | Promise<void>; forkSourceName?: string; forkEntryId?: string; onOpenForkSource?: (source: ForkSource) => void; revealEntryId?: string; onEntryRevealed?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
 const knownFastMode = new WeakMap<NativeTransport, { status: string; model: string | undefined }>();
 
@@ -214,19 +214,13 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
 
     return unloaded.length ? [...unloaded.map(item => ({ messageId: item.id, preview: item.preview })), ...loaded] : loaded; });
 
-  const forkedResponses = createMemo(() => { const points = props.forkPoints; const result = new Set<string>();
+  const forkedResponse = createMemo(() => { const entryId = props.forkEntryId;
 
-    if (!points?.size) return result;
+    if (!entryId) return undefined;
 
-    for (const turn of turns()) {
-      const final = turn.messages[finalResponseIndex(turn.messages)];
+    for (const turn of turns()) if (turn.messages.some(message => (message.entryId ?? message.id) === entryId)) return turn.messages[finalResponseIndex(turn.messages)]?.id;
 
-      if (final && turn.messages.some(message => points.has(message.entryId ?? message.id))) result.add(final.id);
-    }
-
-    for (const item of unloadedResponses()) if (points.has(item.id) || item.compactions?.some(id => points.has(id))) result.add(item.id);
-
-    return result; }, undefined, { equals: (previous, next) => previous.size === next.size && [...next].every(id => previous.has(id)) });
+    return unloadedResponses().find(item => item.id === entryId || item.compactions?.includes(entryId))?.id; });
 
   const [requestedResponse, setRequestedResponse] = createSignal<string>();
   const showRequestedResponse = () => { const id = untrack(requestedResponse); const root = messagesRef.current;
@@ -516,7 +510,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       <MessagesSection />
       {isMobile && <ScrollIndicator scrollRoot={messagesRef} />}
       <Show when={pins().length > 0}><PinnedMessages /></Show>
-      <ResponseNavigator responses={responses()} forked={forkedResponses()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} onReveal={id => { followLatest.current = false; setRequestedResponse(id); }} />
+      <ResponseNavigator responses={responses()} forked={forkedResponse()} scrollRoot={messagesRef} onNavigate={() => { followLatest.current = false; }} onReveal={id => { followLatest.current = false; setRequestedResponse(id); }} />
       <ComposerStack />
     </div>);
   };

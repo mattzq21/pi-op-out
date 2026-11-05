@@ -11,7 +11,7 @@ function responseTarget(root: HTMLElement, response: ResponseDestination & { tur
 
 const loaded = (response: ResponseDestination): response is ResponseDestination & { turnId: string } => response.turnId !== undefined;
 
-export function ResponseNavigator(props: { responses: ResponseDestination[]; forked: ReadonlySet<string>; scrollRoot: RefObject<HTMLDivElement | null>; onNavigate: () => void; onReveal: (messageId: string) => void }) {
+export function ResponseNavigator(props: { responses: ResponseDestination[]; forked?: string; scrollRoot: RefObject<HTMLDivElement | null>; onNavigate: () => void; onReveal: (messageId: string) => void }) {
   const [active, setActive] = createSignal<string>();
   const [overflowing, setOverflowing] = createSignal(false);
   const frame = createRef<number | undefined>(undefined);
@@ -127,6 +127,6 @@ export function ResponseNavigator(props: { responses: ResponseDestination[]; for
   };
 
   return <Show when={visible()}><nav ref={element => { rail.current = element; }} class="response-navigator" aria-label="Agent responses">
-    <Key each={props.responses} by={response => response.messageId}>{(response, index) => <button type="button" class="response-navigator-marker" aria-label={`Go to agent response ${index() + 1}: ${response().preview}`} aria-current={active() === response().messageId ? "location" : undefined} data-forked={props.forked.has(response().messageId) || undefined} title={`Response ${index() + 1}${props.forked.has(response().messageId) ? " (forks here)" : ""}: ${response().preview}`} onClick={() => navigate(response())}><span /></button>}</Key>
+    <Key each={props.responses} by={response => response.messageId}>{(response, index) => <button type="button" class="response-navigator-marker" aria-label={`Go to agent response ${index() + 1}: ${response().preview}`} aria-current={active() === response().messageId ? "location" : undefined} data-forked={props.forked === response().messageId || undefined} title={`Response ${index() + 1}${props.forked === response().messageId ? " (branched from here)" : ""}: ${response().preview}`} onClick={() => navigate(response())}><span /></button>}</Key>
   </nav></Show>;
 }
