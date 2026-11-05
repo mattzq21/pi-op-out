@@ -170,6 +170,7 @@ class SessionIndex {
 }
 
 async function indexFile(path) {
+  const modifiedAt = Number(fs.statSync(path, { bigint: true }).mtimeNs / 1_000_000_000n);
   const index = new SessionIndex();
   let pending = [];
   let state;
@@ -210,7 +211,9 @@ async function indexFile(path) {
 
   if (pending.length) index.line(Buffer.concat(pending), false);
 
-  return index.summary(path);
+  const summary = index.summary(path);
+
+  return summary && { ...summary, modifiedAt };
 }
 
 async function indexSessions(request) {

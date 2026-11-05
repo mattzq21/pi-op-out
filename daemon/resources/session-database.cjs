@@ -16,37 +16,29 @@ function rollback(db, error) {
   return error;
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 // The whole storage schema. Only this module creates or changes tables.
-const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1))); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
+const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1)), revision INTEGER NOT NULL DEFAULT 0); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
       CREATE TABLE IF NOT EXISTS session_branch_selection (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, tip_id TEXT, leaf_id TEXT);
       CREATE TABLE IF NOT EXISTS session_extension_state (session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, state_key TEXT NOT NULL, entry_json TEXT NOT NULL, PRIMARY KEY(session_id, state_key));
       CREATE TABLE IF NOT EXISTS session_extension_records (sequence INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, entry_id TEXT NOT NULL, after_id TEXT, entry_json TEXT NOT NULL, UNIQUE(session_id, entry_id)); CREATE INDEX IF NOT EXISTS session_extension_records_order ON session_extension_records(session_id, sequence);
       CREATE TABLE IF NOT EXISTS session_goals (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, goal_id TEXT NOT NULL UNIQUE, objective TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active', 'complete')), submission_id TEXT UNIQUE);
       CREATE TABLE IF NOT EXISTS session_goal_ids (goal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE);
-      CREATE TABLE IF NOT EXISTS session_file_metadata (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, session_path TEXT NOT NULL, modified_ns TEXT NOT NULL, size INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS session_file_writes (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_sidebar (
         session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-        fingerprint TEXT NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS auxiliary_child_state (
-        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-        complete INTEGER NOT NULL CHECK(complete IN (0, 1)));
+        revision INTEGER NOT NULL, modified_at INTEGER NOT NULL, summary_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS auxiliary_children (
         parent_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         child_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         kind TEXT NOT NULL CHECK(length(kind) > 0),
         PRIMARY KEY(parent_id, child_id));
       CREATE INDEX IF NOT EXISTS auxiliary_children_child ON auxiliary_children(child_id);
-      CREATE TABLE IF NOT EXISTS session_mailbox_state (
-        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_mailbox (
         session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         delivery_id TEXT NOT NULL, sequence INTEGER NOT NULL, fingerprint TEXT NOT NULL,
         message_json TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
       CREATE INDEX IF NOT EXISTS session_mailbox_order ON session_mailbox(session_id, sequence);
-      CREATE TABLE IF NOT EXISTS session_subagent_state (
-        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS session_subagent_runs (
         session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
         run_id TEXT NOT NULL, started_at REAL NOT NULL, run_json TEXT NOT NULL,
@@ -62,7 +54,6 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE TABLE IF NOT EXISTS conversation_ownership (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS external_transcripts (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS queue_item_sequence (id INTEGER PRIMARY KEY CHECK(id=1), last_id INTEGER NOT NULL);
       INSERT OR IGNORE INTO queue_item_sequence VALUES (1, 0);
       CREATE TABLE IF NOT EXISTS queue_origins (
@@ -92,20 +83,10 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE TABLE IF NOT EXISTS session_names (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE, name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS running_tasks (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE);
-      CREATE TABLE IF NOT EXISTS storage_transcript_summaries (session_path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, body BLOB NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS storage_transcript_summaries_deleted AFTER DELETE ON sessions BEGIN
-        DELETE FROM storage_transcript_summaries WHERE session_path=OLD.session_path;
-      END;
-      CREATE TABLE IF NOT EXISTS transcript_references (session_path TEXT PRIMARY KEY, session_id TEXT, fingerprint TEXT NOT NULL, entries_json TEXT NOT NULL, format_version INTEGER NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS transcript_references_deleted AFTER DELETE ON sessions BEGIN
-        DELETE FROM transcript_references WHERE session_path=OLD.session_path AND session_id=lower(OLD.session_id);
-      END;
-      CREATE TABLE IF NOT EXISTS session_mailbox_receipt_cache (
-        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-        session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, deliveries_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_mailbox_receipts (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+        delivery_id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(session_id, delivery_id));
       CREATE TABLE IF NOT EXISTS sdk_settings (path TEXT PRIMARY KEY, body TEXT);
-      CREATE TABLE IF NOT EXISTS sdk_session_summaries (session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
-        session_path TEXT NOT NULL, fingerprint TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_group_parents (group_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL);
       INSERT OR IGNORE INTO session_group_state VALUES (1, 0);
       CREATE TABLE IF NOT EXISTS project_repositories (cwd TEXT PRIMARY KEY, repository TEXT);
@@ -167,24 +148,17 @@ function open(directory, file, current) {
 const createDatabase = onMainThread('session-database.create', root => { connection(root); });
 
 // The one connection of this process to the storage database of root. Do not close it.
-// A database file that was replaced or removed gets a new connection, so no write goes to a deleted file.
 function connection(root) {
   const directory = path.resolve(root);
   const file = path.join(directory, 'sessions.sqlite');
   const cached = connections.get(file);
-  const current = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
 
-  if (cached && current && current.dev === cached.dev && current.ino === cached.ino) return cached.db;
-
-  if (cached) { connections.delete(file); cached.db.close(); }
+  if (cached) return cached;
+  const current = fs.lstatSync(file, { throwIfNoEntry: false });
 
   if (current?.isSymbolicLink()) throw new Error('Database path must not be a symbolic link');
   const db = open(directory, file, current);
-
-  try {
-    const opened = fs.lstatSync(file, { bigint: true });
-    connections.set(file, { db, dev: opened.dev, ino: opened.ino });
-  } catch (error) { db.close(); throw error; }
+  connections.set(file, db);
 
   return db;
 }
@@ -229,12 +203,6 @@ function savepoint(db, operation) {
   }
 }
 
-function directoryQuery(_db, columns, suffix = '') {
-  const fields = columns.map(column => `${column === 'session_path' ? 's' : 'r'}.${column}`).join(', ');
-
-  return `SELECT ${fields} FROM session_directories r JOIN sessions s USING(session_id)${suffix}`;
-}
-
 const reserve = onMainThread('session-database.reserve', (root) => {
   return reserveId(connection(root));
 });
@@ -249,31 +217,20 @@ function reserveId(db) {
   }
 }
 
-const pendingTables = {
-  retention: ['cleanup_requests'],
-};
-
-function pending(db, work) {
-  const tables = pendingTables[work];
-
-  if (!tables) throw new Error(`Unknown pending storage work: ${work}`);
-
-  return Boolean(db.prepare(`SELECT (${tables.map(table => `EXISTS(SELECT 1 FROM ${table})`).join(' OR ')}) AS pending`).get().pending);
-}
-
 function bind(db, sessionId, sessionPath) {
   const changed = db.prepare('UPDATE sessions SET session_path=? WHERE session_id=? AND (session_path IS NULL OR session_path=?)').run(sessionPath, sessionId, sessionPath);
 
   if (changed.changes !== 1) throw new Error('Session ID is not reserved or already belongs to another session');
 }
 
-function register(db, sessionId, sessionPath) {
-  if (!db.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(sessionId, sessionPath)) throw new Error('Session path does not match its reserved ID');
+// Marks a change of what the chat sessionId shows: its transcript, records, name or branch. Caches of it keep the
+// revision they were made from.
+function touch(db, sessionId) {
+  db.prepare('UPDATE sessions SET revision=revision+1 WHERE session_id=?').run(sessionId);
 }
 
-function registerPath(root, sessionId, sessionPath) {
-  register(connection(root), sessionId, sessionPath);
-}
+// touch, from any thread, before a change of the transcript of sessionId.
+const revise = onMainThread('session-database.revise', (root, sessionId) => touch(connection(root), sessionId));
 
 function rows(root, sql, ...parameters) {
   return connection(root).prepare(sql).all(...parameters);
@@ -296,16 +253,6 @@ function queueRecord(db, id) {
   });
 
   return items.length ? { version: 1, origin, items } : undefined;
-}
-
-function queuedInputs(root) {
-  const db = connection(root);
-
-  return transaction(db, 'DEFERRED', () => db.prepare('SELECT session_id FROM queue_origins').all().flatMap(row => {
-    const record = queueRecord(db, row.session_id);
-
-    return record ? [{ session_id: row.session_id, record_json: JSON.stringify(record) }] : [];
-  }));
 }
 
 function queuedInput(root, id) {
@@ -333,12 +280,6 @@ function lookup(root, sessionId) {
   return connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId)?.session_path;
 }
 
-function paths(root, directory) {
-  const prefix = directory === undefined ? null : path.resolve(directory) + path.sep;
-
-  return rows(root, 'SELECT session_path FROM sessions WHERE session_path IS NOT NULL AND (? IS NULL OR substr(session_path, 1, length(?))=?)', prefix, prefix, prefix).map(row => row.session_path);
-}
-
 function storageRoot(file) {
   let directory = path.dirname(file);
 
@@ -350,5 +291,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, register, registerPath, lookup, paths, storageRoot, cleanupRequest, finishCleanup,
-  recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };
+module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, bind, touch, revise, lookup, storageRoot, cleanupRequest, finishCleanup,
+  recoveryRecords, saveRecoveryRecord, queuedInput };

@@ -24,10 +24,8 @@ export function storageSchemaImports() {
 
 const canonicalModules = new Set([
   "session-records.cjs",
-  "external-transcripts.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
-  "session-database.cjs", "temporary-chat.cjs", "transcript-references.cjs",
-
-  "session-lifecycle.cjs", "reference-publication-lock.cjs",
+  "conversation-storage.cjs", "session-database.cjs", "temporary-chat.cjs",
+  "session-lifecycle.cjs",
   "storage-channel.cjs", "main-thread.cjs", "application-records.cjs",
   "session-child-index.cjs", "session-names.cjs",
 ]);

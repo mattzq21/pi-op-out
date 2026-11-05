@@ -21,8 +21,6 @@ function currentEntries(manager) { return [...(currentSessionState.get(manager)?
 
 const failedSessionStorage = new WeakSet();
 
-const sessionStorageFiles = new WeakMap();
-
 
 // The daemon writes all saved chats. Pi asks it through these calls; see transcript-writes.mjs.
 const installedWrites = new WeakMap();
@@ -39,21 +37,11 @@ function writes(manager) { return writesFor(Object.getPrototypeOf(manager)); }
 
 // Reads a saved transcript, after any end of a line that a write did not finish has been dropped.
 function repairedTranscript(path, transcriptWrites) {
-  const read = readTranscript(path, { strict: true });
-  if (!read.partial) return read;
-  const identity = transcriptWrites.repair({ path, identity: read.identity, end: read.end });
+  const read = readTranscript(path);
+  if (!read.partial) return read.entries;
+  transcriptWrites.repair({ path, end: read.end });
   console.warn(`${path}: last write was interrupted; dropped ${read.partial} bytes`);
-  return { ...read, identity, partial: 0 };
-}
-
-function openedSessionEntries(path, manager) {
-  const { entries, identity } = repairedTranscript(path, writes(manager));
-  sessionStorageFiles.set(manager, { path, identity });
-  return entries;
-}
-
-function bindNewSession(manager) {
-  writes(manager).bind({ sessionId: manager.getSessionId(), path: manager.sessionFile });
+  return read.entries;
 }
 
 function installSessionCreation(SessionManager) {
@@ -65,7 +53,7 @@ function installSessionCreation(SessionManager) {
   });
 
   patchMethod(prototype, "_setSessionFile", setFile => function (path, entries) {
-    if (this.persist && storageFs.existsSync(path)) entries = openedSessionEntries(path, this);
+    if (this.persist && storageFs.existsSync(path)) entries = repairedTranscript(path, writes(this));
     return setFile.call(this, path, entries);
   });
 
@@ -74,7 +62,6 @@ function installSessionCreation(SessionManager) {
     const id = options?.id ?? takeSessionId();
     currentSessionState.set(this, new Map());
     const result = create.call(this, { ...options, id });
-    bindNewSession(this);
     sessionStoragePublish(this, this.fileEntries, true);
     this.flushed = true;
 
@@ -82,13 +69,7 @@ function installSessionCreation(SessionManager) {
   });
 
   patchMethod(prototype, "_loadEntries", load => function (entries, options) {
-    if (this.persist && this.sessionFile) entries = openedSessionEntries(this.sessionFile, this);
-    const header = entries.find(entry => entry.type === "session");
-
-    if (this.persist && header) {
-      registry.requireSession(sessionReferenceRoot(), header.id, this.sessionFile);
-    }
-
+    if (this.persist && this.sessionFile) entries = repairedTranscript(this.sessionFile, writes(this));
     return load.call(this, takeCurrentState(this, entries), options);
   });
 
@@ -126,9 +107,8 @@ function installSessionBranching(prototype) {
     header.id = id;
     header.parentSession = parent;
     this.sessionFile = storagePath.join(this.getSessionDir(), `${header.timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
-    bindNewSession(this);
-    writes(this).copyGoal({ source: parent, target: this.sessionFile, sessionId: id });
     sessionStoragePublish(this, this.fileEntries, true);
+    writes(this).copyGoal({ source: parent, target: this.sessionFile, sessionId: id });
     this.fileEntries = takeCurrentState(this, this.fileEntries);
     this._buildIndex();
     this.flushed = true;
@@ -143,26 +123,16 @@ function sessionStorageState(manager) {
   if (!Array.isArray(manager.fileEntries) || !(manager.byId instanceof Map)) throw new Error("This Pi SDK changed its session storage format. Update Piop before continuing.");
 }
 
+// `exclusive` creates the transcript, and saves its path for its reserved ID.
 function sessionStoragePublish(manager, entries, exclusive) {
-  const path = manager.sessionFile;
-  let identity;
-  try { identity = writes(manager).publish({ path, entries, exclusive }); }
+  try { writes(manager).publish({ path: manager.sessionFile, entries, exclusive }); }
   catch (error) { if (error.damaged) failedSessionStorage.add(manager); throw error; }
-  sessionStorageFiles.set(manager, { path, identity });
 }
 
 function sessionStorageAppend(manager, entry) {
-  const path = manager.sessionFile;
-  const expected = sessionStorageFiles.get(manager);
   const after = stateRecords.isRecord(entry) || stateRecords.isCurrent(entry) ? manager.fileEntries.findLast(item => item.type !== "session" && !stateRecords.isRecord(item))?.id ?? null : null;
-  let identity;
-  try {
-    identity = writes(manager).append({
-      path, sessionId: manager.getSessionId(), entry, after,
-      expected: expected?.path === path ? expected.identity : null,
-    });
-  } catch (error) { if (error.damaged) failedSessionStorage.add(manager); throw error; }
-  if (identity) sessionStorageFiles.set(manager, { path, identity });
+  try { writes(manager).append({ path: manager.sessionFile, sessionId: manager.getSessionId(), entry, after }); }
+  catch (error) { if (error.damaged) failedSessionStorage.add(manager); throw error; }
 }
 
 function persistSessionEntry(manager, entry) {
@@ -208,7 +178,7 @@ export function installSessionStorage(SessionManager, transcriptWrites) {
   installSessionLookup(SessionManager);
   installSessionCreation(SessionManager);
 
-  if (["publish", "append", "repair", "bind", "selectBranch", "copyGoal"].some(name => typeof transcriptWrites?.[name] !== "function")) throw new Error("Session storage needs its transcript writes");
+  if (["publish", "append", "repair", "selectBranch", "copyGoal"].some(name => typeof transcriptWrites?.[name] !== "function")) throw new Error("Session storage needs its transcript writes");
   installedWrites.set(prototype, transcriptWrites);
 
   patchMethod(prototype, "_buildIndex", buildIndex => function () {

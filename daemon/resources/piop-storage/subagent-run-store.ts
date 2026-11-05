@@ -2,21 +2,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { isAbsolute } from "node:path";
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import { connection, register, storageRoot, transaction } from "../session-database.cjs";
+import { connection, storageRoot, transaction } from "../session-database.cjs";
 import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
 
 // The subagent runs of each parent chat. Only the daemon runs these; Pi asks through its storage channel.
 
-function runDatabase(file: string, sessionId: string) {
-  const db = connection(storageRoot(file));
-
-  transaction(db, "IMMEDIATE", () => {
-    if (db.prepare("SELECT 1 FROM session_subagent_state WHERE session_id=?").get(sessionId)) return;
-    register(db, sessionId, file);
-    db.prepare("INSERT INTO session_subagent_state VALUES (?)").run(sessionId);
-  });
-
-  return db;
+function runDatabase(file: string) {
+  return connection(storageRoot(file));
 }
 
 const savedRunSchema = Schema.Object({ run_id: Schema.String(), run_json: Schema.String(), child_path: Schema.Union([Schema.String(), Schema.Null()]) });
@@ -57,7 +49,7 @@ function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
 }
 
 function readRuns(file: string, sessionId: string) {
-  return runDatabase(file, sessionId).prepare(`${selectRuns} WHERE r.session_id=? ORDER BY r.started_at, r.run_id`)
+  return runDatabase(file).prepare(`${selectRuns} WHERE r.session_id=? ORDER BY r.started_at, r.run_id`)
     .all(sessionId).map(row => decodeRun(Parse(savedRunSchema, row), sessionId));
 }
 
@@ -80,7 +72,7 @@ export const OPERATIONS = {
     const run = Parse(runSchema, request.run) as SubagentRun;
 
     if (run.parentSessionId !== chat.sessionId) throw new Error("Subagent run belongs to another parent conversation");
-    const db = runDatabase(chat.path, chat.sessionId);
+    const db = runDatabase(chat.path);
 
     return transaction(db, "IMMEDIATE", () => {
       if (!mergePendingRun(db, run)) return null;

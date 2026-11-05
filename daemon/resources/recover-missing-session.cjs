@@ -16,7 +16,7 @@ function recoverMissingSession(request) {
   if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string') throw new Error('Invalid recovery request');
   const profileRoot = request.profile;
   const storage = createRecoveryStorage(profileRoot);
-  const header = readSession(profileRoot, request.sessionPath);
+  const header = readSession(request.sessionPath);
 
   const report = record => {
     const warnings = [];
@@ -41,13 +41,13 @@ function recoverMissingSession(request) {
   const record = storage.find(header, request.sessionPath, 'empty') || storage.allocate(header, request.sessionPath, 'empty');
   fs.mkdirSync(record.directory, { recursive: true, mode: 0o700 });
   storage.ready(record, {});
-  const latest = readSession(profileRoot, request.sessionPath);
+  const latest = readSession(request.sessionPath);
 
   if (latest.id !== header.id || latest.cwd !== header.cwd) throw new Error('The conversation changed during recovery. The durable recovery files have been retained; refresh before retrying.');
 
   try { relocateSession(profileRoot, request.sessionPath, record.directory); }
   catch (error) {
-    if (readSession(profileRoot, request.sessionPath).cwd !== record.directory) throw error;
+    if (readSession(request.sessionPath).cwd !== record.directory) throw error;
   }
 
   storage.published(record, request.sessionPath);

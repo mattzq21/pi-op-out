@@ -1,7 +1,6 @@
 const database = require('../session-database.cjs');
 const { onMainThread } = require('../main-thread.cjs');
-const names = require('../session-broker/session-names.cjs');
-const { randomUUID, createHash } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 
 const coreTypes = ['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries', 'piop-skill-mcp'];
 // The daemon adds the state records of its plugins to the environment of each process.
@@ -54,7 +53,7 @@ function stored(entries) { return history(entries).filter(entry => !isRecord(ent
 function transaction(file, sessionId, operation) {
   const db = database.connection(database.storageRoot(file));
   return database.transaction(db, 'IMMEDIATE', () => {
-    database.register(db, sessionId, file);
+    database.touch(db, sessionId);
     return operation(db);
   });
 }
@@ -145,15 +144,6 @@ function selectedLeaf(file, sessionId, tipId) {
   return row && row.tip_id === tipId ? row.leaf_id : tipId;
 }
 
-function revision(file, sessionId) {
-  const db = database.connection(database.storageRoot(file));
-  const sequence = db.prepare('SELECT coalesce(max(sequence), 0) AS revision FROM session_extension_records WHERE session_id=?').get(sessionId).revision;
-  const current = db.prepare('SELECT state_key, entry_json FROM session_extension_state WHERE session_id=? ORDER BY state_key').all(sessionId);
-  const branch = db.prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);
-  const name = names.nameOf(db, sessionId);
-  return sequence + ':' + createHash('sha256').update(JSON.stringify({ current, branch, name })).digest('hex');
-}
-
 function create(type, data, parentId) {
   return { type: 'custom', customType: type, data: structuredClone(data), id: randomUUID(), parentId, timestamp: new Date().toISOString() };
 }
@@ -178,4 +168,4 @@ function forkPoint(entry) {
     && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
 }
 
-module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, isAuxiliaryLink, isRecord, insertRecords, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, isAuxiliaryLink, isRecord, insertRecords, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, create };

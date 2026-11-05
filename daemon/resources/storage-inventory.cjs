@@ -1,5 +1,6 @@
 const stateRecords = require('./piop-storage/session-records.cjs');
 const names = require('./session-broker/session-names.cjs');
+const database = require('./session-database.cjs');
 const { Type } = require("typebox");
 const { Check } = require("typebox/value");
 const { validSessionHeader } = require("./session-header.cjs");
@@ -7,11 +8,11 @@ const fs = require("node:fs/promises");
 const { createReadStream } = require("node:fs");
 const path = require("node:path");
 const { lines: lfLines } = require("./lf-lines.cjs");
-const { discoverRoots } = require('./storage-inventory-roots.cjs');
-const { recordSession, resolveOwners, sessionKind } = require('./storage-inventory-owners.cjs');
+const { recoveryRoots } = require('./storage-inventory-roots.cjs');
 const { diskStorage } = require('./storage-inventory-disk.cjs');
 const { inventoryCategories, archiveCoverage } = require('./storage-inventory-report.cjs');
-const { discoverDiagnostics } = require('./storage-inventory-diagnostics.cjs');
+
+// The storage report: the sizes of the storage folders, and the archived chats. The saved rows say what each file is.
 
 function messageText(message) {
   if (Check(Type.String(), message?.content)) return message.content;
@@ -21,212 +22,83 @@ function messageText(message) {
   return message.content.filter((part) => part?.type === "text").map((part) => part.text || "").join("\n");
 }
 
-function safeSessionId(sessionId) {
-  return sessionId.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^\.+|\.+$/g, "") || "session";
-}
-
-async function inspectSession(file, archivedId, read, db) {
-  const { header, firstPrompt, malformed, result } = await read(file, () => inspectTranscript(file));
-  const observed = result;
-
-  if (archivedId === undefined) return observed;
-
-  return archiveDetails(file, archivedId, header, validSessionHeader(header) ? names.sessionName(file, header.id, db) : undefined, firstPrompt, malformed, observed, db);
-}
-
-async function inspectTranscript(file) {
+// The header and the first prompt of a transcript.
+async function transcriptStart(file) {
   let header;
-  let firstPrompt = "";
-  let malformed = false;
-  let auxiliary = false;
-
-  const recordDescription = (entry) => {
-    if (!firstPrompt && entry.type === "message" && entry.message?.role === "user") firstPrompt = messageText(entry.message).trim().slice(0, 2000);
-  };
-
   const input = createReadStream(file);
 
   try {
     for await (const line of lfLines(input)) {
       if (!line.trim()) continue;
-      let entry;
+      const entry = JSON.parse(line);
 
-      try { entry = JSON.parse(line); } catch { malformed = true; continue; }
+      if (!header) { header = entry; continue; }
 
-      if (stateRecords.isAuxiliary([entry])) auxiliary = true;
-
-      if (!header) {
-        if (entry.type !== "session") throw new Error("Invalid session header");
-        header = entry;
-        continue;
-      }
-
-      recordDescription(entry);
+      if (entry.type === "message" && entry.message?.role === "user") return { header, firstPrompt: messageText(entry.message).trim().slice(0, 2000) };
     }
   } finally { input.destroy(); }
 
-  const result = { ...sessionDetails(header, malformed), auxiliary };
-
-  return { header, firstPrompt, malformed, result };
+  return { header, firstPrompt: "" };
 }
 
-function sessionDetails(header, malformed) {
-  return { readable: validSessionHeader(header) && !malformed, fork: Boolean(header?.parentSession), cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
-}
+async function archive(db, row, metadata) {
+  const saved = { id: row.session_id, path: row.session_path, modifiedAt: Math.floor(metadata.mtimeMs / 1000), byteSize: metadata.size, byteSizeCoverage: archiveCoverage };
+  let start;
 
-async function archiveDetails(file, id, header, explicitName, firstPrompt, malformed, result, db) {
-  const metadata = await fs.lstat(file);
-  const validHeader = validSessionHeader(header);
-  const deletable = validHeader && !malformed;
+  try { start = await transcriptStart(row.session_path); } catch {}
 
-  const deleteError = malformed || !validHeader
-    ? "This archive has invalid chat data."
-    : "";
+  if (!validSessionHeader(start?.header) || start.header.id !== row.session_id) {
+    return { ...saved, name: "Unreadable conversation", cwd: "Unknown project", deletable: false, deleteError: "This archive has invalid chat data." };
+  }
 
-  const archive = {
-    id, path: file, cwd: Check(Type.String(), header?.cwd) ? header.cwd : "Unknown project",
-    name: explicitName || names.promptName(firstPrompt) || "Untitled conversation",
-    modifiedAt: Math.floor(metadata.mtimeMs / 1000),
-    byteSize: metadata.size,
+  return {
+    ...saved, cwd: start.header.cwd,
+    name: names.nameOf(db, row.session_id) || names.promptName(start.firstPrompt) || "Untitled conversation",
     byteSizeCoverage: archiveCoverage + ' Queued messages are stored in the shared database and excluded from this size.',
-    deletable,
-    restorable: validHeader && !malformed && !result.auxiliary && !stateRecords.isAuxiliary(stateRecords.records(file, header.id, db).map(record => record.entry)),
+    deletable: true,
+    restorable: !stateRecords.isAuxiliary(stateRecords.records(row.session_path, row.session_id, db).map(record => record.entry)),
   };
-
-  if (!deletable) archive.deleteError = deleteError;
-
-  return { ...result, archive };
 }
 
-async function collectUnreadableArchive(file, id, archives) {
-  let metadata;
+// The archived chats, the most recent first; at most limit of them.
+async function archivedConversations(db, rows, limit, warnings) {
+  const dated = [];
 
-  try { metadata = await fs.lstat(file); }
-  catch (error) { if (error.code === "ENOENT") return; throw error; }
-
-  archives.push({
-    id, path: file,
-    name: "Unreadable conversation", cwd: "Unknown project",
-    modifiedAt: Math.floor(metadata.mtimeMs / 1000),
-    byteSize: metadata.size,
-    byteSizeCoverage: archiveCoverage,
-    deletable: false,
-    deleteError: "This archive has invalid chat data.",
-  });
-}
-
-async function collectSession(piopRoot, candidate, discovery, archives, read, db) {
-  try {
-    const details = await inspectSession(candidate.file, candidate.archivedId, read, db);
-    recordSession(discovery, details, candidate, piopRoot);
-
-    if (!details.readable) discovery.warnings.push(`${candidate.file}: session provenance is incomplete`);
-
-    if (!details.archive) return;
-
-    archives.push(details.archive);
-  } catch (error) {
-    discovery.warnings.push(`${candidate.file}: conversation provenance unavailable: ${error.message}`);
-
-    if (candidate.archivedId !== undefined) await collectUnreadableArchive(candidate.file, candidate.archivedId, archives);
+  for (const row of rows) {
+    try { dated.push({ row, metadata: await fs.lstat(row.session_path) }); }
+    catch (error) { warnings.push(`${row.session_path}: archived conversation unavailable: ${error.message}`); }
   }
-}
-
-// The saved chats of the profile that are archived, or not.
-async function registeredSessions(profile, archived, warnings) {
-  try {
-    const rows = require('./session-database.cjs').connection(profile)
-      .prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND archived=?').all(Number(archived));
-    const files = rows.map(row => row.session_path);
-    const ids = new Map(rows.map(row => [row.session_path, row.session_id]));
-
-    let itemCount = 0;
-    const modified = new Map();
-
-    for (const file of files) {
-      try {
-        const metadata = await fs.lstat(file);
-        modified.set(file, metadata.mtimeMs);
-        if (metadata.isFile()) itemCount += 1;
-      }
-      catch (error) { warnings.push(`${file}: conversation file unavailable: ${error.message}`); }
-    }
-
-    return { itemCount, files, modified, ids };
-  }
-  catch (error) {
-    warnings.push(`${profile}: conversation discovery unavailable: ${error.message}`);
-
-    return { itemCount: 0, files: [], modified: new Map(), ids: new Map() };
-  }
-}
-
-async function archivedConversations(piopRoot, profile, limit) {
-  const warnings = [];
-  const archived = await registeredSessions(profile, true, warnings);
+  dated.sort((left, right) => right.metadata.mtimeMs - left.metadata.mtimeMs);
   const archives = [];
-  const age = file => archived.modified.get(file) ?? -Infinity;
-  const files = limit === undefined ? archived.files : [...archived.files].sort((left, right) => age(right) - age(left)).slice(0, limit);
 
-  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async (read, db) => {
-    for (const file of files) {
-      try {
-        const details = await inspectSession(file, archived.ids.get(file), read, db);
+  for (const { row, metadata } of limit === undefined ? dated : dated.slice(0, limit)) archives.push(await archive(db, row, metadata));
 
-        if (!details.readable) warnings.push(`${file}: session provenance is incomplete`);
-        archives.push(details.archive);
-      } catch (error) {
-        warnings.push(`${file}: conversation provenance unavailable: ${error.message}`);
-        await collectUnreadableArchive(file, archived.ids.get(file), archives);
-      }
-    }
-  });
-  archives.sort((left, right) => right.modifiedAt - left.modifiedAt);
-
-  return { categories: [], archives, warnings: [...new Set(warnings)] };
+  return archives;
 }
 
 async function storageInventory(request) {
   if (!Check(Type.String({ minLength: 1 }), request.profile) || !path.isAbsolute(request.profile)) throw new Error('Invalid profile directory');
-  const piopRoot = request.profile;
-  const profile = await fs.realpath(piopRoot).catch(() => piopRoot);
-
   const limit = request.archivesLimit;
 
   if (limit !== undefined && !Check(Type.Integer({ minimum: 1 }), limit)) throw new Error('Invalid archive limit');
+  const profile = await fs.realpath(request.profile).catch(() => request.profile);
+  const db = database.connection(profile);
+  const rows = db.prepare('SELECT session_id, session_path, archived FROM sessions WHERE session_path IS NOT NULL').all();
+  const archivedRows = rows.filter(row => row.archived === 1);
+  const warnings = [];
+  const archives = await archivedConversations(db, archivedRows, limit, warnings);
 
-  if (request.archivesOnly === true) return archivedConversations(piopRoot, profile, limit);
-  const discovery = await discoverRoots(profile);
-  discovery.sessions = new Map();
-  discovery.headers = new Map();
-  const active = await registeredSessions(profile, false, discovery.warnings);
-  const archived = await registeredSessions(profile, true, discovery.warnings);
-  const candidates = new Map();
+  if (request.archivesOnly === true) return { categories: [], archives, warnings };
 
-  for (const file of active.files) candidates.set(file, { file, kind: 'active' });
-
-  for (const file of archived.files) candidates.set(file, { file, archivedId: archived.ids.get(file), kind: 'archived' });
-  discovery.archived = new Set(archived.files.flatMap(file => [file, file.replace(/\.jsonl$/, '.snapshots')]));
-
-  for (const file of discovery.sessionPaths) {
-    if (!candidates.has(file)) candidates.set(file, { file, kind: sessionKind(file, profile) });
-  }
-
-  const archives = [];
-
-  await require('./storage-transcript-cache.cjs').withCache(piopRoot, async (read, db) => {
-    for (const candidate of candidates.values()) await collectSession(piopRoot, candidate, discovery, archives, read, db);
-  });
-  resolveOwners(discovery);
-  await discoverDiagnostics(profile, discovery);
-
-  const disk = await diskStorage(profile, discovery);
-  archives.sort((left, right) => right.modifiedAt - left.modifiedAt);
+  if (database.cleanupRequest(profile, 'temporary-chat') !== undefined) warnings.push('Temporary folder cleanup for deleted sessions is pending');
+  const recovery = recoveryRoots(profile, warnings);
+  const archived = new Set(archivedRows.flatMap(row => [row.session_path, row.session_path.replace(/\.jsonl$/, '.snapshots')]));
+  const disk = await diskStorage(profile, { archived, recovery });
 
   return {
-    categories: inventoryCategories(disk, active.itemCount, archived.itemCount),
+    categories: inventoryCategories(disk, rows.length - archivedRows.length, archivedRows.length),
     archives,
-    warnings: [...new Set([...discovery.warnings, ...disk.warnings])],
+    warnings: [...new Set([...warnings, ...disk.warnings])],
   };
 }
 

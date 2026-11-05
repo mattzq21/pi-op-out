@@ -1,7 +1,7 @@
 import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
 import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { randomUUID } from 'node:crypto';
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
 import * as ConversationStorage from '../conversation_storage';
 import * as Registry from '../session_registry';
@@ -71,9 +71,9 @@ function optionalPath(path: string): string | null {
   }
 }
 
-function registered(root: string, id: string): { path: string; archived: boolean } | null {
-  const row: any = Registry.connection(root).prepare('SELECT session_path, archived FROM sessions WHERE session_id=?').get(id);
-  return typeof row?.session_path === 'string' ? { path: row.session_path, archived: row.archived === 1 } : null;
+function registered(root: string, id: string): { path: string; archived: boolean; revision: number } | null {
+  const row: any = Registry.connection(root).prepare('SELECT session_path, archived, revision FROM sessions WHERE session_id=?').get(id);
+  return typeof row?.session_path === 'string' ? { path: row.session_path, archived: row.archived === 1, revision: Number(row.revision) } : null;
 }
 
 export class ConversationOwnership {
@@ -134,12 +134,12 @@ export class ConversationOwnership {
     const saved = registered(this.root, id);
     if (saved === null || saved.archived !== archived) return null;
     if (path && optionalPath(path) !== saved.path) return null;
-    return this.savedAt(id, saved.path, metadataOnly);
+    return this.savedAt(id, saved, metadataOnly);
   }
 
-  private savedAt(id: string, path: string, metadataOnly: boolean): SavedConversation | null {
+  private savedAt(id: string, registration: { path: string; revision: number }, metadataOnly: boolean): SavedConversation | null {
     const root = optionalPath(join(this.root, 'sessions'));
-    return root === null ? null : readCandidate(id, path, root, metadataOnly);
+    return root === null ? null : readCandidate(id, registration.path, root, 'saved:' + id + ':' + registration.revision, metadataOnly);
   }
 
   private async releasePrevious(id: string, record: any, intent: string): Promise<void> {
@@ -311,7 +311,7 @@ export class ConversationOwnership {
     ConversationOwnership.key(id);
     const registration = registered(this.root, id);
     if (registration === null) return null;
-    const saved = this.savedAt(id, registration.path, metadataOnly);
+    const saved = this.savedAt(id, registration, metadataOnly);
     return saved && saved.header?.type === 'session' && typeof saved.header?.cwd === 'string' ? [saved, registration.archived] : null;
   }
 }
@@ -337,14 +337,12 @@ function validateSavedPath(path: string, root: string): void {
   if (!within(path, root) || path === root || extname(path) !== '.jsonl' || path.endsWith('/.jsonl')) throw new Error('Invalid conversation path');
 }
 
-export function readCandidate(id: string, original: string, root: string, metadataOnly: boolean): SavedConversation | null {
+function readCandidate(id: string, original: string, root: string, revision: string, metadataOnly: boolean): SavedConversation | null {
   const path = optionalPath(original);
   if (path === null) return null;
   validateSavedPath(path, root);
-  const found = readSavedHeader(id, path);
-  if (!found) return null;
-  const [header, metadata] = found;
-  const revision = savedRevision(id, metadata) + ":" + SessionRecords.revision(path, id);
+  const header = readSavedHeader(id, path);
+  if (!header) return null;
   let lines: string[] = [];
   if (!metadataOnly) {
     const saved = readSavedLines(id, path);
@@ -369,22 +367,13 @@ function readSavedLines(id: string, path: string): string[] | null {
   return lines;
 }
 
-function readSavedHeader(id: string, path: string): [any, import('node:fs').BigIntStats] | null {
-  let metadata: import('node:fs').BigIntStats;
+function readSavedHeader(id: string, path: string): any {
   let line: string;
-  try {
-    metadata = statSync(path, { bigint: true });
-    line = readHeaderLine(path);
-  } catch (error: any) {
+  try { line = readHeaderLine(path); } catch (error: any) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
   let header: any;
   try { header = JSON.parse(line); } catch { return null; }
-  if (header?.id !== id) return null;
-  return [header, metadata];
-}
-
-function savedRevision(id: string, metadata: import('node:fs').BigIntStats): string {
-  return id + ':' + metadata.dev + ':' + metadata.ino + ':' + metadata.size + ':' + metadata.mtimeNs + ':' + metadata.ctimeNs;
+  return header?.id === id ? header : null;
 }

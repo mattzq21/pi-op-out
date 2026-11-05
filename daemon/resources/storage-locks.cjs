@@ -129,7 +129,4 @@ async function lock(name, { shared = false, wait = true, timeoutMs } = {}) {
   return taken(name, shared, await take(name, shared, timeoutMs));
 }
 
-// True when this flow holds the lock name.
-function holds(name) { return flows.getStore()?.has(name) ?? false; }
-
-module.exports = { lockSync, lock, holds, withinFlow };
+module.exports = { lockSync, lock, withinFlow };

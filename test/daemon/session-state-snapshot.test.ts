@@ -24,7 +24,11 @@ test('closed chat views restore SQL state and change revision without a transcri
       const first = await command('get_snapshot');
       expect(first.history.entries.some((entry: any) => entry.customType === fast.customType)).toBe(false);
       const changed = { ...fast, id: crypto.randomUUID(), parentId: null, data: { enabled: false } };
-      insert.run(chat.id, changed.customType, JSON.stringify(changed));
+      // As the daemon's record writes do: the change moves the chat's revision.
+      db.transaction(() => {
+        insert.run(chat.id, changed.customType, JSON.stringify(changed));
+        db.query('UPDATE sessions SET revision=revision+1 WHERE session_id=?').run(chat.id);
+      })();
       const second = await command('get_snapshot');
       expect(count()).toBe(originalCount);
       expect(second.revision).not.toBe(first.revision);

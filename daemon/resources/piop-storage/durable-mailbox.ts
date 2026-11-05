@@ -25,8 +25,8 @@ function normalizeMessage(ctx: ExtensionContext, message: SendMessage, deliveryI
   return Parse(messageSchema, { ...message, details: { ...details, notificationId: deliveryId, mailboxSessionId: ctx.sessionManager.getSessionId(), mailboxFingerprint: fingerprint } });
 }
 
-async function savedDeliveries(ctx: ExtensionContext, required = false) {
-  return new Map<string, string>(await call("mailbox.saved", { ...chat(ctx), required }) as Array<[string, string]>);
+async function savedDeliveries(ctx: ExtensionContext) {
+  return new Map<string, string>(await call("mailbox.saved", chat(ctx)) as Array<[string, string]>);
 }
 
 async function pendingRecords(ctx: ExtensionContext) {
@@ -98,7 +98,7 @@ export class DurableMailbox {
       if (!deliveryId.trim()) throw new Error("Agent mail requires a stable delivery ID");
       const sessionId = ctx.sessionManager.getSessionId();
       const normalized = normalizeMessage(ctx, message, deliveryId);
-      const saved = (await savedDeliveries(ctx, true)).get(deliveryId);
+      const saved = (await savedDeliveries(ctx)).get(deliveryId);
 
       if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
 

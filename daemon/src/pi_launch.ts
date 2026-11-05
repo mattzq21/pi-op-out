@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, openSync, readSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir, nodeExecutable, pathWithNode } from './environment';
@@ -9,7 +8,6 @@ import * as Contributions from './plugin_contributions';
 import { ensureDesktopSessionsDir, shellQuote } from './process_io';
 import * as Registry from './session_registry';
 import { validateRemoteHost, type AppSettings } from './settings_types';
-import { transaction } from './util/db';
 import type { BrokerRuntime } from './broker';
 import { QUEUE_TOOLS } from './host/goals/commands';
 
@@ -45,10 +43,9 @@ export async function sessionIdentity(path: string): Promise<string> {
   return transcriptSessionIdentity(path);
 }
 
-export function readFirstLine(path: string, limit = 64 * 1024, nonblocking = false): string {
-  const fd = openSync(path, constants.O_RDONLY | (nonblocking ? constants.O_NONBLOCK : 0));
+function readFirstLine(path: string, limit = 64 * 1024): string {
+  const fd = openSync(path, constants.O_RDONLY);
   try {
-    if (nonblocking && !fstatSync(fd).isFile()) throw new Error('Session transcript is not a regular file');
     const buffer = Buffer.alloc(limit);
     let length = 0;
     while (length < limit) {
@@ -72,36 +69,13 @@ function startsWithPath(path: string, root: string): boolean { return path === r
 
 export function localRegisteredIdentity(path: string): string | undefined {
   const root = join(homeDir(), STORAGE_DIRECTORY);
-  const database = Registry.connection(root);
-  const row = database.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
+  const row = Registry.connection(root).prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
   const id = row?.session_id ?? undefined;
   const canonicalRoot = realpathSync(root);
   if (!id && [root, canonicalRoot].some(directory => startsWithPath(path, join(directory, 'sessions')))) {
     throw new Error('Session path is not registered');
   }
-  if (id) return id;
-  return localExternalIdentity(database, path);
-}
-
-function localExternalIdentity(database: ReturnType<typeof Registry.connection>, path: string): string | undefined {
-  return transaction(database, 'IMMEDIATE', () => {
-    const key = createHash('sha256').update(path).digest('hex');
-    const row = database.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?").get(key, path) as { id: string | null } | undefined;
-    if (!row) return undefined;
-    if (row.id === null) {
-      const id = importExternalIdentity(path);
-      database.prepare("UPDATE external_transcripts SET record_json=json_set(record_json, '$.sessionId', ?) WHERE record_id=?").run(id, key);
-      return id;
-    }
-    return row.id;
-  });
-}
-
-function importExternalIdentity(path: string): string {
-  const header = JSON.parse(readFirstLine(path, 64 * 1024, true));
-  if (header?.type !== 'session') throw new Error('Invalid session header');
-  if (typeof header.id !== 'string' || !header.id) throw new Error('Missing session identity');
-  return header.id;
+  return id;
 }
 
 export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null } | { kind: 'prompt-preview'; cwd: string };

@@ -23,8 +23,9 @@ export function releaseReservation(root: string, id: string): void {
   connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
-export function pending(root: string, work: 'retention'): boolean {
-  return SessionTables.pending(connection(root), work);
+// True when a deletion asked for cleanup that has not finished.
+export function cleanupPending(root: string): boolean {
+  return Boolean((connection(root).prepare('SELECT EXISTS(SELECT 1 FROM cleanup_requests) AS pending').get() as { pending: number }).pending);
 }
 
 export function setTaskRunning(root: string, id: string, running: boolean): void {

@@ -49,7 +49,7 @@ test('a chat that a stop leaves before its commit is not shown, and the start sw
 test('a failed commit leaves no files and gives back the reserved ID', () => {
   const id = database.reserve(root);
   const db = database.connection(root);
-  db.exec("CREATE TRIGGER reject_new_chat BEFORE INSERT ON auxiliary_child_state WHEN NEW.session_id='" + id + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
+  db.exec("CREATE TRIGGER reject_new_chat BEFORE UPDATE OF session_path ON sessions WHEN NEW.session_id='" + id + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
   try { expect(() => newChats.create(root, chat(id))).toThrow(/^Index write failed$/); }
   finally { db.exec('DROP TRIGGER reject_new_chat'); }
   expect(files(id)).toEqual([]);

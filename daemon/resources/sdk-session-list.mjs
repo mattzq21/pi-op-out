@@ -5,9 +5,6 @@ import * as database from "./session-database.cjs";
 import { sessionName } from "./session-broker/session-names.cjs";
 import { sessionHeaderMatches } from "./piop-storage/transcript-file.mjs";
 import { patchMethod, requireMethods } from "./pi-patch.cjs";
-import { call } from "./storage-channel.cjs";
-
-const cached = new Map();
 
 function rootDirectory() {
   return realpathSync(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"));
@@ -28,42 +25,12 @@ function managedDirectory(directory, root) {
 function candidates(db, directory, recursive) {
   const prefix = directory + sep;
 
-  const rows = db.prepare(`SELECT s.session_id, s.session_path, m.modified_ns, m.size, c.fingerprint, c.body
-    FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path
-    LEFT JOIN sdk_session_summaries c ON c.session_id=s.session_id AND c.session_path=s.session_path
+  const rows = db.prepare(`SELECT s.session_id, s.session_path FROM sessions s
     WHERE s.archived=0 AND substr(s.session_path, 1, length(?))=?
     AND (? OR instr(substr(s.session_path, length(?) + 1), ?)=0)`)
     .all(prefix, prefix, Number(recursive), prefix, sep);
 
   return rows.sort((a, b) => basename(b.session_path).localeCompare(basename(a.session_path)));
-}
-
-function fingerprint(row) {
-  if (row.modified_ns !== null) return `${row.modified_ns}:${row.size}`;
-  const stat = statSync(row.session_path, { bigint: true });
-
-  return `${stat.mtimeNs}:${stat.size}`;
-}
-
-function decode(row) {
-  let value;
-
-  try { value = JSON.parse(row.body); }
-  catch { return; }
-
-  if (!validSummary(value, row)) return;
-
-  return { ...value, created: new Date(value.created ?? NaN), modified: new Date(value.modified ?? NaN) };
-}
-
-function validSummary(value, row) {
-  return value?.id === row.session_id && value?.path === row.session_path
-    && [value.cwd, value.firstMessage, value.allMessagesText].every(item => item?.constructor === String)
-    && Number.isSafeInteger(value.messageCount) && value.messageCount >= 0;
-}
-
-function savedSummary(row, stamp) {
-  return row.fingerprint === stamp && row.body ? decode(row) : undefined;
 }
 
 function entry(line, path, lineNumber) {
@@ -148,38 +115,13 @@ async function readSummary(row, signal) {
   return summaryValue(row, state);
 }
 
-async function summary(db, row, signal) {
-  const stamp = fingerprint(row);
-  const previous = cached.get(row.session_path);
-
-  if (previous?.stamp === stamp && previous.id === row.session_id) return structuredClone(previous.value);
-  const stored = savedSummary(row, stamp);
-  const value = stored ?? await readSummary(row, signal);
-
-  if (!value) return undefined;
-  const stat = stored ? undefined : statSync(row.session_path, { bigint: true });
-
-  if (stat && stamp !== `${stat.mtimeNs}:${stat.size}`) return value;
-
-  if (!stored) call("records.saveSummary", { path: row.session_path, sessionId: row.session_id, stamp, value });
-  remember(row, stamp, value);
-
-  return structuredClone(value);
-}
-
-function remember(row, stamp, value) {
-  cached.set(row.session_path, { stamp, id: row.session_id, value });
-
-  if (cached.size > 500) cached.delete(cached.keys().next().value);
-}
-
 function sorted(values) {
   return values.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 }
 
 async function availableSummary(db, row, signal) {
   try {
-    const value = await summary(db, row, signal);
+    const value = await readSummary(row, signal);
     return value ? { ...value, name: sessionName(row.session_path, row.session_id, db) } : undefined;
   }
   catch (error) {
@@ -205,7 +147,7 @@ function openListDatabase() {
 }
 
 function recentTime(row) {
-  try { return row.modified_ns === null ? statSync(row.session_path, { bigint: true }).mtimeNs : BigInt(row.modified_ns); }
+  try { return statSync(row.session_path, { bigint: true }).mtimeNs; }
   catch (error) {
     if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
 

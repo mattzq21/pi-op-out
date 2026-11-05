@@ -1,7 +1,6 @@
 const fs = require('node:fs');
 const { dirname, join } = require('node:path');
 const { randomUUID } = require('node:crypto');
-const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 
 function syncDirectory(directory) {
   const descriptor = fs.openSync(directory, 'r');
@@ -11,18 +10,14 @@ function syncDirectory(directory) {
 }
 
 function relocateSession(profile, sessionPath, requestedReplacement, from) {
-  const release = acquireReferencePublicationLock(profile, true);
+  const replacement = fs.realpathSync(requestedReplacement);
 
-  try {
-    const replacement = fs.realpathSync(requestedReplacement);
-
-    if (!fs.statSync(replacement).isDirectory()) throw new Error('Project directory does not exist');
-    rewriteHeader(sessionPath, replacement, from);
-  } finally { release(); }
+  if (!fs.statSync(replacement).isDirectory()) throw new Error('Project directory does not exist');
+  rewriteHeader(profile, sessionPath, replacement, from);
 }
 
 // Writes the transcript again with cwd replacement, at the same path. With from, only a transcript that works in from.
-function rewriteHeader(sessionPath, replacement, from) {
+function rewriteHeader(profile, sessionPath, replacement, from) {
   const lines = fs.readFileSync(sessionPath, 'utf8').split('\n');
   const header = JSON.parse(lines[0]);
 
@@ -41,10 +36,9 @@ function rewriteHeader(sessionPath, replacement, from) {
     fs.writeFileSync(file, lines.join('\n'));
     fs.fsyncSync(file);
     fs.closeSync(file); file = undefined;
-    require('./transcript-metadata.cjs').invalidate(sessionPath);
+    require('./session-database.cjs').revise(profile, header.id);
     fs.renameSync(temporary, sessionPath);
     syncDirectory(dirname(sessionPath));
-    require('./transcript-metadata.cjs').remember(sessionPath);
   } finally {
     if (file !== undefined) fs.closeSync(file);
     fs.rmSync(temporary, { force: true });

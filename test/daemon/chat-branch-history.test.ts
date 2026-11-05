@@ -110,7 +110,7 @@ test('a branch whose commit fails leaves no files and no rows', async () => {
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
   const db = modules.database.connection(root);
-  db.exec("CREATE TRIGGER reject_branch_state BEFORE INSERT ON auxiliary_child_state WHEN NEW.session_id='" + sessionId + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
+  db.exec("CREATE TRIGGER reject_branch_state BEFORE UPDATE OF session_path ON sessions WHEN NEW.session_id='" + sessionId + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
   try {
     await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a3' }))
       .rejects.toThrow(/Could not create the branch: Index write failed/);

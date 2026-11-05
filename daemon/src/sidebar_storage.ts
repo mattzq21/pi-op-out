@@ -5,7 +5,7 @@ import type { Database } from './util/db';
 import { transaction } from './util/db';
 
 export function load(connection: Database): Map<string, CachedSession> {
-  const rows = connection.prepare(`SELECT s.session_id, s.session_path, c.fingerprint, c.modified_at, c.summary_json
+  const rows = connection.prepare(`SELECT s.session_id, s.session_path, c.revision, c.modified_at, c.summary_json
         FROM session_sidebar c JOIN sessions s USING(session_id)`).all() as any[];
   const cache = new Map<string, CachedSession>();
   for (const row of rows) {
@@ -16,7 +16,7 @@ export function load(connection: Database): Map<string, CachedSession> {
     let summary;
     try { summary = parseSession(value); } catch { continue; }
     summary.modifiedAt = Number(row.modified_at);
-    cache.set(row.session_path, { fingerprint: row.fingerprint, summary });
+    cache.set(row.session_path, { revision: Number(row.revision), summary });
   }
   return cache;
 }
@@ -26,8 +26,8 @@ export function save(connection: Database, cache: Map<string, CachedSession>): v
     connection.exec('CREATE TEMP TABLE IF NOT EXISTS sidebar_seen (session_id TEXT PRIMARY KEY); DELETE FROM sidebar_seen;');
     const registered = connection.prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=? AND session_path=?) AS present');
     const upsert = connection.prepare(`INSERT INTO session_sidebar VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET
-            fingerprint=excluded.fingerprint, modified_at=excluded.modified_at, summary_json=excluded.summary_json
-            WHERE session_sidebar.fingerprint != excluded.fingerprint OR session_sidebar.summary_json != excluded.summary_json`);
+            revision=excluded.revision, modified_at=excluded.modified_at, summary_json=excluded.summary_json
+            WHERE session_sidebar.revision != excluded.revision OR session_sidebar.summary_json != excluded.summary_json`);
     const seen = connection.prepare('INSERT OR IGNORE INTO sidebar_seen VALUES (?)');
     for (const cached of cache.values()) {
       if (cached.blank) continue;
@@ -36,7 +36,7 @@ export function save(connection: Database, cache: Map<string, CachedSession>): v
       delete value.id; delete value.path;
       const row = registered.get(summary.id, summary.path) as { present: number };
       if (!row.present) continue;
-      upsert.run(summary.id, cached.fingerprint, summary.modifiedAt, JSON.stringify(value));
+      upsert.run(summary.id, cached.revision, summary.modifiedAt, JSON.stringify(value));
       seen.run(summary.id);
     }
     connection.exec('DELETE FROM session_sidebar WHERE session_id NOT IN (SELECT session_id FROM sidebar_seen)');

@@ -160,21 +160,14 @@ function maintenance(root) {
   return warnings;
 }
 
+// Deletions and maintenance run one at a time.
 function locked(root, nonblocking, operation) {
-  const storageLocks = require('./storage-locks.cjs');
-  const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
-  const transactions = storageLocks.lockSync('session-transactions:' + root, { wait: !nonblocking });
+  const release = require('./storage-locks.cjs').lockSync('session-transactions:' + root, { wait: !nonblocking });
 
-  if (!transactions) return { busy: true };
+  if (!release) return { busy: true };
 
-  try {
-    const publications = acquireReferencePublicationLock(root, false, nonblocking);
-
-    if (!publications) return { busy: true };
-
-    try { return operation(); }
-    finally { publications(); }
-  } finally { transactions(); }
+  try { return operation(); }
+  finally { release(); }
 }
 
 function answer(warnings, fields = {}) { return warnings.length ? { ...fields, warning: warnings.join('\n') } : fields; }

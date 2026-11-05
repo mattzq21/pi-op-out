@@ -14,15 +14,15 @@ import * as Registry from './session_registry';
 import * as WorktreeRecords from '../resources/chat-worktree-records.cjs';
 import { loadAppSettings } from './settings';
 import type { RemoteHost } from './settings_types';
-import { transaction } from './util/db';
 import { Mutex, isMissing } from './util/sync';
 import * as peers from './peers';
 import { reserveSessionId } from './pi_runtime';
 import type { SessionSummary } from './types';
 import type { App } from './app';
 
-export interface CachedSession { fingerprint: string; summary: SessionSummary; blank?: boolean }
-type SessionCandidate = [path: string, fingerprint: string, modifiedAt: number, size: number];
+// A summary of a saved chat, made from the given revision of it.
+export interface CachedSession { revision: number; summary: SessionSummary; blank?: boolean }
+type SessionCandidate = [path: string, revision: number, size: number];
 
 export class SessionIndexRuntime {
   local = new Map<string, CachedSession>();
@@ -44,7 +44,7 @@ async function inspectSessionProjects(index: SessionIndexRuntime, sessions: Sess
 const sessionSummarySchema = z.object({
   path: z.string().min(1), id: z.string().min(1), cwd: z.string(), name: z.string(), preview: z.string(),
   messageCount: z.number().int().nonnegative(), lastMessageAt: z.number().nonnegative(), apiCost: z.number().nonnegative(),
-  explicitlyNamed: z.boolean(), hasUserMessage: z.boolean(), bytes: z.number().int().nonnegative(),
+  explicitlyNamed: z.boolean(), hasUserMessage: z.boolean(), bytes: z.number().int().nonnegative(), modifiedAt: z.number().nonnegative(),
   auxiliaryParentId: z.string().min(1).optional(),
   auxiliaryKind: z.string().min(1).optional(),
   forkSourceId: z.string().min(1).optional(),
@@ -61,9 +61,9 @@ function indexBatches(candidates: SessionCandidate[]): SessionCandidate[][] {
   let batch: SessionCandidate[] = [];
   let bytes = 0;
   for (const candidate of candidates) {
-    if (batch.length && (batch.length >= INDEX_BATCH_FILES || bytes + candidate[3] > INDEX_BATCH_BYTES)) { batches.push(batch); batch = []; bytes = 0; }
+    if (batch.length && (batch.length >= INDEX_BATCH_FILES || bytes + candidate[2] > INDEX_BATCH_BYTES)) { batches.push(batch); batch = []; bytes = 0; }
     batch.push(candidate);
-    bytes += candidate[3];
+    bytes += candidate[2];
   }
   if (batch.length) batches.push(batch);
   return batches;
@@ -92,10 +92,10 @@ async function readSummaryBatch(candidates: SessionCandidate[]): Promise<Map<str
     const summary: SessionSummary = {
       groupId: null, auxiliaryParentId: value.auxiliaryParentId, auxiliaryKind: value.auxiliaryKind, forkSourceId: value.forkSourceId, forkEntryId: value.forkEntryId,
       id: value.id, path: value.path, name: value.name, project: basename(value.cwd) || 'Workspace', cwd: value.cwd, cwdExists: true,
-      modifiedAt: item[2], preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
+      modifiedAt: value.modifiedAt, preview: value.preview, messageCount: value.messageCount, lastMessageAt: value.lastMessageAt, apiCost: value.apiCost,
       hostId: 'local', hostName: 'Local',
     };
-    result.set(value.path, { fingerprint: item[1], summary, blank: !value.hasUserMessage && !value.explicitlyNamed });
+    result.set(value.path, { revision: item[1], summary, blank: !value.hasUserMessage && !value.explicitlyNamed });
   }
   return result;
 }
@@ -141,52 +141,28 @@ async function refreshLocalCache(root: string, cache: Map<string, CachedSession>
   return needsSave;
 }
 
+// The saved chats under root, and those of them whose summary is missing or older than their revision.
 function localSessionCandidates(root: string, cache: Map<string, CachedSession>): [Set<string>, SessionCandidate[]] {
   const seen = new Set<string>(); const changed: SessionCandidate[] = [];
   const database = Registry.connection(dirname(root));
   const prefix = root.replace(/\/+$/, '') + sep;
   let resolved = prefix;
   try { resolved = realpathSync(root) + sep; } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-  const rows = database.prepare(`SELECT s.session_path AS path, m.modified_ns AS modified, m.size AS size, n.name AS name, b.session_id AS branch_session, b.tip_id AS branch_tip, b.leaf_id AS branch_leaf FROM sessions s LEFT JOIN session_branch_selection b ON b.session_id=s.session_id LEFT JOIN session_names n ON n.session_id=s.session_id LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path WHERE s.archived=0 AND (substr(s.session_path, 1, length(?1))=?1 OR substr(s.session_path, 1, length(?2))=?2)`).all(prefix, resolved) as any[];
-  for (const row of rows) {
-    const path: string = row.path;
-    const saved = row.modified !== null && row.modified !== undefined && row.size !== null && row.size !== undefined ? [String(row.modified), Number(row.size)] as const : undefined;
-    const candidate = saved ? registeredCandidate(path, saved) : captureLocalCandidate(database, path);
-    if (!candidate) continue;
-    candidate[1] += ':' + (row.name ?? '') + ':' + JSON.stringify([row.branch_session, row.branch_tip, row.branch_leaf]);
+  const rows = database.prepare('SELECT session_path AS path, revision FROM sessions WHERE archived=0 AND (substr(session_path, 1, length(?1))=?1 OR substr(session_path, 1, length(?2))=?2)').all(prefix, resolved) as Array<{ path: string; revision: number }>;
+  for (const { path, revision } of rows) {
+    if (cache.get(path)?.revision === revision) { seen.add(path); continue; }
+    const size = fileSize(path);
+    if (size === undefined) continue;
     seen.add(path);
-    if (cache.get(path)?.fingerprint !== candidate[1]) changed.push(candidate);
+    changed.push([path, revision, size]);
   }
   return [seen, changed];
 }
 
-function registeredCandidate(path: string, [modified, size]: readonly [string, number]): SessionCandidate {
-  if (!/^\d+$/.test(modified)) throw new Error('invalid digit found in string');
-  const seconds = Number(BigInt(modified) / 1_000_000_000n);
-  return [path, `${modified}:${size}`, seconds, size];
-}
-
-function captureLocalCandidate(database: import('./util/db').Database, path: string): SessionCandidate | undefined {
-  return transaction(database, 'IMMEDIATE', () => {
-    const candidate = localCandidate(path);
-    if (candidate) {
-      const [file, fingerprint, , size] = candidate;
-      const modified = fingerprint.split(':')[0];
-      database.prepare(`INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
-            AND NOT EXISTS (SELECT 1 FROM session_file_writes w WHERE w.session_id=sessions.session_id)
-            ON CONFLICT(session_id) DO NOTHING`).run(modified!, size, file);
-    }
-    return candidate;
-  });
-}
-
-function localCandidate(path: string): SessionCandidate | undefined {
+function fileSize(path: string): number | undefined {
   let stats;
-  try { stats = lstatSync(path, { bigint: true }); } catch (error: any) { if (error?.code === 'ENOENT') return undefined; throw error; }
-  if (!stats.isFile()) return undefined;
-  const modifiedNs = stats.mtimeNs > 0n ? stats.mtimeNs : 0n;
-  const size = Number(stats.size);
-  return [path, `${modifiedNs}:${size}`, Number(modifiedNs / 1_000_000_000n), size];
+  try { stats = lstatSync(path); } catch (error: any) { if (error?.code === 'ENOENT') return undefined; throw error; }
+  return stats.isFile() ? stats.size : undefined;
 }
 
 export function homeDirectory(): string {

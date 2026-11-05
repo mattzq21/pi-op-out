@@ -48,7 +48,7 @@ export function watchRetention(root: string, ownership: ConversationOwnership, e
 }
 
 async function retentionPass(root: string): Promise<void> {
-  if (!Registry.pending(root, 'retention')) return;
+  if (!Registry.cleanupPending(root)) return;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Deferred retention cleanup timed out; candidates remain available for retry')), 30_000); });
   const controller = new AbortController();

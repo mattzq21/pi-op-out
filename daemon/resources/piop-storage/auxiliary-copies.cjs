@@ -143,7 +143,6 @@ function copySubagentRuns(db, plan, parents) {
     const runs = rows.map(row => JSON.parse(row.run_json)).filter(run => copiedChildren.has(run.sessionId));
 
     if (!runs.length) continue;
-    db.prepare('INSERT INTO session_subagent_state VALUES (?) ON CONFLICT(session_id) DO NOTHING').run(parent.sessionId);
 
     const results = deliveredResults(parent.entries);
 

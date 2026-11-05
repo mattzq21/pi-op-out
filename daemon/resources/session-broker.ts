@@ -10,8 +10,6 @@ import { registerQueueTools } from "./session-broker/queue-tools.ts";
 import { registerContextInsertions } from "./session-broker/context-insertions.ts";
 import { registerToolInventory } from "./session-broker/tool-inventory.ts";
 import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
-import { existsSync } from "node:fs";
-import { call } from "./storage-channel.cjs";
 
 export { createChat, type NewChat } from "./piop-storage/session-file.ts";
 
@@ -23,11 +21,6 @@ export default function sessionBroker(pi: ExtensionAPI) {
   Object.defineProperty(globalThis, key, { value: forward, writable: true, configurable: true });
   pi.on("session_shutdown", () => {
     if (Object.getOwnPropertyDescriptor(globalThis, key)?.value === forward) Reflect.deleteProperty(globalThis, key);
-  });
-  pi.on("session_start", async (_event, ctx) => {
-    const file = ctx.sessionManager.getSessionFile();
-
-    if (file) await call("records.initializeChildren", { path: file, sessionId: ctx.sessionManager.getSessionId(), fresh: !existsSync(file) });
   });
   registerInputHold(pi);
   registerQueueHold(pi);
