@@ -2,14 +2,27 @@ const fs = require('node:fs');
 
 // Pi's link to the daemon for storage changes: one request line out, one answer line back, on the descriptor in
 // PIOP_STORAGE_CHANNEL. A call waits for its answer, so a change is saved or has failed when the call returns, as with a direct write.
-let descriptor;
+// Each Pi extension is one file with its own copy of this module. All copies use the channel that the first one took.
+const CLAIMED = Symbol.for('piop.storage-channel');
+
+// Takes the channel from the environment once, so that the programs this process starts do not get it.
+function claim() {
+  const claimed = Object.getOwnPropertyDescriptor(globalThis, CLAIMED);
+  if (claimed) return claimed.value;
+  const configured = process.env.PIOP_STORAGE_CHANNEL;
+  delete process.env.PIOP_STORAGE_CHANNEL;
+  const value = configured === undefined || configured === '' ? null : Number(configured);
+  if (value !== null && (!Number.isSafeInteger(value) || value < 3 || !fs.fstatSync(value).isSocket())) throw new Error('The Piop storage channel is not open');
+  Object.defineProperty(globalThis, CLAIMED, { value });
+  return value;
+}
+
+// True in a process that the daemon started with a storage channel. Such a process asks the daemon for every change.
+function hasChannel() { return claim() !== null; }
 
 function channel() {
-  if (descriptor !== undefined) return descriptor;
-  const value = Number(process.env.PIOP_STORAGE_CHANNEL);
-  if (!Number.isSafeInteger(value) || value < 3) throw new Error('Pi was not started by the Piop daemon, so it cannot save chats');
-  if (!fs.fstatSync(value).isSocket()) throw new Error('The Piop storage channel is not open');
-  descriptor = value;
+  const descriptor = claim();
+  if (descriptor === null) throw new Error('Pi was not started by the Piop daemon, so it cannot save');
   return descriptor;
 }
 
@@ -39,7 +52,7 @@ function call(operation, payload) {
   const answer = JSON.parse(readLine(fd));
   if (typeof answer?.error === 'string') {
     const error = new Error(answer.error);
-    if (answer.damaged === true) error.damaged = true;
+    for (const flag of ['damaged', 'publicationPending', 'dependenciesRetained']) if (answer[flag] === true) error[flag] = true;
     throw error;
   }
   if (!answer || !Object.hasOwn(answer, 'result')) throw new Error('The Piop daemon sent an invalid storage answer');
@@ -50,4 +63,4 @@ function call(operation, payload) {
 const transcriptWrites = Object.fromEntries(['publish', 'append', 'repair', 'bind', 'selectBranch', 'copyGoal']
   .map(name => [name, request => call('transcript.' + name, request)]));
 
-module.exports = { call, transcriptWrites };
+module.exports = { call, claim, hasChannel, transcriptWrites };

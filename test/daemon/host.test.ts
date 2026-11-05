@@ -17,7 +17,7 @@ let daemon: TestDaemon;
 beforeAll(async () => {
   daemon = await startDaemon();
   const bin = join(daemon.home, '.local/bin');
-  fakePi(bin);
+  fakePi(daemon.home);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);

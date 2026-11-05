@@ -2,12 +2,13 @@ import * as storageDatabase from "./session-database.cjs";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 import { homedir as storageHome } from "node:os";
-import { randomUUID as storageRandomId } from "node:crypto";
 import { isDeepStrictEqual as sameStorageValue } from "node:util";
 import { pathToFileURL as storageFileUrl } from "node:url";
 
-import { storagePublish, storageTarget } from "./storage-file.mjs";
 import { patchMethod, requireMethods } from "./pi-patch.cjs";
+import { call } from "./storage-channel.cjs";
+
+// Pi keeps reading its settings and sign-in files itself. It asks the daemon to save each change, through its storage channel.
 
 const installedStorageClasses = new WeakSet();
 let modelFileStorage;
@@ -71,38 +72,49 @@ export function removeStoredModelProvider(path, id, parse) {
   });
 }
 
-function publishAuthFile(path, body) {
-  const target = storageTarget(path);
-  const temporary = storagePath.join(storagePath.dirname(target), `.${storagePath.basename(target)}.${storageRandomId()}.tmp`);
-
-  storagePublish(target, temporary, body, false);
+function readPiFile(path) {
+  try { return storageFs.readFileSync(path, "utf8"); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
 }
 
+function publishPiFile(path, body) {
+  call("settings.publishFile", { path: storagePath.resolve(path), body });
+}
+
+// Pi's sign-in, model and MCP sign-in files. Pi still takes its own lock on the file, so a sign-in refresh in one Pi
+// waits for the one in another. The daemon writes the file; a missing file reads as empty and is not made.
 function installAuthStorage(FileAuthStorageBackend) {
   if (installedStorageClasses.has(FileAuthStorageBackend)) return;
   const prototype = FileAuthStorageBackend.prototype;
-  requireMethods(prototype, ["withLock", "withLockAsync"]);
+  requireMethods(prototype, ["withLock", "withLockAsync", "acquireLockSyncWithRetry", "acquireLockAsync"]);
 
-  patchMethod(prototype, "withLock", withLock => function (operation) {
-    return withLock.call(this, current => {
-      const { result, next } = operation(current);
+  patchMethod(prototype, "withLock", () => function (operation) {
+    const release = this.acquireLockSyncWithRetry(this.authPath);
 
-      if (next !== undefined) publishAuthFile(this.authPath, next);
+    try {
+      const { result, next } = operation(readPiFile(this.authPath));
 
-      return { result };
-    });
+      if (next !== undefined) publishPiFile(this.authPath, next);
+
+      return result;
+    } finally { release(); }
   });
 
-  patchMethod(prototype, "withLockAsync", withLockAsync => function (operation, options) {
-    return withLockAsync.call(this, async current => {
-      const { result, next } = await operation(current);
+  patchMethod(prototype, "withLockAsync", () => async function (operation, options) {
+    options?.signal?.throwIfAborted();
+    let compromised;
+    const release = await this.acquireLockAsync(options?.signal, error => { compromised = error ?? new Error("Auth storage lock was compromised"); });
+    const check = () => { if (compromised) throw compromised; options?.signal?.throwIfAborted(); };
 
-      options?.signal?.throwIfAborted();
+    try {
+      check();
+      const { result, next } = await operation(readPiFile(this.authPath));
+      check();
 
-      if (next !== undefined) publishAuthFile(this.authPath, next);
+      if (next !== undefined) publishPiFile(this.authPath, next);
 
-      return { result };
-    }, options);
+      return result;
+    } finally { await release().catch(() => {}); }
   });
 
   installedStorageClasses.add(FileAuthStorageBackend);
@@ -170,14 +182,16 @@ function installTrustStorage(ProjectTrustStore, normalize) {
   installedStorageClasses.add(ProjectTrustStore);
 }
 
+// Settings and trust changes are pure changes of the saved text. When another process saved first, the change runs again on its text.
 function withStoredSettings(path, operation) {
-  const database = storageDatabase.connection(sessionReferenceRoot());
   const key = storagePath.resolve(path);
 
-  storageDatabase.transaction(database, "IMMEDIATE", () => {
-    const current = database.prepare("SELECT body FROM sdk_settings WHERE path=?").get(key)?.body;
-    const next = operation(current ?? undefined);
+  for (let attempt = 1; ; attempt++) {
+    const current = storageDatabase.connection(sessionReferenceRoot()).prepare("SELECT body FROM sdk_settings WHERE path=?").get(key)?.body ?? undefined;
+    const next = operation(current);
 
-    if (next !== undefined) database.prepare("INSERT INTO sdk_settings VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET body=excluded.body").run(key, next);
-  });
+    if (next === undefined || call("settings.replace", { path: key, previous: current ?? null, next })) return;
+
+    if (attempt === 20) throw new Error("Pi settings kept changing while they were saved. Try again.");
+  }
 }

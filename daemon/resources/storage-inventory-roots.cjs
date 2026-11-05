@@ -7,7 +7,7 @@ const absolute = value => Check(Type.String(), value) && path.isAbsolute(value);
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String() });
 
-const recoverySchema = Type.Object({ version: Type.Literal(1), managedBy: Type.Literal('piop'), kind: Type.Literal('missing-directory-recovery'), id: Type.String({ pattern: '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), state: Type.Union(['allocated', 'ready', 'published'].map(value => Type.Literal(value))), mode: Type.Union(['empty', 'legacy-copy'].map(value => Type.Literal(value))), directory: Type.String(), originalCwd: Type.String(), owners: Type.Array(ownerSchema, { minItems: 1 }) });
+const recoverySchema = Type.Object({ version: Type.Literal(1), managedBy: Type.Literal('piop'), kind: Type.Literal('missing-directory-recovery'), id: Type.String({ pattern: '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), state: Type.Union(['allocated', 'ready', 'published'].map(value => Type.Literal(value))), mode: Type.Literal('empty'), directory: Type.String(), originalCwd: Type.String(), owners: Type.Array(ownerSchema, { minItems: 1 }) });
 
 const nullableString = Type.Union([Type.String(), Type.Null()]);
 
@@ -100,20 +100,14 @@ function recordRecoverySource(record, discovery, owners) {
   const provenance = `Retained recovery migration source: ${record.id}`;
   addRoot(discovery.cwds, source, provenance, 'referenced', owners);
 
-  if (legacyRecovery(source)) addRoot(discovery.legacy, path.basename(source) === 'workdir' ? path.dirname(source) : source, provenance, 'unattributed', owners);
-}
-
-function legacyRecovery(cwd) {
-  return /^\/tmp\/piop-session-[a-zA-Z0-9]{6}$/.test(cwd)
-    || /^\/tmp\/piop-recovery-[a-zA-Z0-9]{6}\/workdir$/.test(cwd);
 }
 
 async function discoverRoots(profile) {
-  const discovery = { cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), sessionPaths: new Set(), warnings: [] };
+  const discovery = { cwds: new Map(), recovery: new Map(), retainedArtifacts: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
 
   return discovery;
 }
 
-module.exports = { absolute, addRoot, discoverRoots, legacyRecovery };
+module.exports = { absolute, addRoot, discoverRoots };

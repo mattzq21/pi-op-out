@@ -1,14 +1,28 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
 const database = require('../session-database.cjs');
 const assets = require('./goal-assets.cjs');
 const ownership = require('./goal-ownership.cjs');
+const preparations = require('./goal-preparations.cjs');
+
+const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
+
+// A goal folder that the daemon makes again from its saved preparation: the folder it fills first, the identities of
+// the old and the new folder, and the saved preparation text.
+const recordSchema = Type.Object({ staging: Type.String(), previous: identitySchema, current: identitySchema, preparation: Type.String() });
 
 function saved(db, directory) {
   const row = db.prepare('SELECT record_json FROM goal_directory_recoveries WHERE directory=?').get(directory);
 
-  return row ? JSON.parse(row.record_json) : undefined;
+  if (!row) return undefined;
+  const record = JSON.parse(row.record_json);
+
+  if (!Check(recordSchema, record)) throw new Error('Damaged goal folder recovery retained: ' + directory);
+
+  return record;
 }
 
 function validate(root, directory, record) {
@@ -93,7 +107,7 @@ function prepare(root, db, directory) {
   const rows = db.prepare('SELECT identity, record_json FROM goal_preparations WHERE directory=? AND record_json IS NOT NULL').all(directory);
 
   if (rows.length !== 1) throw new Error('Goal folder recovery requires one saved preparation');
-  const preparation = JSON.parse(rows[0].record_json);
+  const preparation = preparations.parsePreparation(rows[0].record_json);
 
   if (!preparation.input && !preparation.files) throw new Error('Goal attachment contents were not saved');
   const allocation = ownership.allocate(root, path.dirname(directory));

@@ -1,4 +1,4 @@
-const { lockSync } = require('../file-lock.cjs');
+const storageLocks = require('../storage-locks.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Type } = require('typebox');
@@ -40,16 +40,13 @@ function registeredTranscripts(root, inventory) {
   }
 }
 
+// True while the daemon prepares the goal attachments of directory.
 function activeGoalAllocation(directory) {
-  const lock = path.join(directory, 'allocation.lock');
+  const release = storageLocks.lockSync('goal-allocation:' + directory, { wait: false });
 
-  if (!metadata(lock)) return false;
-  const descriptor = fs.openSync(lock, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+  release?.();
 
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid goal attachment ownership lock');
-    return !lockSync(descriptor, false, true);
-  } finally { fs.closeSync(descriptor); }
+  return !release;
 }
 
 function retainActiveGoals(root, goals, retained) {

@@ -1,4 +1,3 @@
-import { appSettingsSchema, settingsChangeSchema } from "./responseSchemas";
 import type { AppSettings, RpcEvent, SettingsChange } from "../types";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
@@ -43,16 +42,8 @@ export class NativeSettings {
 
   constructor(private call: NativeCall, private connection: SettingsConnection) {}
 
-  private async daemonChange() {
-    let change: SettingsChange;
-
-    try { change = await this.call("load_settings_change", undefined, settingsChangeSchema); }
-    catch (reason) {
-      if (!(reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: load_settings_change")) throw reason;
-      change = { settings: await this.call("load_app_settings", undefined, appSettingsSchema) };
-    }
-
-    return change;
+  private async daemonChange(): Promise<SettingsChange> {
+    return this.call("load_settings_change");
   }
 
   async loadChange() {
@@ -63,37 +54,16 @@ export class NativeSettings {
 
   async load() { return (await this.loadChange()).settings; }
 
-  async loadHostChange() {
-    const hostId = this.connection.target().hostId;
-
-    try { return await this.call(hostId === "local" ? "load_settings_change" : "load_host_settings_change", { hostId }, settingsChangeSchema); }
-    catch (reason) {
-      if (!(reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: load_")) throw reason;
-
-      return { settings: await this.loadHost() };
-    }
+  async loadHostChange(): Promise<SettingsChange> {
+    return this.call("load_settings_change", { hostId: this.connection.target().hostId });
   }
 
-  async loadHost() {
-    const hostId = this.connection.target().hostId;
-
-    if (hostId === "local") return this.call("load_app_settings", undefined, appSettingsSchema);
-
-    try { return await this.call("load_host_settings", { hostId }, appSettingsSchema); }
-    catch (reason) {
-      if ((reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
-      throw reason;
-    }
+  async loadHost(): Promise<AppSettings> {
+    return this.call("load_app_settings", { hostId: this.connection.target().hostId });
   }
 
-  async saveHost(settings: AppSettings) {
-    const hostId = this.connection.target().hostId;
-
-    try { return await this.call("save_host_settings", { hostId, settings }, settingsChangeSchema); }
-    catch (reason) {
-      if ((reason instanceof Error ? reason.message : String(reason)).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
-      throw reason;
-    }
+  async saveHost(settings: AppSettings): Promise<SettingsChange> {
+    return this.call("save_host_settings", { hostId: this.connection.target().hostId, settings });
   }
 
   save(settings: AppSettings, reconnect = true, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
@@ -115,7 +85,7 @@ export class NativeSettings {
     const previous = previousChange.settings;
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
     const daemonChanged = needsDaemonSave(daemonSettings, previous, scope);
-    const change: SettingsChange = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings }, settingsChangeSchema) : { ...previousChange };
+    const change: SettingsChange = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings }) : { ...previousChange };
     await this.savePreferences(settings, baseline, change, daemonChanged, scope);
 
     if (daemonChanged) await this.reloadCommitted(change);

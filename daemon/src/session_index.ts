@@ -12,7 +12,6 @@ import { refreshProjectRepository } from './project_repositories';
 import * as sidebarStorage from './sidebar_storage';
 import * as Registry from './session_registry';
 import * as WorktreeRecords from '../resources/chat-worktree-records.cjs';
-import * as restoreRecovery from './restore_recovery';
 import { loadAppSettings } from './settings';
 import type { RemoteHost } from './settings_types';
 import { transaction } from './util/db';
@@ -52,7 +51,7 @@ const sessionSummarySchema = z.object({
   forkEntryId: z.string().min(1).optional(),
 });
 const indexSessions = hostOperation<{ paths: string[] }, { summaries: z.infer<typeof sessionSummarySchema>[]; warnings: string[] }>('index-sessions', 'general', STORAGE_TIMEOUT,
-  value => z.object({ summaries: z.array(sessionSummarySchema), warnings: z.array(z.string()) }).parse(value));
+  z.object({ summaries: z.array(sessionSummarySchema), warnings: z.array(z.string()) }));
 
 const INDEX_BATCH_BYTES = 128 * 1024 * 1024;
 const INDEX_BATCH_FILES = 500;
@@ -102,7 +101,6 @@ async function readSummaryBatch(candidates: SessionCandidate[]): Promise<Map<str
 }
 
 export async function listLocalSessions(index: SessionIndexRuntime, root: string): Promise<SessionSummary[]> {
-  await restoreRecovery.recover(dirname(root));
   const sessions = await cachedLocalSessions(index, root);
   await inspectSessionProjects(index, sessions, undefined);
   attachWorktreeRepositories(sessions, dirname(root));
@@ -198,10 +196,7 @@ export function homeDirectory(): string {
 
 type TemporaryChatRequest = { action: 'create'; id: string; root: string } | { action: 'remove'; path: string; root: string };
 
-const temporaryChatOperation = hostOperation<TemporaryChatRequest, string | null>('temporary-chat', 'general', DEFAULT_TIMEOUT, value => {
-  if (value !== null && typeof value !== 'string') throw new Error('expected a directory');
-  return value;
-});
+const temporaryChatOperation = hostOperation<TemporaryChatRequest, string | null>('temporary-chat', 'general', DEFAULT_TIMEOUT, z.string().nullable());
 
 export async function createLocalTemporaryChat(home: string, sessionId: string): Promise<string> {
   let directory: string | null;

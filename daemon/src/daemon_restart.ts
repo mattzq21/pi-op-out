@@ -6,44 +6,32 @@ import type { ChildProcess } from 'node:child_process';
 import * as endpoint from './daemon_endpoint';
 import * as artifacts from './restart_artifacts';
 import * as restartStorage from './restart_storage';
-import * as records from './settings_records';
+import * as records from '../resources/application-records.cjs';
 import * as daemonLog from './daemon_log';
 import { localHost } from './local_host';
 import * as peers from './peers';
-import { restartConfiguration, validateConfiguration } from './host/index';
-import { piExecutable } from './environment';
-import { hostOperationsBusy } from './host_operations';
-import { daemonScript } from './session_worker';
+import { restartConfiguration, saveConfiguration, validateConfiguration } from './host/index';
+import { hostOperationsIdle } from './host_operations';
+import { daemonScript } from './daemon_executable';
 import { RwLock, errorText, logFailure, sleep } from './util/sync';
+import { childLink, parentLink, waitFor, type RestartLink } from './restart_link';
+import { lockFile } from './util/flock';
 import type { App } from './app';
 
 let PREPARING = false;
 
 export class Runtime { gate = new RwLock(); }
 
-interface Plan {
-  id: string;
-  owner: number;
-  executable: string;
-  fallback: string;
-  enabled: string[];
-  previous: string[];
-  bind: string;
-  debug_bind: string | null;
-}
+type Plan = restartStorage.RestartPlan;
 
-function path(name: string): string { return join(endpoint.directory(), name); }
-
-async function write(name: string, value: any, condition?: () => boolean): Promise<void> {
+async function write(name: 'status', value: restartStorage.RestartStatus, condition?: () => boolean): Promise<void> {
   const lock = await artifacts.publicationLock();
-  try { if (!condition || condition()) restartStorage.write(path(name), value); } finally { lock.release(); }
+  try { if (!condition || condition()) restartStorage.write(endpoint.directory(), name, value); } finally { lock.release(); }
 }
 
 function readPlan(): Plan {
-  const plan = restartStorage.read(path('restart-plan.json'));
+  const plan = restartStorage.read(endpoint.directory(), 'plan');
   if (!plan) throw new Error('Restart plan is missing');
-  if (typeof plan.id !== 'string' || typeof plan.owner !== 'number' || typeof plan.executable !== 'string' || typeof plan.fallback !== 'string'
-    || !Array.isArray(plan.enabled) || !Array.isArray(plan.previous) || typeof plan.bind !== 'string') throw new Error('Invalid restart plan');
   return plan;
 }
 
@@ -54,18 +42,18 @@ export async function blocking(): Promise<boolean> {
 }
 
 export function status(id: string): any {
-  const value = restartStorage.read(path('restart-status.json'));
+  const value = restartStorage.read(endpoint.directory(), 'status');
   if (!value) throw new Error('Restart status is missing');
   if (value.restartId !== id) throw new Error('This restart has been superseded by another restart');
   return value;
 }
 
-function statusRecord(plan: Plan, phase: string, error?: string, pid?: number): any {
+function statusRecord(plan: Plan, phase: restartStorage.RestartStatus['phase'], error?: string, pid?: number): restartStorage.RestartStatus {
   return { restartId: plan.id, phase, error: error ?? null, processId: pid ?? null, expiresAt: Math.floor(Date.now() / 1000) + 180 };
 }
 
-async function publish(plan: Plan, phase: string, error?: string, pid?: number, condition?: () => boolean): Promise<void> {
-  await write('restart-status.json', statusRecord(plan, phase, error, pid), condition);
+async function publish(plan: Plan, phase: restartStorage.RestartStatus['phase'], error?: string, pid?: number, condition?: () => boolean): Promise<void> {
+  await write('status', statusRecord(plan, phase, error, pid), condition);
 }
 
 function currentExecutable(): string {
@@ -95,7 +83,7 @@ async function validateRestartBind(bind: string): Promise<void> {
 async function debugRestartBind(): Promise<string | null> {
   let bind: string | null = null;
   try {
-    const bytes = records.read(path('debug-mobile.json'));
+    const bytes = records.read(endpoint.directory(), 'debug-mobile');
     const url = bytes ? JSON.parse(bytes.toString('utf8'))?.url : undefined;
     if (typeof url === 'string') bind = url.replace(/^(ws:\/\/)+/, '');
   } catch (error) { logFailure('Ignored the saved debug address of the mobile server')(error); }
@@ -112,18 +100,12 @@ function restartBind(url: string): string {
   return bind;
 }
 
-function strings(value: any): string[] {
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new Error('invalid type: expected a sequence of strings');
-  return value;
-}
-
-async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backup]> {
+async function makePlan(app: App, prepared: { enabled: string[]; previous: string[] }): Promise<[Plan, artifacts.Backup]> {
   const id = randomUUID();
   const debugBind = await debugRestartBind();
   const current = endpoint.read();
   const executable = replacementExecutable();
-  const enabled = strings(prepared?.enabled);
-  const previous = strings(prepared?.previous);
+  const { enabled, previous } = prepared;
   const bind = restartBind(current.url);
   await validateRestartBind(bind);
   const backup = await artifacts.Backup.create(id, executable);
@@ -133,7 +115,7 @@ async function makePlan(app: App, prepared: any): Promise<[Plan, artifacts.Backu
 
 const preparations = new Map<string, Promise<void>>();
 
-export async function prepare(app: App, args: any): Promise<any> {
+export async function prepare(app: App, args: { enabled: string[]; revision: string; closeTerminals?: boolean }): Promise<any> {
   const key = endpoint.directory();
   const previous = preparations.get(key);
   let finish!: () => void;
@@ -162,7 +144,7 @@ async function prepareOnce(app: App, args: any): Promise<any> {
   } finally { PREPARING = false; }
 }
 
-async function preparePluginHandoff(app: App, args: any): Promise<any> {
+async function preparePluginHandoff(app: App, args: { enabled: string[]; revision: string }): Promise<any> {
   const prepared = await localHost(app).host.prepareRestart(args);
   let backup: artifacts.Backup | undefined;
   try {
@@ -184,7 +166,7 @@ export async function ensureLocalIdle(app: App): Promise<void> {
 
 export async function ensureUnattendedIdle(app: App): Promise<void> {
   app.broker.ensureIdle();
-  if (hostOperationsBusy()) throw new Error('Wait for storage operations to finish before restarting the daemon');
+  if (!(await hostOperationsIdle(10_000))) throw new Error('Wait for storage operations to finish before restarting the daemon');
   await localHost(app).host.checkIdle();
 }
 
@@ -192,8 +174,8 @@ async function prepareHandoff(plan: Plan): Promise<any> {
   try {
     const lock = await artifacts.publicationLock();
     try {
-      restartStorage.write(path('restart-plan.json'), plan);
-      restartStorage.write(path('restart-status.json'), statusRecord(plan, 'preparing'));
+      restartStorage.write(endpoint.directory(), 'plan', plan);
+      restartStorage.write(endpoint.directory(), 'status', statusRecord(plan, 'preparing'));
     } finally { lock.release(); }
     await arm(plan);
   } catch (error: any) {
@@ -211,12 +193,17 @@ function watch(child: ChildProcess): ChildProcess {
   return child;
 }
 
+// The restart has three processes. This daemon starts the coordinator, which checks the new daemon and waits. When this
+// daemon has stopped and let go of the daemon lock, the coordinator starts the new daemon. Only the process that holds the
+// daemon lock changes the storage: the coordinator reports to this daemon, and the new daemon records the outcome.
 async function arm(plan: Plan): Promise<void> {
-  const coordinator = watch(await launch(plan, plan.fallback, '--restart-coordinator'));
-  try { await waitArmed(plan, coordinator); }
-  catch (error) { coordinator.kill('SIGKILL'); throw error; }
+  const coordinator = watch(await launch(plan, plan.fallback, '--restart-coordinator', true));
+  const link = childLink(coordinator);
+  try { await waitArmed(link); }
+  catch (error) { coordinator.kill('SIGKILL'); link.close(); throw error; }
+  await publish(plan, 'armed');
   coordinator.unref();
-  coordinators.set(plan.id, coordinator);
+  coordinators.set(plan.id, { child: coordinator, link });
   coordinator.once('exit', () => {
     coordinators.delete(plan.id);
     const armed = () => { try { return readPlan().id === plan.id && status(plan.id).phase === 'armed'; } catch { return false; } };
@@ -226,18 +213,14 @@ async function arm(plan: Plan): Promise<void> {
 
 const COORDINATOR_STOPPED = 'The restart coordinator stopped before the restart; the previous daemon is still running';
 
-const coordinators = new Map<string, ChildProcess>();
+const coordinators = new Map<string, { child: ChildProcess; link: RestartLink }>();
 
-async function waitArmed(plan: Plan, coordinator: ChildProcess): Promise<void> {
-  const deadline = Date.now() + 40_000;
-  while (Date.now() < deadline) {
-    const value = status(plan.id);
-    if (value.phase === 'armed') return;
-    if (value.phase === 'failed') throw new Error(typeof value.error === 'string' ? value.error : 'Restart validation failed');
-    if (exited(coordinator)) throw new Error('Restart coordinator stopped before validation completed');
-    await sleep(100);
-  }
-  throw new Error('Restart validation timed out; the previous daemon is still running');
+function waitArmed(link: RestartLink): Promise<true> {
+  return waitFor(link, message => {
+    if (message?.phase === 'armed') return true;
+    if (message?.phase === 'failed') throw new Error(typeof message.error === 'string' ? message.error : 'Restart validation failed');
+    return undefined;
+  }, () => new Error('Restart coordinator stopped before validation completed'), 40_000, 'Restart validation timed out; the previous daemon is still running');
 }
 
 export async function commit(app: App, id: string): Promise<void> {
@@ -246,13 +229,15 @@ export async function commit(app: App, id: string): Promise<void> {
     const plan = readPlan();
     if (plan.id !== id || plan.owner !== process.pid) return;
     if (status(id).phase !== 'armed') return;
-    const coordinator = coordinators.get(id);
-    if (!coordinator || exited(coordinator)) {
-      restartStorage.write(path('restart-status.json'), statusRecord(plan, 'failed', COORDINATOR_STOPPED));
+    const running = coordinators.get(id);
+    if (!running || exited(running.child)) {
+      restartStorage.write(endpoint.directory(), 'status', statusRecord(plan, 'failed', COORDINATOR_STOPPED));
       throw new Error(COORDINATOR_STOPPED);
     }
-    restartStorage.write(path('restart-status.json'), statusRecord(plan, 'restarting'));
+    const coordinator = running.child;
+    restartStorage.write(endpoint.directory(), 'status', statusRecord(plan, 'restarting'));
     app.emit('pi://daemon-restarting', { hostId: 'local', restartId: id });
+    running.link.send({ restart: id });
     setTimeout(() => {
       if (!exited(coordinator)) { app.clients.stop(); return; }
       console.error(COORDINATOR_STOPPED);
@@ -262,10 +247,10 @@ export async function commit(app: App, id: string): Promise<void> {
   } finally { lock.release(); }
 }
 
-async function launch(plan: Plan, executable: string, mode: string): Promise<ChildProcess> {
-  const command: daemonLog.DaemonCommand = { program: executable, args: [mode, plan.id], env: {
+async function launch(plan: Plan, executable: string, mode: string, link = false, env: Record<string, string> = {}): Promise<ChildProcess> {
+  const command: daemonLog.DaemonCommand = { program: executable, args: [mode, plan.id], link, env: {
     PIOP_DAEMON_EXECUTABLE: plan.executable, PIOP_MOBILE_BIND: plan.bind,
-    PIOP_DEBUG_MOBILE_BIND: plan.debug_bind ?? process.env.PIOP_DEBUG_MOBILE_BIND,
+    PIOP_DEBUG_MOBILE_BIND: plan.debug_bind ?? process.env.PIOP_DEBUG_MOBILE_BIND, ...env,
   } };
   const logger = mode === '--restart-candidate' ? executable : plan.fallback;
   await daemonLog.configure(command, logger);
@@ -274,52 +259,39 @@ async function launch(plan: Plan, executable: string, mode: string): Promise<Chi
 
 async function validate(plan: Plan): Promise<void> {
   const child = watch(await launch(plan, plan.executable, '--validate-plugins'));
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (exited(child)) {
-      if (child.exitCode === 0) return;
-      throw new Error('Updated daemon could not load the plugins; the previous daemon is still running. See daemon.log for details.');
-    }
-    await sleep(100);
-  }
-  child.kill('SIGKILL');
-  throw new Error('Updated plugin validation timed out; the previous daemon is still running');
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Updated plugin validation timed out; the previous daemon is still running')); }, 30_000);
+    child.once('exit', code => { clearTimeout(timer); resolve(code); });
+  });
+  if (code !== 0) throw new Error('Updated daemon could not load the plugins; the previous daemon is still running. See daemon.log for details.');
 }
 
-function claimed(): boolean {
-  try { endpoint.claim().release(); return true; } catch { return false; }
+// Waits until the previous daemon has asked for the restart and then let go of the daemon lock. A restart that is not
+// asked for within 45 seconds ends; the previous daemon then records it as failed when this coordinator stops.
+async function waitForHandoff(plan: Plan, link: RestartLink): Promise<void> {
+  await waitFor(link, message => message?.restart === plan.id ? true : undefined, () => new Error('Restart was cancelled before shutdown'), 45_000, 'Daemon restart handoff timed out');
+  const lock = await lockFile(join(endpoint.directory(), 'daemon.lock'), 0o600, false, 120_000);
+  if (!lock) throw new Error('Daemon restart handoff timed out');
+  lock.release();
 }
 
-async function waitForHandoff(plan: Plan): Promise<void> {
-  let deadline = Date.now() + 45_000;
-  const hardDeadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    const value = status(plan.id);
-    if (value.phase === 'failed') throw new Error('Restart was cancelled before shutdown');
-    if (value.phase === 'restarting') {
-      if (claimed()) return;
-      let alive = true;
-      try { process.kill(plan.owner, 0); }
-      catch (error: any) {
-        if (error?.code === 'ESRCH') alive = false;
-        else if (error?.code !== 'EPERM') throw error;
-      }
-      if (alive) deadline = Math.min(hardDeadline, Date.now() + 45_000);
-    }
-    await sleep(100);
-  }
-  throw new Error('Daemon restart handoff timed out');
-}
-
-async function startCandidate(plan: Plan, fallback: boolean): Promise<number> {
-  const lock = await artifacts.publicationLock();
+// Starts the new daemon, or with fallbackError the previous one, and waits until it is ready. The started daemon
+// records the outcome of the restart itself, because it holds the daemon lock.
+async function startCandidate(plan: Plan, fallbackError?: string): Promise<number> {
+  const env: Record<string, string> = fallbackError === undefined ? {} : { PIOP_RESTART_FALLBACK_ERROR: fallbackError };
+  const child = watch(await launch(plan, fallbackError === undefined ? plan.executable : plan.fallback, '--restart-candidate', true, env));
+  const link = childLink(child);
   try {
-    restartStorage.write(path('plugins.json'), restartConfiguration(fallback ? plan.previous : plan.enabled, plan.previous));
-    restartStorage.remove(path('restart-ready.json'));
-  } finally { lock.release(); }
-  const child = watch(await launch(plan, fallback ? plan.fallback : plan.executable, '--restart-candidate'));
-  try { return await waitReady(plan, child); }
-  catch (error: any) {
+    const exit = new Promise<never>((_, reject) => child.once('exit', () => reject(new Error('The replacement daemon stopped during startup'))));
+    exit.catch(() => {});
+    const ready = waitFor(link, message => message?.ready === plan.id && message.processId === child.pid ? true : undefined,
+      () => new Error('The replacement daemon stopped during startup'), 45_000, 'The replacement daemon did not become ready');
+    await Promise.race([ready, exit]);
+    child.unref();
+    link.close();
+    return child.pid!;
+  } catch (error: any) {
+    link.close();
     try { await killAndWait(child); }
     catch (failure: any) { throw new Error((error?.message ?? String(error)) + '. ' + (failure?.message ?? String(failure))); }
     throw error;
@@ -334,39 +306,27 @@ async function killAndWait(child: ChildProcess): Promise<void> {
   if (!exited(child)) throw new Error('The replacement daemon ' + child.pid + ' did not stop within 10 seconds of SIGKILL');
 }
 
-async function waitReady(plan: Plan, child: ChildProcess): Promise<number> {
-  const deadline = Date.now() + 45_000;
-  let failure: unknown;
-  while (Date.now() < deadline) {
-    if (exited(child)) throw new Error('The replacement daemon stopped during startup');
-    let ready: any = null;
-    try { ready = restartStorage.read(path('restart-ready.json')); } catch (error) { failure = error; }
-    if (ready && ready.restartId === plan.id && ready.processId === child.pid) { child.unref(); return child.pid!; }
-    await sleep(100);
-  }
-  throw new Error('The replacement daemon did not become ready' + (failure === undefined ? '' : '. Last readiness check failed: ' + errorText(failure)));
+// No daemon runs when both daemons failed to start. The coordinator then records the failure, under the daemon lock.
+async function recordFailure(plan: Plan, message: string): Promise<void> {
+  const claimed = endpoint.claim();
+  try { await publish(plan, 'failed', message); } finally { claimed.release(); }
 }
 
-async function coordinate(plan: Plan): Promise<void> {
-  await validate(plan);
-  await publish(plan, 'armed');
-  await waitForHandoff(plan);
-  let pid: number;
-  try {
-    await publish(plan, 'restarting');
-    pid = await startCandidate(plan, false);
-  }
+async function coordinate(plan: Plan, link: RestartLink): Promise<void> {
+  try { await validate(plan); }
+  catch (error: any) { link.send({ phase: 'failed', error: error?.message ?? String(error) }); throw error; }
+  link.send({ phase: 'armed' });
+  await waitForHandoff(plan, link);
+  try { await startCandidate(plan); }
   catch (error: any) {
     const message = error?.message ?? String(error);
-    try {
-      await publish(plan, 'restarting');
-      pid = await startCandidate(plan, true);
+    try { await startCandidate(plan, message); }
+    catch (rollback: any) {
+      const failure = message + '. The previous daemon also failed to start: ' + (rollback?.message ?? rollback) + '. See daemon.log for details.';
+      try { await recordFailure(plan, failure); } catch (record) { console.error('Could not record the failed daemon restart: ' + errorText(record)); }
+      throw new Error(failure);
     }
-    catch (rollback: any) { throw new Error(message + '. The previous daemon also failed to start: ' + (rollback?.message ?? rollback) + '. See daemon.log for details.'); }
-    await publish(plan, 'rolled_back', message + '. Restored the previous daemon and plugins.', pid);
-    return;
   }
-  await publish(plan, 'complete', undefined, pid);
 }
 
 export function specialMode(): Promise<void> | undefined {
@@ -378,25 +338,39 @@ export function specialMode(): Promise<void> | undefined {
 async function runSpecial(mode: string): Promise<void> {
   const plan = readPlan();
   if (process.argv[3] !== plan.id) throw new Error('Invalid daemon restart identifier');
-  if (mode === '--validate-plugins') return validateConfiguration(piExecutable(), plan.enabled);
-  try { await coordinate(plan); }
-  catch (error: any) { try { await publish(plan, 'failed', error?.message ?? String(error)); } catch (failure) { console.error(failure); } throw error; }
-  finally { try { await artifacts.reconcile(); } catch (error: any) { console.error('Restart artifact cleanup remains pending: ' + (error?.message ?? error)); } }
+  if (mode === '--validate-plugins') return validateConfiguration(plan.enabled);
+  await coordinate(plan, parentLink());
+}
+
+// The plugin setup that this new daemon starts with: the planned one, or the previous one when it stands in for a
+// failed new daemon. It saves it before the plugins load.
+export function adoptCandidatePlan(): void {
+  if (process.argv[2] !== '--restart-candidate') return;
+  const plan = readPlan();
+  if (process.argv[3] !== plan.id) throw new Error('Invalid daemon restart identifier');
+  const fallback = process.env.PIOP_RESTART_FALLBACK_ERROR !== undefined;
+  saveConfiguration(restartConfiguration(fallback ? plan.previous : plan.enabled, plan.previous));
 }
 
 export async function initializeCandidate(app: App): Promise<void> {
   if (process.argv[2] !== '--restart-candidate') return;
-  const plan = readPlan();
-  if (process.argv[3] !== plan.id) throw new Error('Invalid daemon restart identifier');
   const result = await localHost(app).host.pluginStatus();
   if (typeof result?.error === 'string') throw new Error(result.error);
 }
 
+// Records the outcome of the restart and tells the coordinator that this daemon is ready.
 export async function ready(): Promise<void> {
   if (process.argv[2] !== '--restart-candidate') return;
+  const fallbackError = process.env.PIOP_RESTART_FALLBACK_ERROR;
+  delete process.env.PIOP_RESTART_FALLBACK_ERROR;
+  const link = parentLink();
   const lock = await artifacts.publicationLock();
   try {
     const plan = readPlan();
-    restartStorage.write(path('restart-ready.json'), { restartId: plan.id, processId: process.pid });
+    restartStorage.write(endpoint.directory(), 'status', fallbackError === undefined
+      ? statusRecord(plan, 'complete', undefined, process.pid)
+      : statusRecord(plan, 'rolled_back', fallbackError + '. Restored the previous daemon and plugins.', process.pid));
+    link.send({ ready: plan.id, processId: process.pid });
   } finally { lock.release(); }
+  link.close();
 }

@@ -30,8 +30,9 @@ test.concurrent('the chat list shows a chat as running while its agent works, an
     let mark = 0;
     try { expect(await listed()).toBe(true); mark = agents.daemon.events.length; } finally { busy.release({ text: 'Indexed.' }); }
     await chat.until(history => text(history.at(-1)) === 'Indexed.');
-    for (let tries = 0; !agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed') && tries < 50; tries++) await Bun.sleep(100);
-    expect(agents.daemon.events.slice(mark).some(event => event.event === 'pi://sessions-changed')).toBe(true);
+    const finished = (event: any) => event.event === 'pi://session-running' && event.payload.sessionId === chat.sessionId && event.payload.running === false;
+    for (let tries = 0; !agents.daemon.events.slice(mark).some(finished) && tries < 50; tries++) await Bun.sleep(100);
+    expect(agents.daemon.events.slice(mark).some(finished)).toBe(true);
     expect(await listed()).toBe(false);
   } finally { await agents.close(); }
 }, 60000);

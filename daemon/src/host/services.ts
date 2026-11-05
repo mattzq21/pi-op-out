@@ -7,8 +7,8 @@ export class HostServices {
   private providers: ProviderService;
   private plugins: PluginService;
 
-  constructor(executable: string) {
-    this.providers = new ProviderService(executable);
+  constructor() {
+    this.providers = new ProviderService();
     this.plugins = new PluginService();
   }
 
@@ -23,8 +23,9 @@ export class HostServices {
   cancelProviderAuth(owner: string): Promise<void> { return this.providers.cancelOwner(owner); }
 
   pluginStatus(): Promise<any> { return this.plugins.status(); }
+  pluginClient(id: string): Promise<{ source: string }> { return this.plugins.client(id); }
 
-  prepareRestart(request: { enabled?: unknown; revision?: unknown }): Promise<any> { return this.plugins.prepareRestart(request); }
+  prepareRestart(request: { enabled: string[]; revision: string }): Promise<{ enabled: string[]; previous: string[] }> { return this.plugins.prepareRestart(request); }
 
   refreshProviders(): Promise<number> { return this.providers.refresh(); }
 

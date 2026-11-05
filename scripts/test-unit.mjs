@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { nativeTestExecutable } from '../test/native-file-command.mjs';
 import { buildTraceControls } from '../test/trace-command-fixture.mjs';
+import { testPi } from '../test/pi-install.mjs';
 
 delete process.env.PIOP_TEST_NATIVE_EXECUTABLE;
 delete process.env.PIOP_TEST_DAEMON_EXECUTABLE;
@@ -18,6 +19,7 @@ async function run() {
       nativeTestExecutable(),
       promisify(execFile)('bun', ['test/daemon/build.ts']),
       buildTraceControls(controlsBundle),
+      testPi(),
     ]);
     const failures = builds.filter(result => result.status === 'rejected').map(result => result.reason);
     if (failures.length === 1) throw failures[0];

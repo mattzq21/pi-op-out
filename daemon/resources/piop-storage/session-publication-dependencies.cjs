@@ -11,9 +11,7 @@ const workspaceSchema = Type.Object({ path: Type.String(), kind: Type.Union(['ex
 
 const optionsSchema = Type.Object({ workspace: Type.Optional(workspaceSchema) });
 
-const goalSchema = Type.Object({ version: Type.Literal(1), policy: Type.Literal('shared-profile'), directories: Type.Array(Type.Object({ path: Type.String(), identity: identitySchema })) });
-
-const contractSchema = Type.Object({ version: Type.Literal(1), workspace: Type.Object({ ...workspaceSchema.properties, identity: identitySchema }), goalAssets: goalSchema });
+const contractSchema = Type.Object({ version: Type.Literal(1), workspace: Type.Object({ ...workspaceSchema.properties, identity: identitySchema }), goalAssets: require('./goal-dependencies.cjs').contractSchema });
 
 function workspace(header, options) {
   const given = options.workspace ?? { path: header.cwd, kind: 'existing' };

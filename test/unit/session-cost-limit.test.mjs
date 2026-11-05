@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import costLimitExtension from '../../daemon/plugins/cost/index.ts';
+import costLimitExtension from '../../plugins/cost/extension/index.ts';
 import hooksExtended from '../../daemon/resources/hooks-extended/index.ts';
 
 function costLimit(pi) {

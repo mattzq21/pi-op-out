@@ -65,15 +65,13 @@ test('valid edge-case shortcuts, a minimum context cap and machines are saved', 
   expect(saved.hosts.map((host: any) => host.id)).toEqual(['remote', 'other']);
 });
 
-test('saving drops retired shortcut actions and moves Ctrl+L focus to Ctrl+E before it validates', async () => {
+test('saving drops shortcuts of actions that no longer exist before it validates', async () => {
   const settings = await load();
-  Object.assign(settings.keybindings, { retiredAction: 'Ctrl+G', focusComposer: 'Ctrl+L' });
+  Object.assign(settings.keybindings, { retiredAction: 'Ctrl+G' });
   const change = await save(settings);
   expect(change.settings.keybindings.retiredAction).toBeUndefined();
-  expect(change.settings.keybindings.focusComposer).toBe('Ctrl+E');
   const saved = await load();
   expect(saved.keybindings.retiredAction).toBeUndefined();
-  expect(saved.keybindings.focusComposer).toBe('Ctrl+E');
   saved.keybindings.focusComposer = 'Alt+E';
   await save(saved);
   expect((await load()).keybindings.focusComposer).toBe('Alt+E');
@@ -110,20 +108,6 @@ test('a save based on outdated settings is rejected and keeps the newer settings
   stale.plugins.review.reviewAgent = 'stale-model';
   expect(await daemon.failure('save_app_settings', { settings: stale })).toContain('Settings changed in another window or client');
   expect((await load()).plugins.review.reviewAgent).toBe('fresh-model');
-});
-
-test('a save that cannot lock the settings fails, keeps the settings and tells no client', async () => {
-  const before = await load();
-  const lock = join(daemon.home, '.piop/settings.lock');
-  rmSync(lock, { force: true });
-  mkdirSync(lock);
-  try {
-    const changed = { ...before, plugins: { ...before.plugins, review: { reviewAgent: 'unsaved-model' } } };
-    const seen = daemon.events.length;
-    expect(await daemon.failure('save_app_settings', { settings: changed })).toStartWith('Could not lock settings');
-    expect(daemon.events.slice(seen).filter(event => event.event === 'pi://settings-changed')).toEqual([]);
-  } finally { rmSync(lock, { recursive: true }); }
-  expect(await load()).toEqual(before);
 });
 
 test('a save fails and keeps the settings while another process holds the settings database', async () => {

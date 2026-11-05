@@ -37,6 +37,7 @@ import { useAppEvents } from "./useAppEvents";
 import { useAppKeyboard } from "./useAppKeyboard";
 import { useAppUsage } from "./useAppUsage";
 import { isDaemonRefusal } from "./lib/commandRejected";
+import { markRunning, reuseRows } from "./lib/sessionRows";
 
 export { formatCodexReset,usageWindowsDescription } from "./appSupport";
 
@@ -279,7 +280,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
         if (session.path) runtimePool().restoreSummary(hostId, session.path);
       }
 
-      setSessions(nextSessions.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session)));
+      setSessions(current => reuseRows(current, nextSessions.filter((session) => !runtimePool().isRemoved(session) && !archives.isArchived(session))));
       chatSession().setState((current) => {
         const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostIdRef.current);
 
@@ -312,6 +313,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
         void syncSessionIndex();
       }, z.object({ type: z.string().optional() })),
       listen("pi://sessions-changed", () => { void syncSessionIndex(); }, z.unknown()),
+      listen("pi://session-running", ({ payload }) => { setSessions(current => markRunning(current, payload.hostId, payload.sessionId, payload.running)); }, z.object({ hostId: z.string(), sessionId: z.string(), running: z.boolean() })),
       listen("pi://session-restored", ({ payload }) => {
         archives.restored(payload.hostId, payload.sessionId);
         runtimePool().restoreSummary(payload.hostId, payload.sessionPath);

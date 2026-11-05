@@ -1,0 +1,15 @@
+{
+  "id": "btw",
+  "name": "Side chats",
+  "extension": {
+    "after": "session"
+  },
+  "commands": {
+    "btw": "immediate"
+  },
+  "auxiliary": {
+    "label": "Btw",
+    "letter": "B",
+    "color": "#6d8fb8"
+  }
+}

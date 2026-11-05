@@ -1,10 +1,6 @@
 import { createMemo, Index, Show } from "solid-js";
 import { subagentLook } from "../lib/subagentLooks";
-
-const KIND_BADGES: Record<string, { letter: string; color: string }> = {
-  review: { letter: "R", color: "#c58d43" },
-  btw: { letter: "B", color: "#6d8fb8" },
-};
+import { auxiliaryLook } from "../plugins";
 
 export function SubagentAvatar(props: { seed: string; look?: number; size?: number }) {
   const look = createMemo(() => {
@@ -20,7 +16,7 @@ export function SubagentAvatar(props: { seed: string; look?: number; size?: numb
 }
 
 export function AgentIcon(props: { kind: string; name: string; look?: number; running: boolean; size?: number }) {
-  const badge = () => KIND_BADGES[props.kind] ?? { letter: props.kind.slice(0, 1).toUpperCase(), color: "#8f8b82" };
+  const badge = () => auxiliaryLook(props.kind);
 
   return <span class="agent-icon" classList={{ "agent-running": props.running }} style={{ "--agent-icon-size": `${props.size ?? 18}px` }} aria-hidden="true">
     <Show when={props.kind === "subagent"} fallback={<span class="agent-kind-badge" style={{ background: badge().color }}>{badge().letter}</span>}>

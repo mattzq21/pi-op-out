@@ -1,13 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { DatabaseSync } from "node:sqlite";
-import { Type as Schema, type Static } from "typebox";
-import { Parse } from "typebox/value";
-import { connection, register, storageRoot, transaction } from "../session-database.cjs";
-import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
+import { call } from "../storage-channel.cjs";
+import type { SubagentRun } from "../session-broker/subagent-identity.ts";
 
 export { resultNotificationId } from "../session-broker/subagent-identity.ts";
 
 export { runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
+
+// The subagent runs of this chat. The daemon saves them; each call goes through the storage channel.
 
 function sessionFile(ctx: ExtensionContext) {
   const file = ctx.sessionManager.getSessionFile();
@@ -17,71 +16,15 @@ function sessionFile(ctx: ExtensionContext) {
   return file;
 }
 
-function runDatabase(file: string, sessionId: string) {
-  const db = connection(storageRoot(file));
-
-  transaction(db, "IMMEDIATE", () => {
-    if (db.prepare("SELECT 1 FROM session_subagent_state WHERE session_id=?").get(sessionId)) return;
-    register(db, sessionId, file);
-    db.prepare("INSERT INTO session_subagent_state VALUES (?)").run(sessionId);
-  });
-
-  return db;
-}
-
-const savedRunSchema = Schema.Object({ run_id: Schema.String(), run_json: Schema.String(), child_path: Schema.Union([Schema.String(), Schema.Null()]) });
-
-const selectRuns = `SELECT r.run_id, r.run_json, s.session_path AS child_path FROM session_subagent_runs r
-  LEFT JOIN sessions s ON s.session_id=json_extract(r.run_json, '$.sessionId')`;
-
-function decodeRun(saved: Static<typeof savedRunSchema>, sessionId: string) {
-  const run = Parse(runSchema, JSON.parse(saved.run_json));
-
-  if (run.parentSessionId !== sessionId || resultNotificationId(run) !== saved.run_id) throw new Error("Invalid saved subagent identity");
-
-  if (saved.child_path) run.sessionPath = saved.child_path;
-
-  return run;
-}
-
-function readRun(db: DatabaseSync, sessionId: string, id: string) {
-  const row = db.prepare(`${selectRuns} WHERE r.session_id=? AND r.run_id=?`).get(sessionId, id);
-
-  return row ? decodeRun(Parse(savedRunSchema, row), sessionId) : undefined;
-}
-
-function storeRun(db: DatabaseSync, run: SubagentRun) {
-  db.prepare(`INSERT INTO session_subagent_runs VALUES (?, ?, ?, ?) ON CONFLICT(session_id, run_id)
-    DO UPDATE SET started_at=excluded.started_at, run_json=excluded.run_json`)
-    .run(run.parentSessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
-}
-
-function mergePendingRun(db: DatabaseSync, run: SubagentRun) {
-  const previous = readRun(db, run.parentSessionId, resultNotificationId(run));
-
-  if (previous && previous.status !== "running" && run.status === "running") return false;
-
-  run.deliveryIds = [...new Set([...(previous?.deliveryIds ?? []), ...(run.deliveryIds ?? [])])];
-
-  return true;
-}
-
 export function persistSubagentRun(ctx: ExtensionContext, run: SubagentRun) {
   if (run.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("Subagent run belongs to another parent conversation");
-  const db = runDatabase(sessionFile(ctx), run.parentSessionId);
+  const merged = call("subagents.persist", { sessionId: run.parentSessionId, path: sessionFile(ctx), run }) as string[] | null;
 
-  transaction(db, "IMMEDIATE", () => {
-    if (mergePendingRun(db, run)) storeRun(db, Parse(runSchema, run));
-  });
+  if (merged !== null) run.deliveryIds = merged;
 }
 
-function readRuns(file: string, sessionId: string) {
-  return runDatabase(file, sessionId).prepare(`${selectRuns} WHERE r.session_id=? ORDER BY r.started_at, r.run_id`)
-    .all(sessionId).map(row => decodeRun(Parse(savedRunSchema, row), sessionId));
-}
-
-export function savedSubagentRuns(ctx: ExtensionContext) {
+export function savedSubagentRuns(ctx: ExtensionContext): SubagentRun[] {
   const file = ctx.sessionManager.getSessionFile();
 
-  return file ? readRuns(file, ctx.sessionManager.getSessionId()) : [];
+  return file ? call("subagents.saved", { sessionId: ctx.sessionManager.getSessionId(), path: file }) as SubagentRun[] : [];
 }

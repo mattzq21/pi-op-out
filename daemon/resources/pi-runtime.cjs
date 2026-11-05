@@ -1,6 +1,5 @@
 const { readFileSync, realpathSync } = require('node:fs');
-const { homedir } = require('node:os');
-const { delimiter, dirname, join } = require('node:path');
+const { dirname, join } = require('node:path');
 
 const PI_PACKAGE = '@earendil-works/pi-coding-agent';
 const SUPPORTED_PI_VERSION = '1.5.0';
@@ -10,21 +9,8 @@ function missing(error) {
 }
 
 function executablePath(executable) {
-  const expanded = executable.startsWith('~/') ? join(homedir(), executable.slice(2)) : executable;
-
-  if (expanded.includes('/')) {
-    try { return realpathSync(expanded); }
-    catch (error) { if (missing(error)) throw new Error(`Pi was not found at ${executable}`); throw error; }
-  }
-
-  for (const directory of (process.env.PATH || '').split(delimiter)) {
-    if (!directory) continue;
-
-    try { return realpathSync(join(directory, expanded)); }
-    catch (error) { if (!missing(error)) throw error; }
-  }
-
-  throw new Error(`Pi was not found: ${executable} is not on PATH`);
+  try { return realpathSync(executable); }
+  catch (error) { if (missing(error)) throw new Error(`Pi was not found at ${executable}`); throw error; }
 }
 
 function packageAt(directory) {
@@ -58,7 +44,7 @@ function supportedPi(executable) {
   const pi = piInstallation(executable);
 
   if (pi.version !== SUPPORTED_PI_VERSION) {
-    throw new Error(`Piop needs Pi ${SUPPORTED_PI_VERSION}, but found Pi ${pi.version} at ${pi.root}. Run: npm install -g ${PI_PACKAGE}@${SUPPORTED_PI_VERSION}`);
+    throw new Error(`Piop needs Pi ${SUPPORTED_PI_VERSION}, but found Pi ${pi.version} at ${pi.root}`);
   }
 
   return pi;

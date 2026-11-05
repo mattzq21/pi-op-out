@@ -5,8 +5,10 @@ import { STORAGE_DIRECTORY } from '../config';
 import { homeDir, nodeExecutable, pathWithNode } from '../environment';
 import { generatedExtensions } from '../extensions';
 import { readLines } from '../../resources/lf-lines.cjs';
-import { supportedPi } from '../../resources/pi-runtime.cjs';
+import { installedPi } from '../pi_install';
 import { Mutex } from '../util/sync';
+import type { Duplex } from 'node:stream';
+import { PiStorage } from './pi_storage';
 
 const REQUEST_TIMEOUT_MS = 630_000;
 const PROBE_TIMEOUT_MS = 10_000;
@@ -44,8 +46,8 @@ class Connection {
   }
 }
 
-export async function resolveProviderAuth(executable: string, providerId: string): Promise<any> {
-  const sdk = new Sdk(executable, quiet);
+export async function resolveProviderAuth(providerId: string): Promise<any> {
+  const sdk = new Sdk(quiet);
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -63,20 +65,25 @@ export class Sdk {
   private gate = new Mutex();
   private stopped = false;
 
-  constructor(private executable: string, private events: Events) {}
+  constructor(private events: Events) {}
 
-  private spawnProcess(node: string): ChildProcess {
-    const { root } = supportedPi(this.executable);
-    const env = { ...process.env, PATH: pathWithNode(node), PIOP_BUN: process.execPath, PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: join(homeDir(), STORAGE_DIRECTORY) };
-    return spawn(node, [generatedExtensions().providerSdk, root], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  private spawnProcess(node: string, root: string): ChildProcess {
+    const storage = join(homeDir(), STORAGE_DIRECTORY);
+    const env = { ...process.env, PATH: pathWithNode(node), PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: storage, PIOP_STORAGE_CHANNEL: '3' };
+    const child = spawn(node, [generatedExtensions().providerSdk, root], { env, stdio: ['pipe', 'pipe', 'inherit', 'pipe'] });
+    // Sign-ins and model settings that the SDK saves go through its storage channel, like Pi's.
+    if (child.stdio[3]) new PiStorage(storage, ['settings']).serve(child.stdio[3] as Duplex, message => console.error('Pi provider SDK: ' + message));
+    return child;
   }
 
   private async connect(): Promise<Connection> {
     return this.gate.run(async () => {
       if (this.stopped) throw new Error('Provider SDK stopped');
       if (this.connection && !this.connection.closed) return this.connection;
+      const { root } = await installedPi();
+      if (this.stopped) throw new Error('Provider SDK stopped');
       const node = nodeExecutable();
-      const child = this.spawnProcess(node);
+      const child = this.spawnProcess(node, root);
       const connection = new Connection(child, error => {
         if (this.stopped) return;
         try { this.events.stopped?.(error); } catch (failure) { console.error('Pi provider SDK stop handler failed:', failure); }

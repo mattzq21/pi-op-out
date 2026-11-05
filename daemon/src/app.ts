@@ -7,7 +7,8 @@ import { BrokerRuntime } from './broker';
 import { PeerRuntime } from './peers';
 import { UsageRuntime } from './provider_usage';
 
-type Listener = (payload: any) => void;
+// owner: the client that the event is for. Undefined means all clients.
+type Listener = (payload: any, owner: string | undefined) => void;
 
 export class App {
   clients = new DaemonClients(() => this.emit('pi://daemon-restarting', { hostId: 'local' }), () => interruptTerminals(this.terminals));
@@ -21,6 +22,10 @@ export class App {
   readonly logStatuses = new Map<string, string | null>();
   private listeners = new Map<string, Listener[]>();
 
+  constructor() {
+    this.pi.activeAgents.onRunning = (sessionId, running) => this.emit('pi://session-running', { hostId: 'local', sessionId, running });
+  }
+
   setLogStatus(hostId: string, failure: string | null): void {
     if (this.logStatuses.has(hostId) && this.logStatuses.get(hostId) === failure) return;
     this.logStatuses.set(hostId, failure);
@@ -32,12 +37,12 @@ export class App {
     this.emit('pi://daemon-log-status', { hostId, failure: null, _peer: true });
   }
 
-  emit(name: string, payload?: unknown): void {
+  emit(name: string, payload?: unknown, owner?: string): void {
     const listeners = this.listeners.get(name);
     if (!listeners || listeners.length === 0) return;
     const body = JSON.stringify(payload === undefined ? null : payload);
     for (const listener of [...listeners]) {
-      try { listener(JSON.parse(body)); } catch (error) { process.stderr.write('Event listener failed: ' + String(error) + '\n'); }
+      try { listener(JSON.parse(body), owner); } catch (error) { process.stderr.write('Event listener failed: ' + String(error) + '\n'); }
     }
   }
 

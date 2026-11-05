@@ -1,5 +1,6 @@
 import { closeSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { kind } from './json';
 import { pluginRequest } from '../plugin_contributions';
 
@@ -9,17 +10,16 @@ export interface LaunchSpec { program: string; args: string[]; env: Record<strin
 
 export interface SessionLaunch { key: string; spec: LaunchSpec; timeout: number; transient: boolean; clientId: string; cwd: string | null }
 
-export function parseLaunchSpec(value: any): LaunchSpec {
-  if (!value || typeof value !== 'object') throw new Error('invalid type: expected struct LaunchSpec');
-  if (typeof value.program !== 'string') throw new Error('missing field ' + '\x60program\x60');
-  if (!Array.isArray(value.args) || value.args.some((arg: unknown) => typeof arg !== 'string')) throw new Error('missing field ' + '\x60args\x60');
-  const env: Record<string, string> = {};
-  if (value.env !== undefined && value.env !== null) {
-    if (typeof value.env !== 'object') throw new Error('invalid type: expected a map');
-    for (const [key, item] of Object.entries(value.env)) { if (typeof item !== 'string') throw new Error('invalid type: expected a string'); env[key] = item; }
-  }
-  if (value.cwd !== undefined && value.cwd !== null && typeof value.cwd !== 'string') throw new Error('invalid type: expected a string');
-  return { program: value.program, args: [...value.args], env, cwd: value.cwd ?? null };
+const launchSpecSchema = z.object({
+  program: z.string(), args: z.array(z.string()),
+  env: z.record(z.string(), z.string()).nullish().transform(env => env ?? {}), cwd: z.string().nullish().transform(cwd => cwd ?? null),
+});
+
+// The program, arguments, environment and folder that start Pi, as a client gives them.
+export function parseLaunchSpec(value: unknown): LaunchSpec {
+  const parsed = launchSpecSchema.safeParse(value);
+  if (!parsed.success) throw new Error('Invalid launch spec: ' + z.prettifyError(parsed.error));
+  return parsed.data;
 }
 
 export function cloneSpec(spec: LaunchSpec): LaunchSpec { return { program: spec.program, args: [...spec.args], env: { ...spec.env }, cwd: spec.cwd }; }
@@ -49,7 +49,6 @@ export function sessionSpec(spec: LaunchSpec, flagName: string, value: string): 
 
 export function prepareSpec(spec: LaunchSpec, key: string, client: string, home: string): void {
   spec.env.PIOP_CONVERSATION_CLIENT = client;
-  if (spec.env.PIOP_SESSION_CWD !== undefined) spec.env.PIOP_SESSION_CWD = expandHome(spec.env.PIOP_SESSION_CWD, home);
   if (argument(spec, '--session') === undefined && argument(spec, '--session-id') === undefined) spec.args.push('--session-id', key);
 }
 

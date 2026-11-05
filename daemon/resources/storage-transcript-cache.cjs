@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const { serialize, deserialize } = require('node:v8');
 const database = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 
 function fingerprint(file) {
   const info = fs.lstatSync(file, { bigint: true });
@@ -22,14 +23,16 @@ function saved(db, file, stamp) {
   } catch {}
 }
 
-function save(db, file, stamp, value) {
+const save = onMainThread('storage-transcript-cache.save', (root, file, stamp, value) => {
+  const db = database.connection(root);
+
   database.transaction(db, 'IMMEDIATE', () => {
     if (fingerprint(file) === stamp) db.prepare('INSERT INTO storage_transcript_summaries VALUES (?, ?, ?) ON CONFLICT(session_path) DO UPDATE SET fingerprint=excluded.fingerprint, body=excluded.body')
       .run(file, stamp, serialize({ version: 2, value }));
   });
-}
+});
 
-async function read(db, file, inspect) {
+async function read(root, db, file, inspect) {
   const stamp = fingerprint(file);
   const previous = saved(db, file, stamp);
 
@@ -37,7 +40,7 @@ async function read(db, file, inspect) {
   const value = await inspect();
 
   if (fingerprint(file) !== stamp) throw new Error('Transcript changed while preparing the storage report');
-  save(db, file, stamp, value);
+  save(root, file, stamp, value);
 
   return value;
 }
@@ -45,7 +48,7 @@ async function read(db, file, inspect) {
 async function withCache(root, operation) {
   const db = database.connection(root);
 
-  return operation((file, inspect) => read(db, file, inspect), db);
+  return operation((file, inspect) => read(root, db, file, inspect), db);
 }
 
 module.exports = { withCache };

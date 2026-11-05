@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { AgentProfilesRequest, AgentStartPurpose, SubagentProfileRequest } from "../../../extensions/piop-define-agents/contracts.ts";
+import type { AgentProfilesRequest, AgentStartPurpose, SubagentProfileRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { writeSessionFile, reserveSessionId } from "../piop-storage/session-file.ts";
@@ -38,7 +38,7 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
   return { peerId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };
 }
 
-export const SUBAGENT_TOOLS = ["spawn_subagents", "message_subagent", "stop_subagent", "list_subagents", "await_subagents"];
+export { SUBAGENT_TOOLS } from "../../../protocol/subagents.ts";
 export const PEER_TOOLS = ["create_peer", "branchoff_peer", "message_peer", "stop_peer", "list_peers", "read_peer", "await_peers"];
 
 export type AgentProfilesMode = AgentStartPurpose | "both";

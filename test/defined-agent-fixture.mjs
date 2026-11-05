@@ -5,29 +5,28 @@ import { DatabaseSync } from 'node:sqlite';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { compileAgentFixture } from './compile-defined-agent-fixture.mjs';
+import { testPi } from './pi-install.mjs';
 
-const appSettings = createRequire(import.meta.url)('../daemon/resources/session-broker/app-settings.cjs');
-export const piRoot = createRequire(import.meta.url)('../daemon/resources/pi-runtime.cjs').supportedPi('pi').root;
+const records = createRequire(import.meta.url)('../daemon/resources/application-records.cjs');
+export const { root: piRoot } = await testPi();
 
 export const encoded = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 export const profile = (name = 'general', extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agent_prompt: '', tools: ['read'], skills: [], mcpServers: {}, extensions: [], ...extra });
 
-const definitionsPath = dir => join(dirname(dir), 'agent-definitions.json');
+export const readStoredConfig = dir => { const body = records.read(dirname(dir), 'agent-definitions');
 
-export const readStoredConfig = dir => { const body = appSettings.readText(definitionsPath(dir));
+  if (body === undefined) throw Object.assign(new Error(`Agent configuration is missing in ${dirname(dir)}`), { code: 'ENOENT' });
 
-  if (body === undefined) throw Object.assign(new Error(`Agent configuration is missing: ${definitionsPath(dir)}`), { code: 'ENOENT' });
+  return JSON.parse(body.toString('utf8')); };
 
-  return JSON.parse(body); };
-
-export const writeStoredConfig = (dir, content) => appSettings.write(definitionsPath(dir), content);
+export const writeStoredConfig = (dir, content) => records.save(dirname(dir), 'agent-definitions', content);
 
 export function writeCorruptConfig(dir, content) {
-  appSettings.write(definitionsPath(dir), '{}');
+  records.save(dirname(dir), 'agent-definitions', '{}');
   const db = new DatabaseSync(join(dirname(dir), 'sessions.sqlite'));
 
-  try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'agent-definitions.json'); } finally { db.close(); }
+  try { db.prepare('UPDATE application_settings SET body=? WHERE name=?').run(Buffer.from(content), 'agent-definitions'); } finally { db.close(); }
 }
 
 const startupResources = () => JSON.parse(process.env.PIOP_AGENT_RESOURCES ?? 'null') ?? { tools: { enabledTools: [], registeredTools: [] }, skills: { userInvokedSkills: [], agentInvokedSkills: [] }, pluginAgentTools: [] };
@@ -59,7 +58,7 @@ export async function agentFixture(t, options = {}) {
   const previous = { ...process.env };
 
   for (const name of ['PI_DEFINE_AGENTS_RUNTIME_DEFAULTS', 'PI_DEFINE_AGENTS_ACTIVE', 'PIOP_AGENT_DRAFT_STATE', 'PI_DESKTOP_MCP_CONFIG', 'PIOP_STORAGE_DIRECTORY']) delete process.env[name];
-  Object.assign(process.env, { HOME: home, PIOP_STORAGE_ROOT: root, PIOP_PI_ROOT: piRoot }, options.env);
+  Object.assign(process.env, { HOME: home, PIOP_STORAGE_ROOT: root, PIOP_TEST_STORAGE_ROOT: root, PIOP_PI_ROOT: piRoot }, options.env);
   t.after(async () => {
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
     Object.assign(process.env, previous);
@@ -182,7 +181,7 @@ export async function agentFixture(t, options = {}) {
     store: async value => writeStoredConfig(dir, JSON.stringify(value)),
     configuration: definitions.configuration,
     config: async () => readStoredConfig(dir),
-    rawConfig: () => appSettings.readText(definitionsPath(dir)),
+    rawConfig: () => records.read(dirname(dir), 'agent-definitions')?.toString('utf8'),
     corruptConfig: content => writeCorruptConfig(dir, content),
     readSnapshot: async path => (await import(pathToFileURL(join(dir, 'prompts.mjs')))).readPrompt(path),
     state: () => JSON.parse(process.env.PIOP_AGENT_DRAFT_STATE || 'null')?.state ?? entries.findLast(entry => entry.customType === 'pi-define-agents-state' && entry.data)?.data,

@@ -1,4 +1,4 @@
-import { shellLock } from '../../resources/file-lock.cjs';
+import { reserve } from '../session_registry';
 import { readLines } from '../../resources/lf-lines.cjs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Duplex } from 'node:stream';
@@ -10,7 +10,7 @@ import { CommandRefusedError } from '../pi_rejection';
 import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEvent } from './runtime_events';
-import { answerStorageRequest } from './pi_storage';
+import type { PiStorage } from './pi_storage';
 import { observedElsewhere } from '../util/sync';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
@@ -40,15 +40,11 @@ process.on('exit', () => {
   }
 });
 
-function launchCommand(spec: LaunchSpec, identity: string, home: string): { program: string; args: string[] } {
-  const claims = spec.env.PIOP_REMOTE_SESSION_CLAIMS;
-  if (claims !== undefined) {
-    const directory = join(join(home, claims), 'session-claims');
-    ensurePrivateDir(directory);
-    const hash = createHash('sha256').update(identity.toLowerCase()).digest('hex');
-    return { program: 'sh', args: ['-c', 'exec 9<>"$1" || exit 1; shift; ' + shellLock(9, true) + '; code=$?; [ "$code" = 75 ] && exit 1; [ "$code" = 0 ] || exit "$code"; exec "$@"', 'piop-claim', join(directory, 'id-' + hash.slice(0, 40) + '.lock'), spec.program, ...spec.args] };
-  }
-  return { program: spec.program, args: [...spec.args] };
+// A Pi that names no chat starts a new one. Its identity is reserved here, when the Pi starts.
+function launchCommand(spec: LaunchSpec, storage: PiStorage): { program: string; args: string[] } {
+  const args = [...spec.args];
+  if (!['--session', '--session-id', '--fork', '--no-session'].some(flag => args.includes(flag))) args.push('--session-id', reserve(storage.root));
+  return { program: spec.program, args };
 }
 
 export class RuntimeWorker {
@@ -65,13 +61,13 @@ export class RuntimeWorker {
 
   private constructor(private child: ChildProcess, private tag: string, private observer: WorkerObserver, private timeout: number) {}
 
-  // storageRoot: the storage that this Pi saves its chats in, through its storage channel; null for a Pi that saves nothing.
-  static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string, storageRoot: string | null): RuntimeWorker {
-    const command = launchCommand(spec, identity, home);
+  // storage: answers the storage changes that this Pi asks for on its storage channel.
+  static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string, storage: PiStorage): RuntimeWorker {
+    const command = launchCommand(spec, storage);
     const tag = newProcessTag();
     const child = spawn(command.program, command.args, {
       cwd: spec.cwd ? spec.cwd : undefined,
-      env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath, PIOP_STORAGE_CHANNEL: '3', [PROCESS_TAG]: tag },
+      env: { ...process.env, ...spec.env, PIOP_STORAGE_CHANNEL: '3', [PROCESS_TAG]: tag },
       stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
       detached: true,
     });
@@ -93,25 +89,13 @@ export class RuntimeWorker {
     const errors = createInterface({ input: child.stderr!, crlfDelay: Infinity });
     errors.on('line', line => observer.stderr(line));
     errors.on('close', done);
-    worker.answerStorage(child.stdio[3] as Duplex, storageRoot);
+    storage.serve(child.stdio[3] as Duplex, message => observer.diagnostic(message));
     child.on('exit', (code, signal) => {
       worker.exitStatus = signal !== null ? 'signal ' + signal : 'exit code ' + code;
       worker.signal(false);
     });
     child.on('close', () => { worker.signal(true); running.delete(child); if (worker.deadline) clearTimeout(worker.deadline); done(); });
     return worker;
-  }
-
-  private answerStorage(channel: Duplex, root: string | null): void {
-    let answered = Promise.resolve();
-    channel.on('error', error => this.observer.diagnostic('Pi storage channel failed: ' + error.message));
-    readLines(channel, line => {
-      answered = answered.then(async () => {
-        const answer = root === null ? JSON.stringify({ error: 'This Pi runtime cannot save chats' }) : await answerStorageRequest(root, line);
-        if (!channel.writable) return;
-        await new Promise<void>((resolve, reject) => channel.write(answer + '\n', error => error ? reject(error) : resolve()));
-      }).catch(error => this.observer.diagnostic('Could not answer a Pi storage request: ' + error.message));
-    }, () => {});
   }
 
   private close(): void {

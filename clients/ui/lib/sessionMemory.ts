@@ -6,7 +6,6 @@ import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../
 import type { NativeTransport } from "./nativeTransport";
 import { z } from "zod";
 import { wireMessageSchema } from "./messageSchemas";
-import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { branchMessages } from "./messages";
 import { historyOutlineSchema, historyViewSchema } from "./responseSchemas";
 import { isDaemonRefusal } from "./commandRejected";
@@ -283,7 +282,7 @@ export class SessionMemory {
   }
 
   private decorateMessage(message: ChatMessage): ChatMessage {
-    if (pluginMessageMetadata(message.customType)?.retainContent) return message;
+    if (message.pluginMessage?.retainContent) return message;
 
     if (message.deferredWork) { const entryId = message.entryId ?? message.id;
 
@@ -304,6 +303,54 @@ export class SessionMemory {
     this.batching++;
 
     try { batch(update); } finally { this.batching--; this.commit(); }
+  }
+
+  // Changes single messages: change sets a message at an index of the list, or adds one at its end. Each changed
+  // message is merged into the store at its place, so no new list is built and only the changed fields update.
+  // Gives true when something changed.
+  changeMessages(change: (messages: ChatMessage[]) => boolean): boolean {
+    const current = this.data.messages;
+    const written = new Map<number, ChatMessage>();
+    const added: ChatMessage[] = [];
+    const at = (index: number) => written.get(index) ?? (index < current.length ? current[index] : added[index - current.length]);
+    const view = new Proxy({} as ChatMessage[], {
+      get: (_target, key) => {
+        if (key === "length") return current.length + added.length;
+        if (key === "push") return (...values: ChatMessage[]) => added.push(...values) + current.length;
+        if (typeof key === "string" && /^\d+$/.test(key)) return at(Number(key));
+        return undefined;
+      },
+      set: (_target, key, value: ChatMessage) => {
+        if (typeof key !== "string" || !/^\d+$/.test(key)) return false;
+        const index = Number(key);
+        if (index < current.length) written.set(index, value); else added[index - current.length] = value;
+        return true;
+      },
+    });
+
+    if (!change(view) || (!written.size && !added.length)) return false;
+    batch(() => {
+      for (const [index, message] of written) {
+        const saved = unwrap(this.data.messages)[index];
+        this.setData("messages", index, reconcile(adopt(this.decorate(message)), { key: "id" }));
+        this.resize(saved, unwrap(this.data.messages)[index]);
+      }
+      for (const message of added) {
+        this.setData("messages", this.data.messages.length, adopt(this.decorate(message)));
+        this.resize(undefined, unwrap(this.data.messages)[this.data.messages.length - 1]);
+      }
+    });
+    this.commit();
+
+    return true;
+  }
+
+  // Keeps the total size of the messages right after one message changed.
+  private resize(previous: ChatMessage | undefined, next: ChatMessage) {
+    if (previous) this.messagesSize -= this.messageSizes.get(previous) ?? 0;
+    const size = bytes(next);
+    this.messageSizes.set(next, size);
+    this.messagesSize += size;
   }
 
   set<K extends keyof CachedSession>(key: K, update: StateUpdate<CachedSession[K]>) {

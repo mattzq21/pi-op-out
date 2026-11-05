@@ -1,9 +1,15 @@
-import { HostOperationError, hostOperation, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
+import { z } from 'zod';
+import { HostOperationError, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
+import { requestRetention } from './retention_requests';
 import { CommandRefusedError, refusalText } from './pi_rejection';
 
-export interface ArchivedSession { sessionId: string; sourcePath: string; sessionPath: string }
-export interface RestoredSession extends ArchivedSession { path: string }
-export interface RestoreResult { path: string; sessionPath: string; sessionId: string; sessions: RestoredSession[] }
+const archivedSessionSchema = z.object({ sessionId: z.string(), sourcePath: z.string(), sessionPath: z.string() });
+const restoredSessionSchema = archivedSessionSchema.extend({ path: z.string() });
+const restoreResultSchema = z.object({ path: z.string(), sessionPath: z.string(), sessionId: z.string(), sessions: z.array(restoredSessionSchema).min(1) });
+
+export type ArchivedSession = z.output<typeof archivedSessionSchema>;
+export type RestoredSession = z.output<typeof restoredSessionSchema>;
+export type RestoreResult = z.output<typeof restoreResultSchema>;
 export interface DeletionTarget { path: string; area: 'sessions' | 'archived' }
 export interface FolderMove { from: string; to: string }
 
@@ -32,19 +38,12 @@ type Request =
   | { action: 'result'; path: string }
   | { action: 'recover' };
 
-const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const text = (value: unknown): value is string => typeof value === 'string';
-const archivedSession = (value: unknown): value is ArchivedSession => record(value) && text(value.sessionId) && text(value.sourcePath) && text(value.sessionPath);
-const restoredSession = (value: unknown): value is RestoredSession => archivedSession(value) && record(value) && text(value.path);
-const restoreResult = (value: unknown): value is RestoreResult => record(value) && text(value.path) && text(value.sessionPath) && text(value.sessionId)
-  && Array.isArray(value.sessions) && value.sessions.length > 0 && value.sessions.every(restoredSession);
-
 type Outcome = { state: 'committed'; result?: unknown; warning?: string } | { state: 'skipped'; reason?: string; warning?: string };
 
-const storageTransaction = hostOperation<Request, Outcome>('storage-transaction', 'storage', STORAGE_TIMEOUT, value => {
-  if (!record(value) || !['committed', 'skipped'].includes(String(value.state)) || (value.warning !== undefined && !text(value.warning))) throw new Error('unexpected outcome');
-  return value as Outcome;
-});
+const storageTransaction = hostOperation<Request, Outcome>('storage-transaction', 'storage', STORAGE_TIMEOUT, z.discriminatedUnion('state', [
+  z.object({ state: z.literal('committed'), result: z.unknown().optional(), warning: z.string().optional() }),
+  z.object({ state: z.literal('skipped'), reason: z.string().optional(), warning: z.string().optional() }),
+]));
 
 function failure(error: unknown): StorageTransactionError {
   if (!(error instanceof HostOperationError)) return new StorageTransactionError('unknown', error instanceof Error ? error.message : String(error));
@@ -58,6 +57,8 @@ async function run(request: Request, options: { root?: string; signal?: AbortSig
   let response: Outcome;
   try { response = await runHostOperation(storageTransaction, request, { signal: options.signal, storageRoot: options.root }); }
   catch (error) { throw failure(error); }
+  // A deletion of chats can free what deferred cleanup waits for: what only the deleted chats used.
+  if (response.state === 'committed' && request.action === 'delete' && 'targets' in request) requestRetention(options.root ?? profileRoot());
   if (response.warning) console.error(response.warning);
   if (response.state === 'skipped') {
     if (request.action === 'delete' && 'blank' in request && ['busy', 'not-needed'].includes(String(response.reason))) return;
@@ -70,19 +71,18 @@ async function run(request: Request, options: { root?: string; signal?: AbortSig
   return response.result;
 }
 
-function checked<T>(value: unknown, valid: (value: unknown) => value is T): T {
-  if (!valid(value)) throw new Error('Storage transaction committed, but its result is invalid');
-  return value;
+function checked<T>(value: unknown, schema: z.ZodType<T>): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new Error('Storage transaction committed, but its result is invalid: ' + z.prettifyError(parsed.error));
+  return parsed.data;
 }
 
 export async function archive(paths: string[]): Promise<{ sessions: ArchivedSession[] }> {
-  return checked(await run({ action: 'archive', paths }), (value): value is { sessions: ArchivedSession[] } =>
-    record(value) && Array.isArray(value.sessions) && value.sessions.length > 0 && value.sessions.every(archivedSession));
+  return checked(await run({ action: 'archive', paths }), z.object({ sessions: z.array(archivedSessionSchema).min(1) }));
 }
 
 export async function deleteSessions(targets: DeletionTarget[], activeSessionIds: string[]): Promise<{ sessionIds: string[] }> {
-  return checked(await run({ action: 'delete', targets, activeSessionIds }), (value): value is { sessionIds: string[] } =>
-    record(value) && Array.isArray(value.sessionIds) && value.sessionIds.every(text));
+  return checked(await run({ action: 'delete', targets, activeSessionIds }), z.object({ sessionIds: z.array(z.string()) }));
 }
 
 export async function deleteBlank(blank: { path?: string | null; id?: string | null }): Promise<void> {
@@ -90,11 +90,11 @@ export async function deleteBlank(blank: { path?: string | null; id?: string | n
 }
 
 export async function restore(paths: string[], cwdMoves: FolderMove[] = []): Promise<RestoreResult> {
-  return checked(await run({ action: 'restore', paths, cwdMoves }), restoreResult);
+  return checked(await run({ action: 'restore', paths, cwdMoves }), restoreResultSchema);
 }
 
 export async function committedRestore(path: string): Promise<RestoreResult | null> {
-  return checked(await run({ action: 'result', path }), (value): value is RestoreResult | null => value === null || restoreResult(value));
+  return checked(await run({ action: 'result', path }), restoreResultSchema.nullable());
 }
 
 export async function recover(options: { root?: string; signal?: AbortSignal; busyIsOk?: boolean } = {}): Promise<void> {

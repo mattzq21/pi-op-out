@@ -1,4 +1,5 @@
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 const { randomUUID } = require('node:crypto');
 
 function validate(goal) {
@@ -38,7 +39,7 @@ function restore(file) {
   return { goal, waitingForInput: hold ? JSON.parse(hold.entry_json)?.data?.held === true : false };
 }
 
-function write(file, sessionId, goal) {
+const write = onMainThread('goals.write', (file, sessionId, goal) => {
   validate(goal);
   if (goal && goal.sessionId !== sessionId) throw new Error('Goal belongs to another conversation');
   access(file, sessionId, (db, id) => {
@@ -49,7 +50,7 @@ function write(file, sessionId, goal) {
       db.prepare(`INSERT INTO session_goals VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET goal_id=excluded.goal_id, objective=excluded.objective, status=excluded.status`).run(id, goal.id, goal.objective, goal.status);
     });
   });
-}
+});
 
 function copy(source, target, sessionId) {
   const goal = read(source);

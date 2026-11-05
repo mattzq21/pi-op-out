@@ -4,16 +4,10 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
+import { testPi } from '../pi-install.mjs';
 
 const { home, path, message } = JSON.parse(readFileSync(0, 'utf8'));
-let root = dirname(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim()));
-while (true) {
-  const manifest = join(root, 'package.json');
-  if (existsSync(manifest) && JSON.parse(readFileSync(manifest, 'utf8')).name === '@earendil-works/pi-coding-agent') break;
-  const parent = dirname(root);
-  if (parent === root) throw new Error('Could not locate the installed Pi SDK');
-  root = parent;
-}
+const { root } = await testPi();
 process.env.HOME = home;
 delete process.env.PIOP_STORAGE_DIRECTORY;
 const directory = mkdtempSync(join(home, 'append-chat-test-'));

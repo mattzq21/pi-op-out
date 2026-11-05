@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSelector, createSignal } from "solid-js";
@@ -12,7 +11,7 @@ interface Props {
   hostId: string;
   hosts?: { id: string; name: string; disabled?: boolean }[];
   onHomeDirectory: (hostId: string) => Promise<string>;
-  onChooseDirectory: (currentPath: string, hostId: string) => Promise<string | DirectoryListing | null>;
+  onChooseDirectory: (currentPath: string, hostId: string) => Promise<DirectoryListing>;
   onOpen: (path: string, hostId: string) => Promise<void>;
   onCancel: () => void;
 }
@@ -172,13 +171,8 @@ export function ProjectDialog(componentProps: Props) {
     setLoading(true); setError(undefined);
 
     const timer = setTimeout(() => {
-      void callbacks.current.onChooseDirectory(capturedParent, capturedHostId).then((value) => {
-        if (cancelled) return;
-
-        const listing = z.object({ path: z.string(), parent: z.string().optional(), directories: z.array(z.string()) }).safeParse(value);
-
-        if (listing.success) setLoaded({ hostId: capturedHostId, requested: capturedParent, listing: listing.data });
-        else { setLoaded(undefined); setError("Could not list this folder. Try another path."); }
+      void callbacks.current.onChooseDirectory(capturedParent, capturedHostId).then((listing) => {
+        if (!cancelled) setLoaded({ hostId: capturedHostId, requested: capturedParent, listing });
       }).catch((reason) => { if (!cancelled) { setLoaded(undefined); setError(reason instanceof Error ? reason.message : String(reason)); } }).finally(() => { if (!cancelled) setLoading(false); });
     }, 150);
 

@@ -8,7 +8,7 @@ let daemon: TestDaemon;
 beforeAll(async () => {
   daemon = await startDaemon();
   const bin = join(daemon.home, '.local/bin');
-  fakePi(bin);
+  fakePi(daemon.home);
   fakeProgram(bin, 'node', '#!' + process.execPath + '\n' + [
     "const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os'); const crypto = require('node:crypto');",
     "const args = process.argv.slice(2); const flag = name => args[args.lastIndexOf(name) + 1];",

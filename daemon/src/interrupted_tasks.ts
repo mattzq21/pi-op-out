@@ -19,7 +19,7 @@ export async function resumeInterruptedTasks(app: App): Promise<void> {
       const location = await host.orchestrate({ action: 'locate', sessionKey: id }).catch(error => { logFailure('Could not find the chat of interrupted task ' + id)(error); return null; });
       const request: OrchestrationRequest = { action: 'resume', sessionKey: id };
       if (typeof location?.sessionPath === 'string' && typeof location?.cwd === 'string' && location.archived !== true) {
-        request.spec = launchSpec(buildPiCommand(settings, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }));
+        request.spec = launchSpec(await buildPiCommand(settings, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }));
         request.cwd = location.cwd;
       }
       await host.orchestrate(request);

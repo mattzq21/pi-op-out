@@ -1,24 +1,27 @@
 import { connect, type Socket } from 'node:net';
 import { readLines } from '../resources/lf-lines.cjs';
 import type { Readable } from 'node:stream';
-import { dlopen, ptr } from 'bun:ffi';
+import { ptr } from 'bun:ffi';
+import { loadLibc } from './util/libc';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readSync, renameSync, unlinkSync, writeSync, fsyncSync, ftruncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { formatWithOptions } from 'node:util';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import * as endpoint from './daemon_endpoint';
-import { daemonScript } from './session_worker';
+import { daemonScript } from './daemon_executable';
 import { lockPathSync } from './util/flock';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const BACKUP_COUNT = 4;
 const MAX_FAILURE_BYTES = 64 * 1024;
 const STATUS_FD = 'PIOP_DAEMON_LOG_STATUS_FD';
+const LINK_FD = 'PIOP_RESTART_LINK_FD';
 const CAPTURED = 'PIOP_DAEMON_LOG_CAPTURED';
 const LOGGED_MODES = ['--serve', '--restart-candidate', '--restart-coordinator', '--validate-plugins'];
 
-export interface DaemonCommand { program: string; args: string[]; env: Record<string, string | undefined>; stderr?: any; logStatus?: Socket; logStatusFd?: number }
+// link: the process gets a restart link (see restart_link.ts) on descriptor 4.
+export interface DaemonCommand { program: string; args: string[]; env: Record<string, string | undefined>; stderr?: any; logStatus?: Socket; logStatusFd?: number; link?: boolean }
 
 function privateFile(path: string, flags: string): number {
   const fd = openSync(path, flags, 0o600);
@@ -37,13 +40,13 @@ function withCleanup<T>(operation: () => T, cleanup: () => void): T {
   return result as T;
 }
 
+// The log is written by each piopd process of the storage folder, so they take turns.
 function withLock<T>(directory: string, operation: () => T): T {
-  const first = lockPathSync(join(directory, 'daemon-log.lock'));
+  const lock = lockPathSync(join(directory, 'daemon-log.lock'));
   return withCleanup(() => {
     setPrivateFilePermissions(join(directory, 'daemon-log.lock'));
-    const second = lockPathSync(join(directory, 'daemon.log.lock'));
-    return withCleanup(operation, () => second.release());
-  }, () => first.release());
+    return operation();
+  }, () => lock.release());
 }
 
 function archivePath(directory: string, index: number): string { return join(directory, 'daemon.log.' + index); }
@@ -58,29 +61,6 @@ function rotate(directory: string): void {
     try { renameSync(archivePath(directory, index), archivePath(directory, index + 1)); } catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
   }
   renameSync(join(directory, 'daemon.log'), archivePath(directory, 1));
-}
-
-function trimLegacyLog(directory: string): void {
-  const path = join(directory, 'daemon.log');
-  const temporary = join(directory, 'daemon.log.trim');
-  removeIfPresent(temporary);
-  const source = privateFile(path, 'a+');
-  withCleanup(() => {
-    const size = fstatSync(source).size;
-    if (size <= MAX_FILE_BYTES) return;
-    const buffer = Buffer.alloc(MAX_FILE_BYTES);
-    let read = 0;
-    while (read < MAX_FILE_BYTES) {
-      const count = readSync(source, buffer, read, MAX_FILE_BYTES - read, size - MAX_FILE_BYTES + read);
-      if (count === 0) break;
-      read += count;
-    }
-    try {
-      const target = privateFile(temporary, 'w');
-      withCleanup(() => { ftruncateSync(target, 0); writeSync(target, buffer, 0, read); fsyncSync(target); }, () => closeSync(target));
-      renameSync(temporary, path);
-    } catch (error) { withCleanup(() => { throw error; }, () => removeIfPresent(temporary)); }
-  }, () => closeSync(source));
 }
 
 function errorMessage(error: unknown): string {
@@ -285,9 +265,10 @@ function collect(directory: string): Promise<void> {
   });
 }
 
+// Fails at once when the log cannot be written, so the collector stops before it takes output.
 function initializeAt(directory: string): void {
   ensurePrivateDir(directory);
-  withLock(directory, () => trimLegacyLog(directory));
+  withLock(directory, () => closeSync(privateFile(join(directory, 'daemon.log'), 'a')));
 }
 
 async function runCollector(directory: () => string): Promise<void> {
@@ -351,7 +332,7 @@ function waitReady(child: ChildProcess, output: Readable, timeout: number): Prom
 }
 
 function loadPipeLibrary() {
-  return dlopen('libc.so.6', { socketpair: { args: ['i32', 'i32', 'i32', 'ptr'], returns: 'i32' } });
+  return loadLibc({ socketpair: { args: ['i32', 'i32', 'i32', 'ptr'], returns: 'i32' } });
 }
 
 let pipeLibrary: ReturnType<typeof loadPipeLibrary> | undefined;
@@ -428,8 +409,10 @@ function environment(env: Record<string, string | undefined>): NodeJS.ProcessEnv
 function launchDetached(command: DaemonCommand): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     if (command.logStatus) command.env[STATUS_FD] = '3';
+    if (command.link) command.env[LINK_FD] = '4';
+    const extra = command.link ? [command.logStatusFd ?? 'ignore', 'pipe'] : command.logStatusFd !== undefined ? [command.logStatusFd] : [];
     let child: ChildProcess;
-    try { child = spawn(command.program, command.args, { detached: true, env: environment(command.env), stdio: ['ignore', 'ignore', command.stderr ?? 'ignore', ...(command.logStatusFd !== undefined ? [command.logStatusFd] : [])] }); }
+    try { child = spawn(command.program, command.args, { detached: true, env: environment(command.env), stdio: ['ignore', 'ignore', command.stderr ?? 'ignore', ...extra] as any }); }
     catch (error: any) {
       command.logStatus?.destroy();
       command.stderr?.destroy?.();

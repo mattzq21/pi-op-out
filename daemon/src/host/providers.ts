@@ -59,8 +59,8 @@ export class ProviderService {
   private fastModels: FastModelStore;
   private revision = 0;
 
-  constructor(executable: string) {
-    this.sdk = new Sdk(executable, { event: packet => this.receive(packet) });
+  constructor() {
+    this.sdk = new Sdk({ event: packet => this.receive(packet) });
     this.fastModels = new FastModelStore(
       { scan: provider => this.sdk.request({ method: 'fast_model_scan', provider: provider ?? null }) as Promise<FastModelScanResult[]> },
       () => { this.host?.events.fastModelsChanged(); this.host?.refreshAgentAvailability(); },
@@ -104,7 +104,7 @@ export class ProviderService {
     if (!owner) throw new Error('Login owner is missing');
     switch (request?.action) {
       case 'fast_models': return this.fastModels.snapshot();
-      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog', skillPaths: this.skillPaths() }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage, 'settings.json')) };
+      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog', skillPaths: this.skillPaths() }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage)) };
       case 'list': return this.listing(flag(request, 'refreshModels'));
       case 'begin': return this.begin(owner, request);
       case 'logout': return this.logout(text(request, 'providerId'));

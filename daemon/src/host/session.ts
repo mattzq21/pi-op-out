@@ -27,6 +27,7 @@ import { GOAL_COMMAND } from './goals/commands';
 import { goalPreparationView, restoreGoalAttachments, type GoalPlace } from './goals/files';
 import type { BrokerAnswer, BrokerCall } from '../broker';
 import type { HostEvents } from './events';
+import { PiStorage } from './pi_storage';
 
 export interface SessionHost {
   storageRoot(): string;
@@ -145,7 +146,7 @@ export class Session {
     session.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
     await session.reconcileQueue();
     assertRunning();
-    session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home, host.storageRoot());
+    session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home, new PiStorage(host.storageRoot()));
     session.restoreGoalFiles();
     return session;
   }
@@ -291,6 +292,8 @@ export class Session {
     const previous = this.epoch + ':' + this.contentRevision;
     if (name === 'session_info_changed') this.toolPayloadRevision += 1;
     if (stateChange(name)) { this.stateRevision += 1; this.host.stateChanged(this.identity); }
+    // A queue change does not change the state, but a watcher that waits for the chat to be idle needs to know it.
+    else if (name === 'queue_update') this.host.stateChanged(this.identity);
     if (stateChange(name) || ['message_update', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'queue_update', 'settings_applied', 'extension_ui_request'].includes(name)) this.contentRevision += 1;
     if (this.isTransient) return undefined;
     this.sequence += 1;
@@ -696,6 +699,6 @@ export class Session {
 function queueStorage(host: SessionHost, spec: LaunchSpec, cwd: string | null, home: string, key: string): QueueStorage | null {
   const root = host.queueRoot();
   if (root === null) return null;
-  const directory = cwd ?? spec.cwd ?? spec.env.PIOP_SESSION_CWD ?? home;
+  const directory = cwd ?? spec.cwd ?? home;
   return new QueueStorage(root, specIdentity(spec, key)).withOrigin(directory, argument(spec, '--session'));
 }

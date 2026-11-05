@@ -114,8 +114,7 @@ function resolveCwd(target: Destination, host: Host, guard: Guard): void {
   const raw = typeof header?.cwd === 'string' && header.cwd.trim() ? header.cwd : undefined;
   if (raw === undefined) throw new Error('The destination conversation has no working directory');
   const cwd = expandHome(raw, host.home);
-  if (target.spec.env.PIOP_REMOTE_SESSION_CLAIMS !== undefined) target.spec.env.PIOP_SESSION_CWD = cwd;
-  else target.spec.cwd = cwd;
+  target.spec.cwd = cwd;
   target.cwd = cwd;
 }
 
@@ -256,7 +255,7 @@ class Branch {
     if (!ownership.owned) throw new Error(ownershipError());
     const cwd = text(branch, 'cwd') || this.read.cwd;
     const spec = sessionSpec(this.source.spec, '--session', destination);
-    if (cwd) { spec.cwd = cwd; if (spec.env.PIOP_SESSION_CWD !== undefined) spec.env.PIOP_SESSION_CWD = cwd; }
+    if (cwd) spec.cwd = cwd;
     const opened = await this.host.spawnSession({ key: branchId, spec, timeout: this.source.timeout, transient: true, clientId: this.source.clientId, cwd });
     opened.setReservedPath(destination);
     this.next = opened;

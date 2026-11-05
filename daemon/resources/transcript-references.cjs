@@ -1,6 +1,7 @@
 const stateRecords = require('./piop-storage/session-records.cjs');
 const fs = require('node:fs');
 const database = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 
 // The last saved summary of each transcript that this process saved, by path.
 const cache = new Map();
@@ -88,7 +89,7 @@ function savedEntries(db, file) {
 }
 
 // Saves the summary of the whole transcript, which has just been saved.
-function publish(root, file, entries) {
+const publish = onMainThread('transcript-references.publish', (root, file, entries) => {
   root = fs.realpathSync(root);
   const record = summarize(entries, root);
   const stamp = fingerprint(fs.lstatSync(file, { bigint: true }));
@@ -100,10 +101,10 @@ function publish(root, file, entries) {
   });
 
   cache.set(file, { root, record, stamp });
-}
+});
 
 // Adds one entry that has just been saved. `before` is the transcript file as it was before that.
-function append(root, file, entry, before) {
+const append = onMainThread('transcript-references.append', (root, file, entry, before) => {
   root = fs.realpathSync(root);
   const previous = cache.get(file);
   const stamp = fingerprint(fs.lstatSync(file, { bigint: true }));
@@ -131,7 +132,7 @@ function append(root, file, entry, before) {
   });
 
   cache.set(file, { root, record, stamp });
-}
+});
 
 function read(root, file, connection) {
   root = fs.realpathSync(root);
@@ -158,10 +159,12 @@ function read(root, file, connection) {
 
   if (fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error('Transcript changed during reference import');
   const saved = summarize(stateRecords.merge(file, entries, db), root);
-  save(db, file, before, saved);
+  saveSummary(root, file, before, saved);
 
   return saved;
 }
+
+const saveSummary = onMainThread('transcript-references.saveSummary', (root, file, stamp, entries) => save(database.connection(root), file, stamp, entries));
 
 function removeDirectory(db, directory) {
   const prefix = directory + require('node:path').sep;

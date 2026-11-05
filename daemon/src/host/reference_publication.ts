@@ -1,13 +1,14 @@
+import { z } from 'zod';
 import { lstatSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from '../host_operations';
-import { lockPath, type FileLock } from '../util/flock';
+import * as StorageLocks from '../../resources/storage-locks.cjs';
 
-export async function lock(root: string): Promise<FileLock> {
-  const path = join(root, 'reference-publication.lock');
-  const result = await lockPath(path, { blocking: true, timeoutMs: 10_000, shared: true, nofollow: true, regularFile: 'Invalid reference publication lock' });
-  if (!result) throw new Error('Reference publication is locked by another process; try again');
-  return result;
+// The shared reference publication lock, as in reference-publication-lock.cjs.
+export async function lock(root: string): Promise<{ release(): void }> {
+  const release = await StorageLocks.lock('reference-publication:' + root, { shared: true, timeoutMs: 10_000 });
+  if (!release) throw new Error('Chat storage is busy with another change; try again');
+  return { release };
 }
 
 export async function validateNewReferences(root: string, values: any[], previous: any[]): Promise<void> {
@@ -92,10 +93,7 @@ async function goalDependenciesOf(root: string, directory: string): Promise<Set<
   return found;
 }
 
-const goalText = hostOperation<{ root: string; directory: string }, string[]>('goal-text', 'general', DEFAULT_TIMEOUT, value => {
-  if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) throw new Error('expected a list of texts');
-  return value;
-});
+const goalText = hostOperation<{ root: string; directory: string }, string[]>('goal-text', 'general', DEFAULT_TIMEOUT, z.array(z.string()));
 
 function goalTextContents(root: string, directory: string): Promise<string[]> {
   return runHostOperation(goalText, { root, directory });

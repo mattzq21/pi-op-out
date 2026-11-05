@@ -1,39 +1,31 @@
 import { join } from 'node:path';
+import { z } from 'zod';
 import { hostOperation, runHostOperation } from '../host_operations';
-import { piExecutable } from '../environment';
-import { supportedPi } from '../../resources/pi-runtime.cjs';
+import { installedPi } from '../pi_install';
 import * as Contributions from '../plugin_contributions';
 import type { FastModelSnapshot } from './fast_models';
 
-function readDefinitions(value: unknown): any {
-  const result = value as any;
-  if (!Array.isArray(result?.config?.agents) || result.prompts === null || typeof result.prompts !== 'object' || Array.isArray(result.prompts)) throw new Error('Invalid agent definitions');
-  return result;
-}
+const definitionsSchema = z.looseObject({ config: z.looseObject({ agents: z.array(z.unknown()) }), prompts: z.record(z.string(), z.unknown()) });
 
 type Project = { cwd: string; global: any };
 
-const definitions = hostOperation<{ settings: any; initial: boolean; project?: Project }, any>('agent-definitions', 'agents', 30_000, readDefinitions);
+const definitions = hostOperation<{ settings: any; initial: boolean; project?: Project }, any>('agent-definitions', 'agents', 30_000, definitionsSchema);
 
 export interface Saved { revision: string; warnings: string[]; definitions: any }
 
-function readSaved(value: unknown): Saved {
-  const result = value as any;
-  if (typeof result?.revision !== 'string' || !Array.isArray(result.warnings) || result.warnings.some((warning: unknown) => typeof warning !== 'string')) throw new Error('Invalid agent definitions save result');
-  return { revision: result.revision, warnings: result.warnings, definitions: readDefinitions(result.definitions) };
-}
+const savedSchema = z.object({ revision: z.string(), warnings: z.array(z.string()), definitions: definitionsSchema });
 
-const saved = hostOperation<{ settings: any; configuration: unknown; project?: Project }, Saved>('save-agent-definitions', 'agents', 30_000, readSaved);
+const saved = hostOperation<{ settings: any; configuration: unknown; project?: Project }, Saved>('save-agent-definitions', 'agents', 30_000, savedSchema);
 
 export interface Move { global: any; agent: string; revision: string; from: string | null; to: string | null }
 
-const moved = hostOperation<{ settings: any } & Move, Saved>('move-agent', 'agents', 30_000, readSaved);
+const moved = hostOperation<{ settings: any } & Move, Saved>('move-agent', 'agents', 30_000, savedSchema);
 
-function environment(home: string, storage: string): Record<string, string> {
+async function environment(home: string, storage: string): Promise<Record<string, string>> {
   const profile = join(home, storage);
   return {
-    HOME: home, PIOP_BUN: process.execPath, PIOP_STORAGE_DIRECTORY: storage, PI_CODING_AGENT_DIR: profile,
-    PIOP_STORAGE_ROOT: profile, PIOP_PI_ROOT: supportedPi(piExecutable()).root,
+    HOME: home, PIOP_STORAGE_DIRECTORY: storage, PI_CODING_AGENT_DIR: profile,
+    PIOP_STORAGE_ROOT: profile, PIOP_PI_ROOT: (await installedPi()).root,
   };
 }
 
@@ -41,14 +33,14 @@ function loaderSettings(settings: any, fastModels: FastModelSnapshot | null): an
   return { ...settings, pluginAgentTools: Contributions.agentTools(), fastModels };
 }
 
-export function load(home: string, storage: string, settings: any, initial: boolean, fastModels: FastModelSnapshot | null, project?: Project): Promise<any> {
-  return runHostOperation(definitions, { settings: loaderSettings(settings, fastModels), initial, ...(project ? { project } : {}) }, { env: environment(home, storage) });
+export async function load(home: string, storage: string, settings: any, initial: boolean, fastModels: FastModelSnapshot | null, project?: Project): Promise<any> {
+  return runHostOperation(definitions, { settings: loaderSettings(settings, fastModels), initial, ...(project ? { project } : {}) }, { env: await environment(home, storage) });
 }
 
-export function move(home: string, storage: string, settings: any, fastModels: FastModelSnapshot | null, request: Move): Promise<Saved> {
-  return runHostOperation(moved, { settings: loaderSettings(settings, fastModels), ...request }, { env: environment(home, storage) });
+export async function move(home: string, storage: string, settings: any, fastModels: FastModelSnapshot | null, request: Move): Promise<Saved> {
+  return runHostOperation(moved, { settings: loaderSettings(settings, fastModels), ...request }, { env: await environment(home, storage) });
 }
 
-export function save(home: string, storage: string, settings: any, configuration: unknown, fastModels: FastModelSnapshot | null, project?: Project): Promise<Saved> {
-  return runHostOperation(saved, { settings: loaderSettings(settings, fastModels), configuration, ...(project ? { project } : {}) }, { env: environment(home, storage) });
+export async function save(home: string, storage: string, settings: any, configuration: unknown, fastModels: FastModelSnapshot | null, project?: Project): Promise<Saved> {
+  return runHostOperation(saved, { settings: loaderSettings(settings, fastModels), configuration, ...(project ? { project } : {}) }, { env: await environment(home, storage) });
 }

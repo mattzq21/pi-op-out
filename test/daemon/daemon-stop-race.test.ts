@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { daemonExecutable, temporaryDirectory } from './harness';
 import { tryLockFileSync } from '../../daemon/src/util/flock';
-import { publish } from '../../daemon/src/settings_records';
+import { save } from '../../daemon/resources/application-records.cjs';
 import { PROTOCOL_VERSION } from '../../daemon/src/config';
 
 test('stop finishes when a closing daemon releases its lock during connection retries', async () => {
@@ -24,7 +24,7 @@ test('stop finishes when a closing daemon releases its lock during connection re
       },
     },
   });
-  publish(join(directory, 'daemon.json'), JSON.stringify({ url: `ws://127.0.0.1:${server.port}`, token: 'a'.repeat(32), protocol: PROTOCOL_VERSION }));
+  save(directory, 'daemon', JSON.stringify({ url: `ws://127.0.0.1:${server.port}`, token: 'a'.repeat(32), protocol: PROTOCOL_VERSION }));
   const child = Bun.spawn([process.execPath, executable, 'stop'], { env: { ...process.env, HOME: home }, stdout: 'pipe', stderr: 'pipe' });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

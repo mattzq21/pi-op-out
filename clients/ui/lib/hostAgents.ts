@@ -7,33 +7,24 @@ import type { AgentConfig, AgentProfile, DefinedAgentsCapability } from "../type
 
 const agentStatusSchema = z.object({ version: z.number().default(1), active: z.string(), locked: z.boolean().optional(), saved: z.boolean().optional(), unavailable: z.boolean().optional() });
 
-const savedSchema = z.object({ revision: z.string(), warnings: z.array(z.string()) });
-
 export function saveAgentDefinitions(hostId: string, configuration: AgentConfig) {
-  return nativeCall("save_agent_definitions", { hostId, configuration }, savedSchema);
+  return nativeCall("save_agent_definitions", { hostId, configuration });
 }
 
 export type ProjectAgentsChange = { revision: string; agents?: AgentProfile[]; defaultAgent?: string | null };
 
 export function saveProjectAgents(hostId: string, cwd: string, configuration: ProjectAgentsChange) {
-  return nativeCall("save_agent_definitions", { hostId, cwd, configuration }, savedSchema);
+  return nativeCall("save_agent_definitions", { hostId, cwd, configuration });
 }
 
-const promptPreviewSchema = z.object({
-  model: z.string(),
-  messages: z.array(z.object({ role: z.string(), text: z.string() })),
-  tools: z.array(z.object({ place: z.string(), json: z.string() })),
-  notices: z.array(z.string()).optional(),
-});
-
-export type PromptPreview = z.output<typeof promptPreviewSchema>;
+export type { PromptPreview } from "../../../protocol/results";
 
 export function previewAgentPrompt(hostId: string, agent: string, cwd?: string) {
-  return nativeCall("agent_prompt_preview", { hostId, agent, ...(cwd ? { cwd } : {}) }, promptPreviewSchema);
+  return nativeCall("agent_prompt_preview", { hostId, agent, ...(cwd ? { cwd } : {}) });
 }
 
 export function moveAgent(hostId: string, agent: string, revision: string, from: string | null, to: string | null) {
-  return nativeCall("move_agent", { hostId, agent, revision, ...(from ? { from } : {}), ...(to ? { to } : {}) }, savedSchema);
+  return nativeCall("move_agent", { hostId, agent, revision, ...(from ? { from } : {}), ...(to ? { to } : {}) });
 }
 
 export function agentStatusReader(hostId: () => string, cwd: () => string | undefined, publish: (capability: DefinedAgentsCapability | undefined) => void, fail: (reason: unknown) => void) {

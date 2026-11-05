@@ -2,6 +2,7 @@ const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const sessionTables = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 
 function directoryExists(cwd) {
   let exists;
@@ -25,24 +26,26 @@ function insertRecord(db, session, checked, exists) {
     WHERE excluded.checked_at >= session_directories.checked_at`).run(session.sessionId, session.cwd, checked, Number(exists));
 }
 
-function record(db, session) {
-  if (!session.sessionId || !path.isAbsolute(session.cwd || '') || !registeredSession(db, session)) return;
-  const checked = session.checkedAt || Date.now();
-  const exists = directoryExists(session.cwd);
+const saveDirectory = onMainThread('session-registry.saveDirectory', (root, session, checked, exists) => {
+  const db = sessionTables.connection(root);
 
   sessionTables.transaction(db, 'IMMEDIATE', () => {
     if (registeredSession(db, session)) insertRecord(db, session, checked, exists);
   });
-}
+});
 
+// Checks the folder of a chat, which can be slow on a network folder, and saves whether it exists.
 function recordDirectory(request) {
   if (typeof request.root !== 'string' || !path.isAbsolute(request.root)) throw new Error('Invalid session registry root');
-  record(sessionTables.connection(request.root), request);
+  const session = { sessionId: request.sessionId, sessionPath: request.sessionPath, cwd: request.cwd };
+
+  if (!session.sessionId || !path.isAbsolute(session.cwd || '') || !registeredSession(sessionTables.connection(request.root), session)) return null;
+  saveDirectory(request.root, session, request.checkedAt || Date.now(), directoryExists(session.cwd));
 
   return null;
 }
 
-function registerExternalTranscript(root, transcript, sessionId) {
+const registerExternalTranscript = onMainThread('session-registry.registerExternalTranscript', (root, transcript, sessionId) => {
   if (!transcript) return;
   const file = path.resolve(transcript);
   const relative = path.relative(root, file);
@@ -50,7 +53,7 @@ function registerExternalTranscript(root, transcript, sessionId) {
   if (["sessions", "archived"].some(area => relative.startsWith(area + path.sep))) return;
   sessionTables.connection(root).prepare("INSERT INTO external_transcripts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=json_patch(external_transcripts.record_json, excluded.record_json)")
     .run(createHash("sha256").update(file).digest("hex"), JSON.stringify({ path: file, sessionId }));
-}
+});
 
 function saveManagedMetadata(database, id, file, saved) {
   database.prepare("DELETE FROM session_file_metadata WHERE session_id=?").run(id);
@@ -72,20 +75,20 @@ function withRegistry(root, operation) {
   return operation(sessionTables.connection(root));
 }
 
-function bindSession(root, id, file) {
+const bindSession = onMainThread('session-registry.bindSession', (root, id, file) => {
   return withRegistry(root, database => sessionTables.bind(database, id, file));
-}
+});
 
 function requireSession(root, id, file) {
   return withRegistry(root, database => sessionTables.register(database, id, file));
 }
 
-function recordTranscript(root, id, file, saved) {
+const recordTranscript = onMainThread('session-registry.recordTranscript', (root, id, file, saved) => {
   return withRegistry(root, database => sessionTables.transaction(database, 'IMMEDIATE', () => {
     sessionTables.register(database, id, file);
     saveManagedMetadata(database, id, file, saved);
   }));
-}
+});
 
 function sessionPath(root, id) {
   return withRegistry(root, database => database.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id)?.session_path);

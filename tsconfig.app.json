@@ -5,7 +5,8 @@
     "target": "ES2022", "useDefineForClassFields": true, "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "allowJs": false, "skipLibCheck": true, "esModuleInterop": true, "allowSyntheticDefaultImports": true,
     "strict": true, "forceConsistentCasingInFileNames": true, "module": "ESNext", "moduleResolution": "Bundler",
-    "resolveJsonModule": true, "isolatedModules": true, "noEmit": true, "jsx": "preserve", "jsxImportSource": "solid-js"
+    "resolveJsonModule": true, "isolatedModules": true, "noEmit": true, "jsx": "preserve", "jsxImportSource": "solid-js",
+    "paths": { "piop/plugin": ["./clients/ui/plugins/api.ts"] }
   },
-  "include": ["clients/ui"]
+  "include": ["clients/ui", "plugins/*/client"]
 }

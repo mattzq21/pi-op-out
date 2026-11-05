@@ -1,9 +1,10 @@
 const sessionStorage = require('./piop-storage/maintenance.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash, randomUUID } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 const io = require('./session-transactions.cjs');
 const database = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 const { validSessionHeader } = require('./session-header.cjs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
@@ -36,16 +37,32 @@ function withDatabase(root, operation) {
   return operation(database.connection(root));
 }
 
+// The journal of each storage transaction, saved before and after each step, so a crash can be undone or finished.
+const insertJournal = onMainThread('storage-transaction.insertJournal', (root, id, kind, state, body) => {
+  withDatabase(root, db => db.prepare('INSERT INTO storage_transactions VALUES (?, ?, ?, ?)').run(id, kind, state, body));
+});
+
+const saveJournal = onMainThread('storage-transaction.saveJournal', (root, id, state, body) => {
+  withDatabase(root, db => {
+    if (db.prepare('UPDATE storage_transactions SET state=?, journal_json=? WHERE id=?').run(state, body, id).changes !== 1) throw new Error('Storage transaction is not registered');
+  });
+});
+
+const removeJournal = onMainThread('storage-transaction.removeJournal', (root, id, staging) => {
+  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
+    require('./transcript-references.cjs').removeDirectory(db, staging);
+    db.prepare('DELETE FROM storage_transactions WHERE id=?').run(id);
+  }));
+});
+
 function insert(journal) {
-  withDatabase(journal.root, db => db.prepare('INSERT INTO storage_transactions VALUES (?, ?, ?, ?)').run(journal.id, journal.kind, journal.state, JSON.stringify(journal)));
+  insertJournal(journal.root, journal.id, journal.kind, journal.state, JSON.stringify(journal));
   point();
 }
 
 function save(journal) {
   point();
-  withDatabase(journal.root, db => {
-    if (db.prepare('UPDATE storage_transactions SET state=?, journal_json=? WHERE id=?').run(journal.state, JSON.stringify(journal), journal.id).changes !== 1) throw new Error('Storage transaction is not registered');
-  });
+  saveJournal(journal.root, journal.id, journal.state, JSON.stringify(journal));
   point();
 }
 
@@ -59,10 +76,7 @@ function retire(journal) {
   }
 
   point();
-  withDatabase(journal.root, db => database.transaction(db, 'IMMEDIATE', () => {
-    require('./transcript-references.cjs').removeDirectory(db, journal.staging);
-    db.prepare('DELETE FROM storage_transactions WHERE id=?').run(journal.id);
-  }));
+  removeJournal(journal.root, journal.id, journal.staging);
   point();
 }
 
@@ -153,23 +167,24 @@ const steps = {
     },
     done(step) { return !io.exists(step.prepared); },
   },
+  // The ownership record of a conversation, changed from before to after.
   'write-record': {
-    run(step) {
+    run(step, journal) {
       const storage = require('./conversation-storage.cjs');
-      const current = storage.read(step.file);
+      const current = storage.read(journal.root, step.sessionId);
 
       if (current === step.after) return;
 
-      if (current !== step.before) throw new Error(`Record changed: ${step.file}`);
-      storage.write(step.file, step.after);
+      if (current !== step.before) throw new Error(`Ownership record changed: ${step.sessionId}`);
+      storage.write(journal.root, step.sessionId, step.after);
     },
-    undo(step) {
+    undo(step, journal) {
       if (!step.applied) return;
       const storage = require('./conversation-storage.cjs');
 
-      if (storage.read(step.file) === step.after) storage.write(step.file, step.before);
+      if (storage.read(journal.root, step.sessionId) === step.after) storage.write(journal.root, step.sessionId, step.before);
     },
-    done(step) { return require('./conversation-storage.cjs').read(step.file) === step.after; },
+    done(step, journal) { return require('./conversation-storage.cjs').read(journal.root, step.sessionId) === step.after; },
   },
 };
 
@@ -253,7 +268,7 @@ function execute(journal) {
       point();
     }
 
-    const unchecked = journal.steps.find(step => !steps[step.type].done(step));
+    const unchecked = journal.steps.find(step => !steps[step.type].done(step, journal));
 
     if (unchecked) throw new Error(`Step could not be checked: ${unchecked.type} ${unchecked.source ?? unchecked.file}`);
     save({ ...journal, state: 'committed' });
@@ -315,21 +330,14 @@ function supportingFiles(source) {
   return [snapshots];
 }
 
-function ownershipFile(root, sessionId) {
-  const key = createHash('sha256').update(sessionId.toLowerCase()).digest('hex').slice(0, 40);
-
-  return path.join(root, 'conversation-ownership', `${key}.json`);
-}
-
 function supportingPaths(source) { return [source, source.replace(/\.jsonl$/, '.snapshots')]; }
 
 function ownershipRecord(root, sessionId) {
-  const file = ownershipFile(root, sessionId);
-  const before = require('./conversation-storage.cjs').read(file);
+  const before = require('./conversation-storage.cjs').read(root, sessionId);
 
   if (before === null) return [];
 
-  return [{ type: 'write-record', file, before, after: JSON.stringify({ ...JSON.parse(before), deleted: true, client: null }) }];
+  return [{ type: 'write-record', sessionId, before, after: JSON.stringify({ ...JSON.parse(before), deleted: true, client: null }) }];
 }
 
 function planDelete(root, request) {
@@ -414,12 +422,11 @@ function planArchive(root, request) {
 }
 
 function restoreRecord(root, sessionId, destination) {
-  const file = ownershipFile(root, sessionId);
-  const before = require('./conversation-storage.cjs').read(file);
+  const before = require('./conversation-storage.cjs').read(root, sessionId);
 
   if (before === null) throw new Rejected(`Session ownership record is missing: ${sessionId}`);
 
-  return { type: 'write-record', file, before, after: JSON.stringify({ ...JSON.parse(before), path: destination, deleted: false, client: null }) };
+  return { type: 'write-record', sessionId, before, after: JSON.stringify({ ...JSON.parse(before), path: destination, deleted: false, client: null }) };
 }
 
 function planRestore(root, request) {
@@ -578,7 +585,7 @@ const stepChecks = {
   place: (journal, step) => journal.kind !== 'delete' && journal.targets.some(target => validPlacement(journal, target, step)),
   'prepare-transcript': (journal, step) => journal.kind === 'archive' && path.dirname(step.prepared) === journal.staging && journal.targets.some(target => target.path === step.source),
   'prepare-restored': (journal, step) => journal.kind === 'restore' && path.dirname(step.prepared) === journal.staging && journal.targets.some(target => target.path === step.source),
-  'write-record': (journal, step) => journal.targets.some(target => step.file === ownershipFile(journal.root, target.sessionId)),
+  'write-record': (journal, step) => journal.targets.some(target => step.sessionId === target.sessionId),
 };
 
 function validStep(journal, step) { return Boolean(stepChecks[step.type]?.(journal, step)); }

@@ -6,6 +6,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { homedir, tmpdir } from "node:os";
 import { z } from "zod";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
+import { linkTestPi } from "./test/pi-install.mjs";
 
 const binary = path.resolve(process.env.PI_E2E_BINARY ?? "target/e2e/release/piop");
 const ownsFixtureHome = !process.env.PIOP_TEST_HOME;
@@ -21,14 +22,8 @@ for (const name of ["auth.json", "models.json", "models-store.json"]) {
 }
 
 const fixtureBin = path.join(fixtureHome, ".local", "bin");
-const installedPi = process.env.PIOP_E2E_REAL_PI ?? [
-  path.join(homedir(), ".local", "bin", "pi"),
-  ...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map(directory => path.join(directory, "pi")),
-].find(candidate => existsSync(candidate));
-if (!installedPi) throw new Error("E2E requires an installed Pi executable");
-process.env.PIOP_E2E_REAL_PI = realpathSync(installedPi);
 mkdirSync(fixtureBin, { recursive: true, mode: 0o700 });
-if (!existsSync(path.join(fixtureBin, "pi"))) symlinkSync(process.env.PIOP_E2E_REAL_PI, path.join(fixtureBin, "pi"));
+await linkTestPi(fixtureHome);
 const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 const realNode = process.execPath;
 writeFileSync(path.join(fixtureBin, "node"), "#!/bin/sh\nexec " + shellQuote(realNode) + " " + shellQuote(path.resolve("test/e2e/pi-ready-launcher.cjs")) + " --node " + shellQuote(realNode) + ' -- "$@"\n', { mode: 0o700 });

@@ -4,13 +4,11 @@ import * as SessionTables from '../resources/session-database.cjs';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from './host_operations';
-import { claimPath } from './session_worker';
-import { tryLockFileSync } from './util/flock';
 import type { Database } from './util/db';
 
 type RecordRequest = { root: string; sessionId: string; sessionPath: string | null; cwd: string; checkedAt: number };
 
-const recordOperation = hostOperation<RecordRequest, null>('record-session-directory', 'general', DEFAULT_TIMEOUT, value => z.null().parse(value));
+const recordOperation = hostOperation<RecordRequest, null>('record-session-directory', 'general', DEFAULT_TIMEOUT, z.null());
 
 export function ids(root: string): string[] {
   return (connection(root).prepare('SELECT session_id FROM sessions').all() as Array<{ session_id: string }>).map(row => row.session_id);
@@ -20,12 +18,9 @@ export function reserve(root: string): string {
   return SessionTables.reserveId(connection(root));
 }
 
+// Gives back an identity that was reserved and not used for a saved chat.
 export function releaseReservation(root: string, id: string): void {
-  const claim = tryLockFileSync(claimPath(id));
-  if (!claim) return;
-  try {
-    connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
-  } finally { claim.release(); }
+  connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
 export function pending(root: string, work: 'transaction' | 'recovery' | 'retention'): boolean {

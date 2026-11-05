@@ -7,14 +7,14 @@ import { onToolsChanged, parseTools, recordTools, savedTools } from "../../daemo
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-function settingsFile(): string {
+function storageRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'piop-tools-'));
   roots.push(root);
-  return join(root, 'settings.json');
+  return root;
 }
 
 test('a host has no tools before Pi reports them, then keeps the latest report in name order', () => {
-  const file = settingsFile();
+  const file = storageRoot();
   expect(savedTools(file)).toEqual([]);
   recordTools([
     { name: 'web_search', description: 'Search', source: '/ext/piop-codex-web-search.ts' },
@@ -26,7 +26,7 @@ test('a host has no tools before Pi reports them, then keeps the latest report i
 });
 
 test('listeners hear about a report only when the tools changed', () => {
-  const file = settingsFile();
+  const file = storageRoot();
   let changes = 0;
   const stop = onToolsChanged(() => { changes += 1; });
   try {
@@ -40,7 +40,7 @@ test('listeners hear about a report only when the tools changed', () => {
 });
 
 test('a malformed report is rejected and leaves the saved tools unchanged', () => {
-  const file = settingsFile();
+  const file = storageRoot();
   recordTools([{ name: 'read', description: '', source: 'builtin:read' }], file);
   expect(() => recordTools([{ name: 'read', description: '', source: 'builtin:read' }, { name: 'read', description: '', source: 'builtin:read' }], file)).toThrow('reported the tool read twice');
   expect(() => recordTools([{ name: 'read', description: '' }], file)).toThrow('has no source');

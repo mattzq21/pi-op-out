@@ -1,11 +1,12 @@
 import { realpathSync, statSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
+import { z } from 'zod';
+import { archivedConversationSchema, hostStorageSchema, storageCategorySchema } from '../../protocol/results';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { sessionIdentity } from './pi_launch';
 import { desktopSessionsDir } from './process_io';
 import { DEFAULT_TIMEOUT, hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from './host_operations';
-import * as restoreRecovery from './restore_recovery';
 import * as storageTransactions from './storage_transactions';
 import { StorageTransactionError } from './storage_transactions';
 import * as chatWorktrees from './chat_worktree_lifecycle';
@@ -18,32 +19,22 @@ import type { PiRuntime } from './pi_runtime';
 import type { TerminalRuntime } from './terminals';
 import type { App } from './app';
 
-export interface HostStorage { hostId: string; hostName: string; categories: any[]; archives: any[]; warnings: string[]; error?: string }
+export type HostStorage = z.output<typeof hostStorageSchema>;
 
-type Inventory = { categories: any[]; archives: any[]; warnings: string[] };
-
-const storageInventory = hostOperation<{ profile: string; archivesOnly: boolean; archivesLimit?: number }, Inventory>('storage-inventory', 'general', STORAGE_TIMEOUT, (value: any) => {
-  if (!Array.isArray(value?.categories)) throw new Error('missing field `categories`');
-  if (!Array.isArray(value?.archives)) throw new Error('missing field `archives`');
-  return { categories: value.categories.map(normalizeCategory), archives: value.archives.map(normalizeArchive), warnings: Array.isArray(value.warnings) ? value.warnings : [] };
+const inventorySchema = z.object({
+  categories: z.array(storageCategorySchema.extend({ directories: z.array(z.string()).default([]), estimated: z.boolean().default(false) })),
+  archives: z.array(archivedConversationSchema), warnings: z.array(z.string()).default([]),
 });
 
+type Inventory = z.output<typeof inventorySchema>;
+
+const storageInventory = hostOperation<{ profile: string; archivesOnly: boolean; archivesLimit?: number }, Inventory>('storage-inventory', 'general', STORAGE_TIMEOUT, inventorySchema);
+
 export async function inspectStorage(archivesOnly = false, archivesLimit?: number): Promise<HostStorage> {
-  await restoreRecovery.recover(profileRoot());
   let inventory: Inventory;
   try { inventory = await runHostOperation(storageInventory, { profile: profileRoot(), archivesOnly, archivesLimit }); }
   catch (error: any) { throw new Error(`Could not inspect storage on Local: ${error?.message ?? error}`); }
   return { hostId: 'local', hostName: 'Local', ...inventory, warnings: [...inventory.warnings, ...chatWorktrees.pendingWarnings()] };
-}
-
-function normalizeCategory(category: any): any {
-  if (!category || typeof category !== 'object') throw new Error('invalid type: expected struct StorageCategory');
-  return { ...category, directories: Array.isArray(category.directories) ? category.directories : [], estimated: category.estimated === true };
-}
-
-function normalizeArchive(archive: any): any {
-  if (!archive || typeof archive !== 'object') throw new Error('invalid type: expected struct ArchivedConversation');
-  return { ...archive, restorable: archive.restorable === true };
 }
 
 export function failedStorage(hostId: string, hostName: string, error: string): HostStorage {
@@ -72,11 +63,7 @@ export function localArchivedSessionFileAt(home: string, sessionPath: string): s
 
 export async function locateSessionFile(path: string, archived: boolean): Promise<string> {
   const locate = () => (archived ? localArchivedSessionFileAt : localDesktopSessionFileAt)(homeDir(), path);
-  try { return locate(); }
-  catch {
-    await storageTransactions.recover({ busyIsOk: true });
-    return locate();
-  }
+  return locate();
 }
 
 async function retireArchivedSession(client: PiRuntime, sessionPath: string): Promise<void> {
@@ -149,23 +136,19 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
 
 type DescendantsRequest = { path: string; root: string; archived: boolean; includeOtherArea: boolean; kinds?: string[] };
 
-const descendantsOperation = hostOperation<DescendantsRequest, unknown[]>('session-descendants', 'general', STORAGE_TIMEOUT, value => {
-  if (!Array.isArray(value)) throw new Error('expected a sequence');
-  return value;
-});
+// Paths, or path and archived pairs when the request includes the other area.
+const descendantsSchema = z.array(z.union([z.string(), z.tuple([z.string(), z.boolean()])]));
+
+const descendantsOperation = hostOperation<DescendantsRequest, z.output<typeof descendantsSchema>>('session-descendants', 'general', STORAGE_TIMEOUT, descendantsSchema);
 
 export const RESTORED_KINDS = ['subagent'];
 
 export async function sessionDescendants(sessionPath: string, archived: boolean, includeOtherArea: boolean, kinds?: string[]): Promise<Array<[string, boolean]>> {
   const root = join(profileRoot(), archived ? 'archived' : 'sessions');
-  let value: unknown[];
+  let value: z.output<typeof descendantsSchema>;
   try { value = await runHostOperation(descendantsOperation, { path: sessionPath, root, archived, includeOtherArea, kinds }); }
   catch (error: any) { throw new Error(`Could not find subagent conversations: ${error?.message ?? error}`); }
-  if (includeOtherArea) return value.map((item: any) => {
-    if (!Array.isArray(item) || typeof item[0] !== 'string' || typeof item[1] !== 'boolean') throw new Error('Invalid subagent conversation list: expected a tuple');
-    return [item[0], item[1]];
-  });
-  return value.map((path: any) => { if (typeof path !== 'string') throw new Error('Invalid subagent conversation list: expected a string'); return [path, archived]; });
+  return value.map(item => typeof item === 'string' ? [item, archived] : [item[0], item[1]]);
 }
 
 async function deletionTargets(paths: Array<[string, boolean]>): Promise<storageTransactions.DeletionTarget[]> {
@@ -276,14 +259,13 @@ export async function relocateSession(app: App, sessionPath: string, cwd: string
   });
 }
 
-const relocateOperation = hostOperation<{ profile: string; sessionPath: string; cwd: string }, null>('relocate-session', 'general', DEFAULT_TIMEOUT, () => null);
+const relocateOperation = hostOperation<{ profile: string; sessionPath: string; cwd: string }, null>('relocate-session', 'general', DEFAULT_TIMEOUT, z.unknown().transform(() => null));
 
-type Recovery = { cwd: string; recovery: unknown; warnings: string[] };
+const recoverySchema = z.object({ cwd: z.string(), recovery: z.unknown(), warnings: z.array(z.string()) });
 
-const recoverOperation = hostOperation<{ action: 'empty'; profile: string; sessionPath: string }, Recovery>('recover-missing-session', 'general', DEFAULT_TIMEOUT, (value: any) => {
-  if (typeof value?.cwd !== 'string' || !Array.isArray(value.warnings) || !value.warnings.every((item: unknown) => typeof item === 'string')) throw new Error('expected a recovery record');
-  return value;
-});
+type Recovery = z.output<typeof recoverySchema>;
+
+const recoverOperation = hostOperation<{ action: 'empty'; profile: string; sessionPath: string }, Recovery>('recover-missing-session', 'general', DEFAULT_TIMEOUT, recoverySchema);
 
 export async function recoverMissingSession(app: App, sessionPath: string, action: string, clientId: string): Promise<any> {
   if (action !== 'empty') throw new Error('Unknown recovery action');

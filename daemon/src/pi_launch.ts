@@ -1,16 +1,15 @@
-import { supportedPi } from '../resources/pi-runtime.cjs';
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
-import { homeDir, nodeExecutable, pathWithNode, piExecutable } from './environment';
+import { homeDir, nodeExecutable, pathWithNode } from './environment';
+import { installedPi } from './pi_install';
 import * as Ext from './extensions';
 import * as Contributions from './plugin_contributions';
 import { ensureDesktopSessionsDir, shellQuote } from './process_io';
 import * as Registry from './session_registry';
 import { validateRemoteHost, type AppSettings } from './settings_types';
 import { transaction } from './util/db';
-import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
 import { QUEUE_TOOLS } from './host/goals/commands';
 
@@ -107,23 +106,19 @@ function importExternalIdentity(path: string): string {
 
 export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null } | { kind: 'prompt-preview'; cwd: string };
 
-export function buildPiCommand(settings: AppSettings, launch: PiLaunch): LaunchCommand {
-  return localPiCommand(settings, launch, homeDir());
+export async function buildPiCommand(settings: AppSettings, launch: PiLaunch): Promise<LaunchCommand> {
+  return localPiCommand(settings, launch, homeDir(), (await installedPi()).cli);
 }
 
 function localWorkerCommand(piPath: string, launch: PiLaunch, bridge: string): LaunchCommand {
-  const command: LaunchCommand = launch.kind === 'prompt-preview'
-    ? { program: nodeExecutable(), args: [bridge, piPath], env: { PIOP_PROMPT_PREVIEW: '1' } }
-    : sessionWorkerCommand(piPath);
+  const command: LaunchCommand = { program: nodeExecutable(), args: [bridge, piPath], env: launch.kind === 'prompt-preview' ? { PIOP_PROMPT_PREVIEW: '1' } : {} };
   command.env.PIOP_STORAGE_DIRECTORY = STORAGE_DIRECTORY;
   command.env.PI_CODING_AGENT_DIR = join(homeDir(), STORAGE_DIRECTORY);
   command.args.push('--mode', 'rpc');
   return command;
 }
 
-function localPiCommand(settings: AppSettings, launch: PiLaunch, desktopHome: string): LaunchCommand {
-  const piPath = piExecutable();
-  supportedPi(piPath);
+function localPiCommand(settings: AppSettings, launch: PiLaunch, desktopHome: string, piPath: string): LaunchCommand {
   const generated = Ext.generatedExtensions();
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
   const command = localWorkerCommand(piPath, launch, generated.bridge);
@@ -156,7 +151,7 @@ function configureLocalExtensions(command: LaunchCommand, settings: AppSettings,
   const core = generated.core;
   command.env.PIOP_AGENT_RESOURCES = JSON.stringify({ ...Ext.agentResources(settings), pluginAgentTools: Contributions.agentTools() });
   command.env.PIOP_STORAGE_ROOT = join(homeDir(), STORAGE_DIRECTORY);
-  command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = Ext.contextCapSettingsPath();
+  command.env.PIOP_CONTEXT_CAP_SETTINGS = JSON.stringify(Ext.contextCapSettings(settings));
   const after = (position: Contributions.CoreExtension) => generated.plugins.filter(plugin => plugin.after === position).flatMap(plugin => ['--extension', plugin.path]);
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--session-dir', sessionDir, '--approve', '--no-skills',

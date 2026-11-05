@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { daemonTestTimings } from './daemon-test-timings.mjs';
+import { testPi } from '../test/pi-install.mjs';
 
 const started = performance.now();
 const { values, positionals } = parseArgs({
@@ -27,6 +28,7 @@ async function main() {
     const builds = await Promise.allSettled([
       promisify(execFile)('bun', ['test/daemon/build.ts']),
       promisify(execFile)(process.execPath, ['--input-type=module', '-e', source, controlsBundle]),
+      testPi(),
     ]);
     const failures = builds.filter(result => result.status === 'rejected').map(result => result.reason);
     if (failures.length === 1) throw failures[0];
@@ -37,7 +39,7 @@ async function main() {
     const timings = join(directory, 'timings.json');
     const saveTimings = await daemonTestTimings(files, timings, 'target/test-cache/daemon-timings.json');
     const result = await new Promise((resolve, reject) => {
-      const child = spawn('bun', ['test', '--parallel=' + jobs, '--parallel-delay=0', '--timeout', '60000',
+      const child = spawn('bun', ['test', '--preload', './test/daemon/typebox-preload.cjs', '--parallel=' + jobs, '--parallel-delay=0', '--timeout', '60000',
         '--timings=' + timings, '--update-timings', ...(values.filter ? ['-t', values.filter] : []), ...files], { env, stdio: 'inherit' });
       child.once('error', reject);
       child.once('close', (code, signal) => resolve({ code, signal }));

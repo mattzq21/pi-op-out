@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { dlopen, FFIType, ptr } from 'bun:ffi';
+import { FFIType, ptr } from 'bun:ffi';
+import { loadLibc } from './util/libc';
 import type { Socket } from 'node:net';
 import { errorText } from './util/sync';
 
@@ -21,15 +22,9 @@ let getsockopt: GetSockOpt | undefined;
 
 function loadGetsockopt(): GetSockOpt {
   if (getsockopt) return getsockopt;
-  let failure: unknown;
-  for (const name of ['libc.so.6', 'libc.so', 'libc.musl-x86_64.so.1', 'libc.musl-aarch64.so.1']) {
-    try {
-      const library = dlopen(name, { getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } });
-      getsockopt = library.symbols.getsockopt as GetSockOpt;
-      return getsockopt;
-    } catch (error) { failure = error; }
-  }
-  throw new Error('Cannot load the C library to read socket credentials: ' + errorText(failure));
+  const library = loadLibc({ getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } });
+  getsockopt = library.symbols.getsockopt as GetSockOpt;
+  return getsockopt;
 }
 
 export async function peerCredentials(socket: Socket): Promise<{ pid: number; uid: number }> {

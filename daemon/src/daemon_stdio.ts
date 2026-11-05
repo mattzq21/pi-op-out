@@ -1,11 +1,12 @@
 import { readLines } from '../resources/lf-lines.cjs';
 import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
-import { PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
+import { MAX_REQUEST_BYTES, PEER_PROTOCOL_VERSION, PROTOCOL_VERSION } from './config';
 import * as endpoint from './daemon_endpoint';
 import * as daemonLog from './daemon_log';
-import { daemonScript } from './session_worker';
-import { sleep, errorText } from './util/sync';
+import { daemonScript } from './daemon_executable';
+import { lockFile } from './util/flock';
+import { untilStorageChange } from './util/storage_change';
 
 function validateEndpoint(protocol: number, token: string, address: string): void {
   let url: URL;
@@ -92,38 +93,40 @@ async function startDaemon(mode: string): Promise<[string, ChildProcess]> {
   return [logPath, await daemonLog.spawnDaemon(command)];
 }
 
+// Starts a daemon and connects to it once it has saved its endpoint. When another daemon started first, connects to
+// that one, or starts again once it has stopped.
 async function startAndOpen(mode: string, scope: string): Promise<[Socket, any]> {
   const deadline = Date.now() + endpoint.STARTUP_TIMEOUT;
-  let logPath: string;
-  let child: ChildProcess;
-  let exit: number | null | undefined;
-  const launch = async () => { [logPath, child] = await startDaemon(mode); exit = undefined; child.once('exit', code => { exit = code; }); };
-  await launch();
-  let relaunched = false;
+  const directory = endpoint.directory();
   let lastError = '';
-  while (Date.now() < deadline) {
-    try { return await openSocket(scope); } catch (error: any) { lastError = error?.message ?? String(error); }
-    if (exit !== undefined) {
-      if (exit !== endpoint.ALREADY_RUNNING_EXIT_CODE || relaunched) throw new Error('Piop daemon exited with code ' + exit + '. See ' + logPath!);
-      if (!claimed()) { await sleep(100); continue; }
-      relaunched = true;
-      await launch();
-      continue;
-    }
-    await sleep(100);
+  const attempt = async () => { try { return await openSocket(scope); } catch (error: any) { lastError = error?.message ?? String(error); return undefined; } };
+  let relaunched = false;
+  for (;;) {
+    const [logPath, child] = await startDaemon(mode);
+    let exit: number | null | undefined;
+    const ended = new Promise<void>(resolve => child.once('exit', code => { exit = code; resolve(); }));
+    const opened = await untilStorageChange(directory, async () => (await attempt()) ?? (exit !== undefined ? null : undefined), deadline - Date.now(), ended);
+    if (opened) return opened;
+    if (exit === undefined) throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath);
+    if (exit !== endpoint.ALREADY_RUNNING_EXIT_CODE || relaunched) throw new Error('Piop daemon exited with code ' + exit + '. See ' + logPath);
+    const other = await untilStorageChange(directory, async () => (await attempt()) ?? (claimed() ? null : undefined), deadline - Date.now());
+    if (other) return other;
+    if (other === undefined) throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath);
+    relaunched = true;
   }
-  throw new Error('Could not attach to Piop daemon: ' + lastError + '. See ' + logPath!);
+}
+
+// While a daemon restart runs: waits until the new daemon answers, or the restart ends.
+async function afterRestart(scope: string): Promise<[Socket, any] | undefined> {
+  const ends = endpoint.restartEnds();
+  if (ends === undefined) return undefined;
+  const opened = await untilStorageChange(endpoint.directory(), async () => (await tryOpen(scope)) ?? (endpoint.restartEnds() === undefined ? null : undefined), ends - Date.now());
+  return opened ?? await tryOpen(scope);
 }
 
 async function connect(): Promise<[Socket, any]> {
-  let opened = await tryOpen('peer');
-  if (opened) return opened;
-  while (endpoint.restartActive()) {
-    await sleep(100);
-    opened = await tryOpen('peer');
-    if (opened) return opened;
-  }
-  return startAndOpen('--serve', 'peer');
+  const opened = await tryOpen('peer') ?? await afterRestart('peer');
+  return opened ?? startAndOpen('--serve', 'peer');
 }
 
 function claimed(): boolean {
@@ -131,22 +134,14 @@ function claimed(): boolean {
 }
 
 async function controlSocket(action: string): Promise<Socket | undefined> {
-  let opened = await tryOpen('control');
+  const opened = await tryOpen('control') ?? await afterRestart('control');
   if (opened) return opened[0];
-  while (endpoint.restartActive()) {
-    await sleep(100);
-    opened = await tryOpen('control');
-    if (opened) return opened[0];
-  }
   if (action === 'stop' && claimed()) return undefined;
   if (action === 'start') return (await startAndOpen('--serve', 'control'))[0];
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    opened = await tryOpen('control');
-    if (opened) return opened[0];
-    if (action === 'stop' && claimed()) return undefined;
-    await sleep(100);
-  }
+  // A daemon holds the lock but has no endpoint yet: it is starting.
+  const started = await untilStorageChange(endpoint.directory(), async () => (await tryOpen('control'))?.[0] ?? (action === 'stop' && claimed() ? null : undefined), 15_000);
+  if (started) return started;
+  if (started === null || (action === 'stop' && claimed())) return undefined;
   throw new Error('Could not contact the daemon. See ' + join(endpoint.directory(), 'daemon.log'));
 }
 
@@ -159,29 +154,21 @@ async function sendControl(socket: Socket, action: string): Promise<void> {
   throw new Error('The running daemon does not support start/stop control; restart it after upgrading');
 }
 
-async function waitUntilStopped(previous: endpoint.Endpoint): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  let failure: unknown;
-  while (Date.now() < deadline) {
-    if (claimed()) return;
-    try {
-      const current = endpoint.read();
-      if (current.url !== previous.url || current.token !== previous.token) return;
-    } catch (error) { failure = error; }
-    await sleep(100);
-  }
-  throw new Error('Daemon is still shutting down; check daemon.log' + (failure === undefined ? '' : '. Last endpoint read failed: ' + errorText(failure)));
+// Waits until the daemon has ended: its lock is free then.
+async function waitUntilStopped(): Promise<void> {
+  const lock = await lockFile(join(endpoint.directory(), 'daemon.lock'), 0o600, false, 60_000);
+  if (!lock) throw new Error('Daemon is still shutting down; check daemon.log');
+  lock.release();
 }
 
 export async function control(action: string): Promise<void> {
   const socket = await controlSocket(action);
   if (!socket) { console.log('Piop daemon is not running.'); return; }
-  const current = endpoint.read();
   let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([sendControl(socket, action), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Daemon control timed out; the running daemon may need upgrading')), 10_000); })]);
   } finally { clearTimeout(timer); socket.close(); }
-  if (action === 'stop') await waitUntilStopped(current);
+  if (action === 'stop') await waitUntilStopped();
   console.log('Piop daemon ' + (action === 'start' ? 'running in the background' : 'stopped') + '.');
 }
 
@@ -249,7 +236,7 @@ export async function run(): Promise<void> {
     };
     stopInput = readLines(process.stdin, line => {
       if (failed) return;
-      if (Buffer.byteLength(line) > 32 * 1024 * 1024) { fail(new Error('Daemon request is too large')); return; }
+      if (Buffer.byteLength(line) > MAX_REQUEST_BYTES) { fail(new Error('Daemon request is too large')); return; }
       try { socket.send(line); } catch (error) { fail(error); }
       if (socket.bufferedAmount() > INPUT_HIGH_WATER_BYTES) pauseInputUntilDrained();
     }, () => { inputClosed = true; clearInterval(heartbeat); clearTimeout(inputDrainTimer); clearTimeout(inputStallTimer); socket.close(); output.then(() => resolve()); });

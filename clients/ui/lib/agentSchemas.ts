@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { mcpServersSchema } from "../../../extensions/piop-define-agents/mcp-schema";
-import { MAX_CAP, MIN_CAP } from "../../../extensions/piop-context-window-cap/interface";
+import { mcpServersSchema } from "../../../pi-extensions/piop-define-agents/mcp-schema";
+import { MAX_CAP, MIN_CAP } from "../../../pi-extensions/piop-context-window-cap/interface";
 
-export { mcpServerSchema, mcpServersSchema } from "../../../extensions/piop-define-agents/mcp-schema";
+export { mcpServerSchema, mcpServersSchema } from "../../../pi-extensions/piop-define-agents/mcp-schema";
 
 const agentAccessSchema = z.union([z.literal("all"), z.literal("none"), z.array(z.string())]);
 

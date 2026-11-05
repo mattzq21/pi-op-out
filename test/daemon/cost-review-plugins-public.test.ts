@@ -6,7 +6,7 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60_000);
 afterAll(async () => { await agents?.close(); });
 
-const ALL = ['cost', 'review', 'web-search', 'btw'];
+const ALL = ['cost', 'review', 'btw', 'web-search'];
 const REVIEW = '__pi_desktop_auxiliary__';
 let runtimes = 0;
 

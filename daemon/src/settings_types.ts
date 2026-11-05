@@ -1,125 +1,14 @@
-import { defaultPluginSettings, parsePluginSettings, type PluginSettings } from '../plugins/catalog';
-import { defaultKeybindings } from './keybindings';
-import { capRangeError } from '../../extensions/piop-context-window-cap/interface';
+import { defaultPluginSettings, parsePluginSettings } from './plugin_contributions';
+import { z } from 'zod';
+import { appSettingsSchema, USAGE_INDICATORS, type AppSettings, type RemoteHost, type UsageIndicator } from '../../protocol/settings';
+import { capRangeError } from '../../pi-extensions/piop-context-window-cap/interface';
 
-export interface RemoteHost {
-  enabled: boolean;
-  id: string;
-  name: string;
-  target: string;
-  piPath: string;
-}
-
-export interface AppSettings {
-  settingsRevision?: string;
-  // Each plugin's own settings, under its plugin ID.
-  plugins: PluginSettings;
-  localEnabled: boolean;
-  modelAliases?: Record<string, string>;
-  hiddenModels: string[];
-  knownModels?: string[];
-  defaultThinking: string;
-  defaultFastMode: boolean;
-  contextWindowCap: number;
-  contextWindowCapEnabled: boolean;
-  modelContextWindowCaps: Record<string, number | null>;
-  autoRetry: boolean;
-  hiddenUsageIndicators: UsageIndicator[];
-  debugMode: boolean;
-  keybindings: Record<string, string>;
-  tools: ToolConfig[];
-  skills: SkillConfig[];
-  hosts: RemoteHost[];
-}
-
-export interface ToolConfig { name: string; description: string; source: string }
-export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean }
+export type { AppSettings, RemoteHost, ToolConfig, SkillConfig, UsageIndicator } from '../../protocol/settings';
+export { USAGE_INDICATORS };
 
 export const MAX_REMOTE_HOSTS = 16;
 
-export const USAGE_INDICATORS = ['codex', 'anthropic', 'opencodeGo', 'opencodex'] as const;
-export type UsageIndicator = typeof USAGE_INDICATORS[number];
 export const isUsageIndicator = (value: unknown): value is UsageIndicator => (USAGE_INDICATORS as readonly unknown[]).includes(value);
-
-function usageIndicators(value: any): UsageIndicator[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || !value.every(isUsageIndicator)) fail('hiddenUsageIndicators', 'a sequence of ' + USAGE_INDICATORS.join(', '));
-  return [...new Set(value)];
-}
-
-function fail(field: string, expected: string): never { throw new Error(`invalid type for ${field}: expected ${expected}`); }
-
-function stringField(value: any, field: string, fallback?: () => string): string {
-  if (value === undefined) { if (fallback) return fallback(); throw new Error(`missing field \`${field}\``); }
-  if (typeof value !== 'string') fail(field, 'a string');
-  return value;
-}
-
-function boolField(value: any, field: string, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  if (typeof value !== 'boolean') fail(field, 'a boolean');
-  return value;
-}
-
-function optionalString(value: any, field: string): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') fail(field, 'a string');
-  return value;
-}
-
-function stringArray(value: any, field: string): string[] {
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) fail(field, 'a sequence of strings');
-  return [...value];
-}
-
-function arrayField(value: any, field: string): any[] {
-  if (value === undefined) throw new Error(`missing field \`${field}\``);
-  if (!Array.isArray(value)) fail(field, 'a sequence');
-  return value;
-}
-
-function entryFields(value: any, field: string, strings: string[], booleans: string[], optionalBooleans: string[]): void {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(field, 'a sequence of maps');
-  for (const key of strings) if (typeof value[key] !== 'string') fail(`${field}.${key}`, 'a string');
-  for (const key of booleans) if (typeof value[key] !== 'boolean') fail(`${field}.${key}`, 'a boolean');
-  for (const key of optionalBooleans) if (value[key] !== undefined && typeof value[key] !== 'boolean') fail(`${field}.${key}`, 'a boolean');
-}
-
-function skillConfig(value: any): SkillConfig {
-  entryFields(value, 'skills', ['name', 'path', 'description'], ['enabled'], ['userInvokedOnly']);
-  return value;
-}
-
-export function parseRemoteHost(value: any): RemoteHost {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('hosts', 'a map');
-  return {
-    enabled: boolField(value.enabled, 'enabled', true),
-    id: stringField(value.id, 'id'),
-    name: stringField(value.name, 'name'),
-    target: stringField(value.target, 'target'),
-    piPath: stringField(value.piPath, 'piPath', () => 'pi'),
-  };
-}
-
-function modelAliases(value: any): Record<string, string> {
-  if (value === undefined) return {};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('modelAliases', 'a map');
-  return Object.fromEntries(Object.entries(value).flatMap(([id, alias]) => {
-    if (typeof alias !== 'string') fail('modelAliases', 'strings');
-    return alias.trim() ? [[id, alias.trim()]] : [];
-  }));
-}
-
-function modelCaps(value: any): Record<string, number | null> {
-  if (value === undefined) return {};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('modelContextWindowCaps', 'a map');
-  const caps: Record<string, number | null> = {};
-  for (const [model, cap] of Object.entries(value)) {
-    if (cap !== null && (typeof cap !== 'number' || !Number.isSafeInteger(cap))) fail('modelContextWindowCaps', 'whole numbers or null');
-    caps[model] = cap as number | null;
-  }
-  return caps;
-}
 
 export function validateContextCaps(settings: AppSettings): void {
   const error = capRangeError(settings.contextWindowCap, 'General context cap');
@@ -131,40 +20,17 @@ export function validateContextCaps(settings: AppSettings): void {
   }
 }
 
-export function parseAppSettings(value: any): AppSettings {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid type: expected struct AppSettings');
-  let contextWindowCap = 300_000;
-  if (value.contextWindowCap !== undefined) {
-    if (typeof value.contextWindowCap !== 'number' || !Number.isInteger(value.contextWindowCap) || value.contextWindowCap < 0) throw new Error('Context window cap must be a whole number');
-    contextWindowCap = value.contextWindowCap;
-  }
-  let keybindings = defaultKeybindings();
-  if (value.keybindings !== undefined) {
-    if (!value.keybindings || typeof value.keybindings !== 'object' || Array.isArray(value.keybindings)) fail('keybindings', 'a map');
-    keybindings = {};
-    for (const [key, shortcut] of Object.entries(value.keybindings)) { if (typeof shortcut !== 'string') fail('keybindings', 'a string'); keybindings[key] = shortcut; }
-  }
-  const settings: AppSettings = {
-    settingsRevision: optionalString(value.settingsRevision, 'settingsRevision'),
-    plugins: parsePluginSettings(value.plugins),
-    localEnabled: boolField(value.localEnabled, 'localEnabled', true),
-    modelAliases: modelAliases(value.modelAliases),
-    hiddenModels: value.hiddenModels === undefined ? [] : stringArray(value.hiddenModels, 'hiddenModels'),
-    knownModels: value.knownModels === undefined || value.knownModels === null ? undefined : stringArray(value.knownModels, 'knownModels'),
-    defaultThinking: stringField(value.defaultThinking, 'defaultThinking'),
-    defaultFastMode: boolField(value.defaultFastMode, 'defaultFastMode', false),
-    contextWindowCap,
-    contextWindowCapEnabled: boolField(value.contextWindowCapEnabled, 'contextWindowCapEnabled', true),
-    modelContextWindowCaps: modelCaps(value.modelContextWindowCaps),
-    autoRetry: boolField(value.autoRetry, 'autoRetry', true),
-    hiddenUsageIndicators: usageIndicators(value.hiddenUsageIndicators),
-    debugMode: boolField(value.debugMode, 'debugMode', false),
-    keybindings,
-    tools: [],
-    skills: arrayField(value.skills, 'skills').map(skillConfig),
-    hosts: value.hosts === undefined ? [] : arrayField(value.hosts, 'hosts').map(parseRemoteHost),
-  };
-  return settings;
+// Settings from a client or from storage, with the defaults filled in. Each plugin checks its own settings.
+export function parseAppSettings(value: unknown): AppSettings {
+  const parsed = appSettingsSchema.safeParse(value);
+  if (!parsed.success) throw new Error('Invalid settings: ' + z.prettifyError(parsed.error));
+  return completeSettings(parsed.data);
+}
+
+// Checked settings with each plugin's own settings checked by that plugin, and without the tools: the daemon keeps
+// the tools that Pi reported.
+export function completeSettings(settings: AppSettings): AppSettings {
+  return { ...settings, plugins: parsePluginSettings(settings.plugins), tools: [] };
 }
 
 export function serializeAppSettings(settings: AppSettings): Record<string, unknown> {
@@ -197,24 +63,7 @@ export function cloneSettings(settings: AppSettings): AppSettings {
 }
 
 export function defaultSettings(): AppSettings {
-  return {
-    plugins: defaultPluginSettings(),
-    localEnabled: true,
-    defaultFastMode: false,
-    modelAliases: {},
-    hiddenModels: [],
-    defaultThinking: 'medium',
-    contextWindowCap: 300_000,
-    contextWindowCapEnabled: true,
-    modelContextWindowCaps: {},
-    autoRetry: true,
-    hiddenUsageIndicators: [],
-    debugMode: false,
-    keybindings: defaultKeybindings(),
-    tools: [],
-    skills: [],
-    hosts: [],
-  };
+  return { ...appSettingsSchema.parse({ defaultThinking: 'medium', skills: [] }), plugins: defaultPluginSettings() };
 }
 
 

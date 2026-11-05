@@ -1,4 +1,8 @@
-import type { PluginSettings } from "./plugins/settingsSchema";
+import type { AppSettings as HostSettings } from "../../protocol/settings";
+import type { PluginMessage } from "../../protocol/plugins";
+
+export type { ToolConfig, SkillConfig, RemoteHost } from "../../protocol/settings";
+export type { DirectoryListing, SessionSummary } from "../../protocol/results";
 import type { z } from "zod";
 import type { rpcCommandSchema, rpcEventSchema } from "./lib/rpcSchemas";
 import type { JSONType } from "zod";
@@ -14,8 +18,6 @@ export interface ChatMessage { nestedCalls?: NestedToolCalls; }
 export type ContentPart = ImageAttachment | { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: ToolArguments; partialArgs?: string };
 
 export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; startedAt?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred"; errorMessage?: string; toolName?: string; toolInput?: unknown; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
-
-export interface SessionSummary { id: string; isDraft?: boolean; auxiliaryParentId?: string; auxiliaryKind?: string; forkSourceId?: string; forkEntryId?: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; linkedWorktree?: boolean; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
 
 export type StorageOwnership = "owned" | "referenced" | "shared" | "unattributed";
 
@@ -79,15 +81,8 @@ export type RpcCommand = z.infer<typeof rpcCommandSchema>;
 
 export type RpcEvent = z.infer<typeof rpcEventSchema>;
 
-export interface ToolConfig { name: string; description: string; source: string; }
-
-export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
-
 export type McpServers = import("zod").infer<typeof import("./lib/agentSchemas").mcpServersSchema>;
 
-export interface RemoteHost { enabled?: boolean; id: string; name: string; target: string; piPath: string; }
-
-export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
 
 export interface CommandOption { value: string; label: string; description?: string; }
 export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; options?: CommandOption[]; }
@@ -96,11 +91,10 @@ export interface ImageAttachment { type: "image"; data: string; mimeType: string
 
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
 
- export interface AppSettings { plugins?: PluginSettings; settingsRevision?: string; clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; localEnabled?: boolean; modelAliases?: Record<string, string>; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; modelContextWindowCaps: Record<string, number | null>; autoRetry: boolean; hiddenUsageIndicators: UsageIndicator[]; debugMode: boolean; debugFeaturesOff?: string[]; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
+// The settings of a host, and what the client adds to them: the client preferences of this app and the save states.
+export type AppSettings = HostSettings & { clientSettingsRevision?: string; settingsDurabilityError?: string; clientSettingsDurabilityError?: string; debugFeaturesOff?: string[] };
 
-export const USAGE_INDICATORS = ["codex", "anthropic", "opencodeGo", "opencodex"] as const;
-
-export type UsageIndicator = typeof USAGE_INDICATORS[number];
+export { USAGE_INDICATORS, type UsageIndicator } from "../../protocol/settings";
 
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 
@@ -115,6 +109,9 @@ export interface ChatMessage { toolCallId?: string; details?: unknown; subagents
 export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolImage?: boolean; toolPayloadEvicted?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 
 export interface ChatMessage { submissionId?: string; piopQueueId?: string; piopSubmissionId?: string; }
+
+// How to show a plugin's custom message. Its host adds it from the plugin's manifest.
+export interface ChatMessage { pluginMessage?: PluginMessage; }
 
 export interface ChatMessage { deferredWork?: { reasoningOnly: boolean; usage?: ChatMessage["usage"]; firstUsage?: ChatMessage["usage"] }; loadWork?: () => Promise<void>; }
 

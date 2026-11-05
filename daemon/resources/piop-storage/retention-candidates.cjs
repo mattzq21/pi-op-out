@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const tables = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,7 +68,7 @@ function readRecord(root, file, body) {
   return { ...value, file };
 }
 
-function recordRetention(root, id, pending) {
+const recordRetention = onMainThread('retention-candidates.recordRetention', (root, id, pending) => {
   validateRetention(root, pending);
 
   if (!pending.directories.length && !pending.sessionIds.length) return;
@@ -89,7 +90,11 @@ function recordRetention(root, id, pending) {
         .run(id, JSON.stringify({ version: 1, id, origin, pending }), Date.now());
     }
   });
-}
+});
+
+const retryLater = onMainThread('retention-candidates.retryLater', (root, id) => {
+  tables.connection(root).prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), id);
+});
 
 function pendingRetentions(root, limit = 8) {
   const directory = storage(root);
@@ -104,7 +109,7 @@ function pendingRetentions(root, limit = 8) {
     try { records.push(readRecord(root, file, row.record_json)); }
     catch (error) {
       errors.push(`${row.record_id}: ${error.message}`);
-      database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), row.record_id);
+      retryLater(root, row.record_id);
     }
   }
 
@@ -170,12 +175,12 @@ function goalStorageProtected(record, candidate, file) {
     || publication.transcriptPaths.some(transcript => JSON.stringify(require('../transcript-references.cjs').read(root, transcript)).includes(JSON.stringify(candidate.path).slice(1, -1))));
 }
 
-function finishRecord(record, done) {
+const finishRecord = onMainThread('retention-candidates.finishRecord', (record, done) => {
   const root = path.dirname(path.dirname(record.file));
   const database = tables.connection(root);
 
   if (done) database.prepare('DELETE FROM retention_candidates WHERE record_id=?').run(record.id);
   else database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), record.id);
-}
+});
 
 module.exports = { validateRetention, describeCandidates, recordRetention, pendingRetentions, cleanupStages, matches, removeCandidate, finishRecord };

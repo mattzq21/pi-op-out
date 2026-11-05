@@ -23,3 +23,9 @@ declare const __PIOP_DEVELOPMENT__: boolean;
 declare const __PIOP_BUILD_ID__: string;
 declare const __PIOP_PROJECT_DIR__: string;
 declare const __PIOP_UNUSED_STOP_MS__: number;
+
+// The built-in plugins: the folders in plugins/, built. See daemonImports().
+declare module 'piop-builtin-plugins' {
+  const plugins: Array<{ manifest: string; extension?: string; client?: string }>;
+  export default plugins;
+}

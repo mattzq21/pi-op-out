@@ -1,6 +1,5 @@
 import * as stateRecords from "./session-records.cjs";
 import { takeSessionId } from "./identities.mjs";
-import { lockSync as storageLockSync } from "../file-lock.cjs";
 import * as registry from "../session-registry.cjs";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
@@ -138,22 +137,6 @@ function installSessionBranching(prototype) {
 
     return this.sessionFile;
   });
-}
-
-export function acquireSessionReferencePublication(transcript, sessionId) {
-  const root = sessionReferenceRoot();
-  storageFs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const descriptor = storageFs.openSync(storagePath.join(root, "reference-publication.lock"), storageFs.constants.O_CREAT | storageFs.constants.O_RDWR | storageFs.constants.O_NOFOLLOW, 0o600);
-
-  try {
-    if (!storageFs.fstatSync(descriptor).isFile()) throw new Error("Invalid reference publication lock");
-    const locked = storageLockSync(descriptor, true, false);
-
-    if (!locked) throw new Error("Could not lock reference publication");
-    registry.registerExternalTranscript(root, transcript, sessionId);
-
-    return () => storageFs.closeSync(descriptor);
-  } catch (error) { storageFs.closeSync(descriptor); throw error; }
 }
 
 function sessionStorageState(manager) {

@@ -7,9 +7,9 @@ import { once } from 'node:events';
 import { build } from 'esbuild';
 import database from '../daemon/resources/session-database.cjs';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
+import { testPi } from './pi-install.mjs';
 
-let root = dirname(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim()));
-while (!existsSync(join(root, 'package.json')) || JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name !== '@earendil-works/pi-coding-agent') { const parent = dirname(root); if (parent === root) throw new Error('Pi not found'); root = parent; }
+const { root } = await testPi();
 
 export async function skillMcpSession(t) {
   const dir = mkdtempSync(join(tmpdir(), 'piop-skill-session-')), children = new Set();

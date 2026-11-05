@@ -1,7 +1,8 @@
 import type { Subprocess } from 'bun';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { descendantProcesses, killVerified, signalProcessGroup, sleep } from './process_cleanup';
+import { descendantProcesses, killVerified, signalProcessGroup } from './process_cleanup';
+import { processesEnded } from './util/process_exit';
 import { MAX_TERMINALS } from './config';
 import { isDirectory } from './environment';
 import * as terminalSessions from './terminal_sessions';
@@ -207,7 +208,21 @@ async function stopShell(process: TerminalProcess): Promise<void> {
     }
   };
   const settled = () => (child.exitCode !== null || child.signalCode !== null) && !descendants.some(alive) && descendantProcesses(child.pid, child.pid, process.processSessionId).length === 0;
-  const settle = async (ms: number) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (settled()) return true; await sleep(25); } return settled(); };
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  // Waits until the shell and its children end, or ms pass. A child that starts meanwhile is waited for too.
+  const settle = async (ms: number) => {
+    const deadline = Date.now() + ms;
+    while (!settled()) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      const children = [...descendants, ...descendantProcesses(child.pid, child.pid, process.processSessionId)].filter(alive);
+      if (exited() && !children.length) return settled();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const shell = exited() ? undefined : Promise.race([child.exited, new Promise(resolve => { timer = setTimeout(resolve, left); })]).finally(() => clearTimeout(timer));
+      await Promise.all([shell, processesEnded(children, left)]);
+    }
+    return true;
+  };
   signal('SIGHUP');
   if (!await settle(1000)) { signal('SIGTERM'); if (!await settle(500)) { signal('SIGKILL'); if (!await settle(2000)) console.error('Terminal shell ' + child.pid + ' did not exit after SIGKILL'); } }
   const remaining = new Set(descendants.filter(alive).map(({ pid }) => pid));

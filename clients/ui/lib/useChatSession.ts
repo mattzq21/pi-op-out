@@ -11,12 +11,12 @@ import { DEFINED_AGENTS_STATUS_KEY } from "./agentProtocol";
 import { chatSessionEventSchema, pendingMessagesSchema, type ChatSessionEvent } from "./chatSessionEventSchema";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 import { contextUsageAfterCompaction } from "./contextUsage";
-import { CONTEXT_CAP_STATUS_KEY } from "../../../extensions/piop-context-window-cap/interface";
+import { CONTEXT_CAP_STATUS_KEY } from "../../../pi-extensions/piop-context-window-cap/interface";
 import { appendQueuedProjectContext, applyAssistantMessageEvent, branchMessages, isContextInjection, normalizeMessage, promptContextAnchors, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory, type HistoryOutline } from "./sessionMemory";
 import { keepLoadedHistory, olderHistoryMarker } from "./historyWindow";
-import { matchesSubmittedMessage, reconcileMessages, reconcilePendingMessages, sameUserContent, upsertLiveMessage } from "./reconcileMessages";
+import { insertLiveMessage, matchesSubmittedMessage, mergeLiveMessage, reconcileMessages, reconcilePendingMessages, sameUserContent } from "./reconcileMessages";
 
 interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; before?: string | null; outline?: HistoryOutline; olderUsage?: ChatMessage["usage"]; omittedEntries?: number; incomplete?: boolean; damagedLines?: number[] }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 
@@ -195,18 +195,37 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const revision = pendingRevision.current;
     pendingRevision.current = undefined;
 
-    if (updates.length) session.setMessages((current) => {
-      const next = [...current];
-      const positions = messagePositions(next);
+    if (updates.length) session.memory.changeMessages((messages) => {
+      const positions = messagePositions(messages);
       let changed = false;
 
-      for (const update of updates) changed = update(next, positions) || changed;
+      for (const update of updates) changed = update(messages, positions) || changed;
 
-      return changed ? next : current;
+      return changed;
     });
 
     if (revision && session.memory.revision === revision.base) session.memory.markRevision(revision.next);
   };
+
+  // Shows a live message: a new one is added to the list; a shown one changes only in its place.
+  const upsertLive = (message: ChatMessage) => {
+    const current = session.messages;
+    const index = current.findIndex(item => item.id === message.id);
+
+    if (index < 0 || current[index].submissionId) { session.setMessages(list => insertLiveMessage(list, message)); return; }
+    const next = mergeLiveMessage(current[index], message);
+
+    if (next) session.memory.changeMessages(messages => { messages[index] = next; return true; });
+  };
+
+  // Changes the messages that have this ID, each in its place.
+  const changeById = (id: string | undefined, change: (message: ChatMessage) => ChatMessage) => session.memory.changeMessages(messages => {
+    let changed = false;
+
+    for (let index = 0; index < messages.length; index++) if (messages[index].id === id) { messages[index] = change(messages[index]); changed = true; }
+
+    return changed;
+  });
 
   const queue = (update: MessageUpdate) => { pendingUpdates.current.push(update);
 
@@ -376,19 +395,17 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     let viewing = viewable();
     let pending = false;
     let dirty = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
 
+    // A view reads the conversation again when its chat changes; the daemon sends a view each event of the chat.
     const update = async () => {
       if (pending) { dirty = true; return; }
       pending = true;
       do { dirty = false; await refreshView(); } while (dirty && viewing && !stopped);
       pending = false;
-      clearTimeout(timer);
-      if (viewing && !stopped) timer = setTimeout(() => void update(), 2000);
     };
 
     const unsubscribe = capturedTransport.subscribe((event) => {
-      if (event.type === "ownership_acquired" || event.type === "disconnected") { viewing = false; clearTimeout(timer); if (event.type === "ownership_acquired") setRefreshError(undefined); return; }
+      if (event.type === "ownership_acquired" || event.type === "disconnected") { viewing = false; if (event.type === "ownership_acquired") setRefreshError(undefined); return; }
 
       if (event.type === "ownership_lost") viewing = viewable();
 
@@ -397,7 +414,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     if (viewing) void update();
 
-    return () => { stopped = true; clearTimeout(timer); unsubscribe(); };
+    return () => { stopped = true; unsubscribe(); };
   }, () => [refresh, transport()]);
 
   const handleEvent = (raw: RpcEvent) => {
@@ -440,7 +457,17 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
           if (context.userTimestamp !== undefined || context.agentNotificationId !== undefined) {
             liveRevision.current += 1;
-            session.setMessages((current) => current.map((message) => promptContextAnchors(message, context) && (!message.promptContext || (message.promptContext.inputTokens === undefined && context.inputTokens !== undefined)) ? { ...message, promptContext: context } : message));
+            session.memory.changeMessages(messages => {
+              let changed = false;
+
+              for (let index = 0; index < messages.length; index++) {
+                const message = messages[index];
+
+                if (promptContextAnchors(message, context) && (!message.promptContext || (message.promptContext.inputTokens === undefined && context.inputTokens !== undefined))) { messages[index] = { ...message, promptContext: context }; changed = true; }
+              }
+
+              return changed;
+            });
           }
         } catch (reason) { console.error("Ignored an invalid prompt context status", reason); }
       }
@@ -503,7 +530,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       let message = { ...normalized, id: liveId };
 
       message = updateAssistant(message);
-      session.setMessages(current => upsertLiveMessage(current, message));
+      upsertLive(message);
 
       if (event.type === "message_end" && rawMessage.role === "user") syncMessageCount();
     };
@@ -537,7 +564,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (event.parentToolCallId) return;
       const elapsedMs = typeof event.elapsedMs === "number" && event.elapsedMs > 0 ? event.elapsedMs : 0;
       const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", content: "", timestamp: Date.now() - elapsedMs };
-      session.setMessages(current => upsertLiveMessage(current, message));
+      upsertLive(message);
     };
 
     const handleToolExecutionUpdate = () => {
@@ -557,7 +584,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const handleToolExecutionEnd = () => {
       if (event.parentToolCallId) return;
       flush();
-      session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done", ...(event.toolImage ? { toolImage: true } : {}), ...(event.subagents !== undefined ? { subagents: event.subagents } : {}) } : item));
+      changeById(event.toolCallId, item => ({ ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done", ...(event.toolImage ? { toolImage: true } : {}), ...(event.subagents !== undefined ? { subagents: event.subagents } : {}) }));
     };
 
     const handleQueueUpdate = () => session.memory.batch(() => {
@@ -572,7 +599,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
     const handleCompactionEnd = () => {
       session.setState((current) => ({ ...current, isCompacting: false, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
-      session.setMessages(current => current.map(message => message.id === "live-compaction" ? { ...message, timestamp: Date.now(), content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Compacted" } : message));
+      changeById("live-compaction", message => ({ ...message, timestamp: Date.now(), content: event.aborted ? "Compaction cancelled" : event.errorMessage ? String(event.errorMessage) : "Compacted" }));
 
       if (!event.aborted && !event.errorMessage) void refreshView();
     };

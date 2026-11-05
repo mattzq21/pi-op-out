@@ -1,9 +1,13 @@
 import { createEffect, createMemo, createRoot, createSignal, getOwner, onCleanup, untrack, type Accessor } from "solid-js";
 import { z } from "zod";
 import { listen } from "../lib/platform";
-import { pluginError, pluginName, pluginStatus, plugins, refreshPlugins, setPluginError } from ".";
+import { pluginError, pluginName, pluginStatus, refreshPlugins, setPluginError } from ".";
+import type { PluginScope } from "../../../protocol/plugins";
 import type { PluginConversation, PluginInstance } from "./types";
 import { flushPlugins, registerPluginReadiness } from "./lifecycle";
+import { pluginClient } from "./clientModules";
+
+interface ClientPlugin { id: string; host: string; scope: PluginScope }
 
 interface RunningPlugin { id: string; host: string; revision: string | undefined; instance: PluginInstance; dispose: () => void }
 
@@ -18,18 +22,27 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>) {
   let loading: Promise<void> = Promise.resolve();
   let loadingFailures: { host: string; message: string }[] = [];
   const host = createMemo(() => source().hostId);
-  const runtimeHost = (scope: string) => scope === "client" ? "local" : host();
-  const hosts = createMemo(() => [...new Set(plugins.map(plugin => runtimeHost(plugin.scope)))]);
+  // Plugins of the "client" scope come from the local host; the others from the conversation's host.
+  const hosts = createMemo(() => [...new Set([host(), "local"])]);
   const conversationReady = createMemo(() => Boolean(source().sessionId) && (source().messageCount ?? 0) > 0);
 
-  const enabledPlugins = createMemo(() => {
-    const order = [...new Set([host(), ...hosts()].flatMap(target => pluginStatus(target)?.enabled ?? []))];
+  const enabledPlugins = createMemo<ClientPlugin[]>(() => {
+    // In the loading order of the host.
+    const of = (target: string, scopes: PluginScope[]) => {
+      const status = pluginStatus(target);
 
-    return order.flatMap(id => plugins.filter(plugin => plugin.id === id && plugin.load && (plugin.scope !== "conversation" || conversationReady()) && pluginStatus(runtimeHost(plugin.scope))?.enabled.includes(plugin.id)));
+      return (status?.enabled ?? []).flatMap(id => {
+        const plugin = status?.plugins.find(item => item.id === id);
+
+        return plugin?.client && scopes.includes(plugin.client.scope) ? [{ id, host: target, scope: plugin.client.scope }] : [];
+      });
+    };
+
+    return [...of(host(), conversationReady() ? ["host", "conversation"] : ["host"]), ...of("local", ["client"])];
   });
 
   const configuration = createMemo(() => JSON.stringify([
-    host(), hosts().map(target => [target, pluginStatus(target)?.revision]), enabledPlugins().map(plugin => plugin.id),
+    host(), hosts().map(target => [target, pluginStatus(target)?.revision]), enabledPlugins().map(plugin => [plugin.host, plugin.id]),
   ]));
 
   const error = () => loadError() ?? hosts().map(pluginError).filter(Boolean).join("\n");
@@ -63,11 +76,7 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>) {
 
   createEffect(() => {
     configuration();
-    const enabled = untrack(() => enabledPlugins().map(definition => {
-      const host = runtimeHost(definition.scope);
-
-      return { definition, host, revision: pluginStatus(host)?.revision };
-    }));
+    const enabled = untrack(() => enabledPlugins().map(plugin => ({ plugin, revision: pluginStatus(plugin.host)?.revision })));
     const configurationHost = untrack(host);
     const current = ++generation;
     const previous = untrack(running);
@@ -78,37 +87,39 @@ export function createPluginWorkspace(source: Accessor<PluginConversation>) {
       await untrack(() => Promise.all(targets.map(target => flushPlugins(target, pluginStatus(target)?.enabled))));
 
       if (stale()) return;
-      const retained = previous.filter(item => enabled.some(target => target.definition.id === item.id && target.host === item.host && (target.definition.retainOnHostRestart || target.revision === item.revision)));
+      const retained = previous.filter(item => enabled.some(target => target.plugin.id === item.id && target.plugin.host === item.host && target.revision === item.revision));
       setRunning(retained);
 
       for (const item of previous) if (!retained.includes(item)) item.dispose();
       const next = [...retained];
       const failures: { host: string; message: string }[] = [];
 
-      for (const { definition, host, revision } of enabled) {
+      for (const { plugin, revision } of enabled) {
         if (stale()) return;
-        if (retained.some(item => item.id === definition.id)) continue;
+        if (retained.some(item => item.id === plugin.id && item.host === plugin.host)) continue;
 
         try {
-          const module = await definition.load!();
+          const module = await pluginClient(plugin.host, plugin.id);
 
           if (stale()) return;
+          const createPlugin = module?.createPlugin;
+
+          if (!createPlugin) continue;
           next.push(createRoot(dispose => {
             try {
-              return { id: definition.id, host, revision, dispose,
-                instance: module.createPlugin({ source }) };
+              return { id: plugin.id, host: plugin.host, revision, dispose, instance: createPlugin({ source }) };
             } catch (reason) { dispose(); throw reason; }
           }, owner));
           setRunning([...next]);
         } catch (reason) {
-          const affected = new Set([configurationHost, host]);
-          failures.push(...[...affected].map(target => ({ host: target, message: `${pluginName(host, definition.id)}: ${(reason instanceof Error ? reason.message : String(reason))}` })));
+          const affected = new Set([configurationHost, plugin.host]);
+          failures.push(...[...affected].map(target => ({ host: target, message: `${pluginName(plugin.host, plugin.id)}: ${(reason instanceof Error ? reason.message : String(reason))}` })));
         }
       }
 
       if (stale()) return;
       loadingFailures = failures;
-      setRunning(enabled.flatMap(({ definition }) => next.filter(item => item.id === definition.id)));
+      setRunning(enabled.flatMap(({ plugin }) => next.filter(item => item.id === plugin.id && item.host === plugin.host)));
 
       setLoadError(failures.length ? `Plugins could not load: ${[...new Set(failures.map(failure => failure.message))].join("\n")}` : undefined);
     })().catch(reason => { if (current === generation) {

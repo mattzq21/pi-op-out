@@ -24,6 +24,9 @@ const { supportedPi } = require("./pi-runtime.cjs");
 
 const { patchMethod, requireMethods } = require("./pi-patch.cjs");
 
+// Pi takes its storage channel before it starts any program, so those programs do not get it.
+require("./storage-channel.cjs").claim();
+
 const configurationCommands = new Set(["context_cap_settings", "agent_definitions_changed", "provider_auth_refresh", "select_agent", "fork_after", "rewind_message", "prepare_fork"]);
 
 let queueValidation;

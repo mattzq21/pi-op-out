@@ -5,26 +5,12 @@ import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction } from '../util/db';
 import { errorText } from '../util/sync';
-import { flockDescriptor, flockDescriptorSync, FileLock } from '../util/flock';
+import * as StorageLocks from '../../resources/storage-locks.cjs';
 import { readHeaderLine } from './protocol';
 import { ConversationOwnership, within } from './ownership';
 import { QueueStorage } from './queue_storage';
 
 export interface Recovery { errors: string[]; recovered: boolean; retry: boolean; transactionsPending: boolean; waiting?: Promise<void> }
-
-const waitingLocks = new Map<string, Promise<void>>();
-
-function waitForLock(path: string): Promise<void> {
-  const waiting = waitingLocks.get(path);
-  if (waiting) return waiting;
-  console.error('Queued input recovery skipped while lock is busy: ' + path);
-  const fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
-  const result = flockDescriptor(fd).then(() => {
-    console.error('Queued input recovery retry after lock release: ' + path);
-  }).finally(() => { closeSync(fd); waitingLocks.delete(path); });
-  waitingLocks.set(path, result);
-  return result;
-}
 
 function empty(): Recovery { return { errors: [], recovered: false, retry: false, transactionsPending: false }; }
 
@@ -33,8 +19,9 @@ export function recoverMissingTranscripts(root: string, ownership: ConversationO
 }
 
 function recoverStorage(root: string, ownership: ConversationOwnership): Recovery {
-  const restore = tryLock(join(root, 'restore.lock'));
-  if (!restore) return { ...empty(), retry: true, waiting: waitForLock(join(root, 'restore.lock')) };
+  // An archive, restore or delete that runs now moves chats; the recovery waits for it.
+  const restore = StorageLocks.lockSync('restore:' + root, { wait: false });
+  if (!restore) return { ...empty(), retry: true, waiting: StorageLocks.lock('restore:' + root).then(release => release?.()) };
   try {
     if (Registry.pending(root, 'transaction')) return { ...empty(), retry: true, transactionsPending: true };
     const entries = (Registry.connection(root).prepare('SELECT DISTINCT session_id FROM queue_items').all() as any[]).map(row => String(row.session_id));
@@ -46,26 +33,22 @@ function recoverStorage(root: string, ownership: ConversationOwnership): Recover
     }
     if (waiting.length) { recovery.retry = true; recovery.waiting = Promise.race(waiting); }
     return recovery;
-  } finally { restore.release(); }
+  } finally { restore(); }
 }
 
 function recoverJournal(root: string, ownership: ConversationOwnership, path: string, waiting: Promise<void>[]): boolean {
   if (extname(path) !== '.json') return false;
   const id = basename(path, '.json');
-  const key = ConversationOwnership.key(id);
-  const ownershipLock = tryLock(join(root, 'conversation-ownership', key + '.lock'));
-  if (!ownershipLock) { waiting.push(waitForLock(join(root, 'conversation-ownership', key + '.lock'))); return false; }
+  // A conversation that a client holds is not left over from an earlier run; the client's runtime takes its queue.
+  const lock = ownership.tryLock(id);
+  if (!lock) return false;
   try {
-    const workerLock = tryLock(join(root, 'session-claims', 'id-' + key + '.lock'));
-    if (!workerLock) { waiting.push(waitForLock(join(root, 'session-claims', 'id-' + key + '.lock'))); return false; }
-    try {
-      removeTemporary(join(root, 'sessions', '.queued-input-recovery-' + id));
-      if (ownership.removed(id) || transcriptExists(root, id)) return false;
-      const recovered = recoverContents(root, id);
-      if (recovered) console.error('Queued input recovered for session ' + id);
-      return recovered;
-    } finally { workerLock.release(); }
-  } finally { ownershipLock.release(); }
+    removeTemporary(join(root, 'sessions', '.queued-input-recovery-' + id));
+    if (ownership.removed(id) || transcriptExists(root, id)) return false;
+    const recovered = recoverContents(root, id);
+    if (recovered) console.error('Queued input recovered for session ' + id);
+    return recovered;
+  } finally { lock.release(); }
 }
 
 function recoverContents(root: string, id: string): boolean {
@@ -135,14 +118,4 @@ function registerRecovered(root: string, target: string, id: string): void {
     db.prepare('INSERT INTO session_file_metadata VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size').run(id, target, modified, size);
     db.prepare('DELETE FROM session_file_writes WHERE session_id=?').run(id);
   });
-}
-
-function tryLock(path: string): FileLock | undefined {
-  ensurePrivateDir(dirname(path));
-  const fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
-  try {
-    if (flockDescriptorSync(fd, false)) return new FileLock(fd, path);
-  } catch (error) { closeSync(fd); throw error; }
-  closeSync(fd);
-  return undefined;
 }

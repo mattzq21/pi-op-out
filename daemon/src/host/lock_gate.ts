@@ -8,7 +8,10 @@ export class KeyedLocks {
     let found = this.locks.get(key);
     if (!found) { found = new Mutex(); this.locks.set(key, found); }
     const mutex = found;
-    const release = await mutex.lock();
+    return this.releaser(key, mutex, await mutex.lock());
+  }
+
+  private releaser(key: string, mutex: Mutex, release: () => void): () => void {
     return () => {
       release();
       if (!mutex.isLocked && this.locks.get(key) === mutex) this.locks.delete(key);

@@ -1,11 +1,23 @@
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 const names = require('../session-broker/session-names.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 
-const currentTypes = new Set(['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-session-cost-limit', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries', 'piop-skill-mcp']);
+const coreTypes = ['pi-define-agents-state', 'piop-fast-mode-state', 'piop-context-cap', 'piop-openai-cache-fork', 'piop-codemode-abilities', 'piop-input-hold', 'piop-fork-retries', 'piop-skill-mcp'];
+// The daemon adds the state records of its plugins to the environment of each process.
+let pluginTypes;
+let currentTypes = new Set(coreTypes);
+function isCurrentType(type) {
+  const listed = process.env.PIOP_PLUGIN_STATE_RECORDS;
+  if (listed !== pluginTypes) {
+    currentTypes = new Set([...coreTypes, ...(listed ? JSON.parse(listed) : [])]);
+    pluginTypes = listed;
+  }
+  return currentTypes.has(type);
+}
 const nativeKeys = new Map([['model_change', 'piop-selected-model'], ['thinking_level_change', 'piop-thinking-level']]);
 const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
-const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && currentTypes.has(entry.customType);
+const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && isCurrentType(entry.customType);
 const isName = entry => entry?.type === 'session_info';
 const isSetting = entry => isCurrent(entry) || isName(entry);
 
@@ -52,7 +64,7 @@ function capture(entries) {
   return records;
 }
 
-function seed(file, sessionId, records) {
+const seed = onMainThread('session-records.seed', (file, sessionId, records) => {
   transaction(file, sessionId, db => {
     const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
     const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
@@ -65,7 +77,7 @@ function seed(file, sessionId, records) {
       insert.run(sessionId, entry.id, after, json);
     }
   });
-}
+});
 
 function save(file, entries) {
   const header = entries[0];
@@ -73,13 +85,13 @@ function save(file, entries) {
   seed(file, header.id, capture(entries));
 }
 
-function append(file, sessionId, after, entry) {
+const append = onMainThread('session-records.append', (file, sessionId, after, entry) => {
   if (!validRecord(entry)) throw new Error('Invalid session state record');
   transaction(file, sessionId, db => {
     if (isCurrent(entry)) { setCurrent(db, sessionId, entry); return; }
     db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?)').run(sessionId, entry.id, after, JSON.stringify(entry));
   });
-}
+});
 
 function records(file, sessionId, connection) {
   const db = connection ?? database.connection(database.storageRoot(file));
@@ -112,12 +124,12 @@ function merge(file, entries, connection) {
   return [header, ...(groups.get(null) ?? []), ...entries.slice(1).flatMap(entry => [entry, ...(groups.get(entry.id) ?? [])])];
 }
 
-function selectBranch(file, sessionId, tipId, leafId) {
+const selectBranch = onMainThread('session-records.selectBranch', (file, sessionId, tipId, leafId) => {
   transaction(file, sessionId, db => {
     db.prepare(`INSERT INTO session_branch_selection (session_id, tip_id, leaf_id) VALUES (?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET tip_id=excluded.tip_id, leaf_id=excluded.leaf_id`).run(sessionId, tipId, leafId);
   });
-}
+});
 
 function selectedLeaf(file, sessionId, tipId) {
   const row = database.connection(database.storageRoot(file)).prepare('SELECT tip_id, leaf_id FROM session_branch_selection WHERE session_id=?').get(sessionId);

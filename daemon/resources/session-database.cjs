@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
+const { onMainThread, holdTransaction } = require('./main-thread.cjs');
 
 function rollback(db, error) {
   if (!db.isTransaction) return error;
@@ -15,7 +16,7 @@ function rollback(db, error) {
   return error;
 }
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // The whole storage schema. Only this module creates or changes tables.
 const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
@@ -133,12 +134,11 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);
       CREATE TABLE IF NOT EXISTS agent_prompt_snapshots (digest TEXT PRIMARY KEY, contents TEXT);
       CREATE TABLE IF NOT EXISTS project_agent_definitions (directory TEXT PRIMARY KEY, body BLOB NOT NULL);
-      CREATE TABLE IF NOT EXISTS settings_sync_records (name TEXT PRIMARY KEY, record_json TEXT);
       CREATE TABLE IF NOT EXISTS tool_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS command_inventory (id INTEGER PRIMARY KEY CHECK (id = 1), entries_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS skill_inventory (root TEXT PRIMARY KEY, entries_json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS daemon_restart_records (directory TEXT NOT NULL, name TEXT NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(directory, name));
-      CREATE TABLE IF NOT EXISTS daemon_restart_backups (directory TEXT NOT NULL, id TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, id));
+      CREATE TABLE IF NOT EXISTS restart_records (name TEXT PRIMARY KEY CHECK(name IN ('plan', 'status')), record_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS restart_backups (id TEXT PRIMARY KEY, digest TEXT);
 `;
 
 function initialize(db) {
@@ -153,6 +153,41 @@ function initialize(db) {
 
 const connections = new Map();
 
+// Only the daemon that holds the daemon lock changes the storage. Every other process opens the database read-only, so
+// a write that skips the one writer fails at once: each Pi and the provider SDK (they have a storage channel), the
+// daemon's worker threads (they ask its main thread), and the helper processes of piopd that called readOnlyStorage.
+const READER = Symbol.for('piop.storage-reader');
+
+function readOnlyStorage() { Object.defineProperty(globalThis, READER, { value: true }); }
+
+function readOnlyProcess() { return Object.hasOwn(globalThis, READER) || require('./storage-channel.cjs').hasChannel() || require('./main-thread.cjs').linkedWorker(); }
+
+function open(directory, file, current) {
+  if (!readOnlyProcess()) {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const db = new DatabaseSync(file);
+    try {
+      fs.chmodSync(file, 0o600);
+      db.exec('PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;');
+      initialize(db);
+    } catch (error) { db.close(); throw error; }
+    return db;
+  }
+  if (!current && require('./main-thread.cjs').linkedWorker()) createDatabase(directory);
+  else if (!current) throw new Error('The Piop daemon has not made the storage database in ' + directory);
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    db.exec('PRAGMA busy_timeout=10000; PRAGMA foreign_keys=ON;');
+    // A reader may be a newer piopd that checks a restart before it takes over; its tables are those of the running daemon.
+    const version = db.prepare('PRAGMA user_version').get().user_version;
+    if (version < 1 || version > SCHEMA_VERSION) throw new Error('The storage database does not have the format of this Piop version');
+  } catch (error) { db.close(); throw error; }
+  return db;
+}
+
+// A worker that opens a storage database before the main thread did asks the main thread to make it.
+const createDatabase = onMainThread('session-database.create', root => { connection(root); });
+
 // The one connection of this process to the storage database of root. Do not close it.
 // A database file that was replaced or removed gets a new connection, so no write goes to a deleted file.
 function connection(root) {
@@ -164,15 +199,11 @@ function connection(root) {
   if (cached && current && current.dev === cached.dev && current.ino === cached.ino) return cached.db;
 
   if (cached) { connections.delete(file); cached.db.close(); }
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
 
   if (current?.isSymbolicLink()) throw new Error('Database path must not be a symbolic link');
-  const db = new DatabaseSync(file);
+  const db = open(directory, file, current);
 
   try {
-    fs.chmodSync(file, 0o600);
-    db.exec('PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;');
-    initialize(db);
     const opened = fs.lstatSync(file, { bigint: true });
     connections.set(file, { db, dev: opened.dev, ino: opened.ino });
   } catch (error) { db.close(); throw error; }
@@ -186,6 +217,7 @@ let savepoints = 0;
 function transaction(db, behavior, operation) {
   if (db.isTransaction) return savepoint(db, operation);
   db.exec(`BEGIN ${behavior}`);
+  const release = holdTransaction();
 
   try {
     const result = operation();
@@ -195,6 +227,7 @@ function transaction(db, behavior, operation) {
 
     return result;
   } catch (error) { throw rollback(db, error); }
+  finally { release(); }
 }
 
 function savepoint(db, operation) {
@@ -224,7 +257,7 @@ function directoryQuery(_db, columns, suffix = '') {
   return `SELECT ${fields} FROM session_directories r JOIN sessions s USING(session_id)${suffix}`;
 }
 
-function movePaths(root, moves) {
+const movePaths = onMainThread('session-database.movePaths', (root, moves) => {
   if (!fs.existsSync(path.join(root, 'sessions.sqlite'))) return;
   const db = connection(root);
 
@@ -237,11 +270,11 @@ function movePaths(root, moves) {
       move.run(item.destination, item.source);
     }
   });
-}
+});
 
-function reserve(root) {
+const reserve = onMainThread('session-database.reserve', (root) => {
   return reserveId(connection(root));
-}
+});
 
 function reserveId(db) {
   const insert = db.prepare("INSERT INTO sessions (session_id) SELECT ?1 WHERE NOT EXISTS (SELECT 1 FROM storage_transactions s, json_each(s.journal_json, '$.targets') t WHERE json_extract(t.value, '$.sessionId')=?1) ON CONFLICT(session_id) DO NOTHING");
@@ -322,22 +355,22 @@ function queuedInput(root, id) {
 
 function recoveryRecords(root) { return rows(root, 'SELECT record_id, record_json FROM recovery_directories ORDER BY record_id'); }
 
-function saveRecoveryRecord(root, record, reserve = false) {
+const saveRecoveryRecord = onMainThread('session-database.saveRecoveryRecord', (root, record, reserve = false) => {
   connection(root).prepare('INSERT INTO recovery_directories VALUES (?, ?)' + (reserve ? '' : ' ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json'))
     .run(record.id, JSON.stringify(record));
-}
+});
 
-function markCleanup(root, kind) {
+const markCleanup = onMainThread('session-database.markCleanup', (root, kind) => {
   connection(root).prepare('INSERT INTO cleanup_requests VALUES (?, 1) ON CONFLICT(kind) DO UPDATE SET revision=revision+1').run(kind);
-}
+});
 
 function cleanupRequest(root, kind) {
   return connection(root).prepare('SELECT revision FROM cleanup_requests WHERE kind=?').get(kind)?.revision;
 }
 
-function finishCleanup(root, kind, revision) {
+const finishCleanup = onMainThread('session-database.finishCleanup', (root, kind, revision) => {
   connection(root).prepare('DELETE FROM cleanup_requests WHERE kind=? AND revision=?').run(kind, revision);
-}
+});
 
 function publication(root, id) {
   const row = rows(root, 'SELECT record_json FROM session_publications WHERE publication_id=?', id)[0];
@@ -345,14 +378,14 @@ function publication(root, id) {
   return row ? JSON.parse(row.record_json) : undefined;
 }
 
-function savePublication(root, id, record) {
+const savePublication = onMainThread('session-database.savePublication', (root, id, record) => {
   connection(root).prepare(`INSERT INTO session_publications VALUES (?, ?) ON CONFLICT(publication_id) DO UPDATE SET record_json=excluded.record_json`)
     .run(id, JSON.stringify(record));
-}
+});
 
-function removePublication(root, id) {
+const removePublication = onMainThread('session-database.removePublication', (root, id) => {
   connection(root).prepare('DELETE FROM session_publications WHERE publication_id=?').run(id);
-}
+});
 
 function publications(root) { return rows(root, 'SELECT publication_id FROM session_publications ORDER BY publication_id').map(row => row.publication_id); }
 
@@ -377,5 +410,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

@@ -11,8 +11,6 @@ const registrySchema = Type.Object({ session_id: Type.String(), session_path: Ty
 
 const queuedSchema = Type.Object({ version: Type.Literal(1), items: Type.Array(Type.Object({}, { additionalProperties: true })) });
 
-const receiptSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String() });
-
 function managedPath(root, directory) {
   return assets.validPath(root, directory) && io.inside(path.join(root, 'sessions'), directory);
 }
@@ -116,8 +114,6 @@ function preparedOwner(root, directory) {
   const receipt = require('./goal-preparations.cjs').read(root, directory);
 
   if (receipt === undefined) return;
-
-  if (!Check(receiptSchema, receipt)) throw new Error('Damaged prepared goal ownership retained');
 
   return receipt.sessionId;
 }

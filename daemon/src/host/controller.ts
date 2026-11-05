@@ -57,7 +57,7 @@ export class Host implements SessionHost {
   readonly orchestration = new Orchestration(this);
   readonly pins = new MessagePins(this);
   private mutations = new MutationGuards(this);
-  private timers: NodeJS.Timeout[] = [];
+  private stopRetention?: () => void;
   readonly submissions: SubmissionLedger;
 
   readonly events: HostEvents;
@@ -69,7 +69,7 @@ export class Host implements SessionHost {
 
   static async create(home: string, storage: string, services: HostServices, listener: HostEvents, broker: BrokerCall): Promise<Host> {
     await services.initialize();
-    const settings = Settings.readSettingsAt(join(home, storage, 'settings.json'));
+    const settings = Settings.readSettingsAt(join(home, storage));
     const definitions = await Agents.load(home, storage, Extensions.agentResources(settings), true, null);
     const host = new Host(home, storage, services, listener, broker);
     host.agentDefinitions = definitions;
@@ -77,7 +77,7 @@ export class Host implements SessionHost {
     try { host.submissions.recover(); } catch (error) { host.events.diagnostic('Could not decide the messages left from the last run: ' + errorText(error)); }
     recoverQueuedInput(host.storageRoot(), host.ownership(), host.events);
     services.bind(host);
-    host.timers.push(watchRetention(host.storageRoot(), host.ownership(), host.events));
+    host.stopRetention = watchRetention(host.storageRoot(), host.ownership(), host.events);
     return host;
   }
 
@@ -124,8 +124,8 @@ export class Host implements SessionHost {
   refreshProviders(): Promise<number> { return this.services.refreshProviders(); }
 
   async runtimeEvent(_source: RuntimeEventSource, event: RuntimeEvent): Promise<void> {
-    if (event.name === 'tools_available') { recordTools(event.data.tools, join(this.home, this.storage, 'settings.json')); return; }
-    if (event.name === 'commands_available') { recordCommands(event.data.commands, join(this.home, this.storage, 'settings.json')); return; }
+    if (event.name === 'tools_available') { recordTools(event.data.tools, join(this.home, this.storage)); return; }
+    if (event.name === 'commands_available') { recordCommands(event.data.commands, join(this.home, this.storage)); return; }
   }
 
   stateChanged(identity: string): void { this.orchestration.stateChanged(identity); }
@@ -231,7 +231,7 @@ export class Host implements SessionHost {
   }
 
   extensionCommand(name: string): boolean {
-    return savedCommands(join(this.home, this.storage, 'settings.json'))?.some(command => command.name === name) ?? false;
+    return savedCommands(join(this.home, this.storage))?.some(command => command.name === name) ?? false;
   }
 
   canStopIdle(session: Session): boolean {
@@ -387,7 +387,7 @@ export class Host implements SessionHost {
 
   private async stop(): Promise<void> {
     this.shuttingDown = true;
-    for (const timer of this.timers) clearInterval(timer);
+    this.stopRetention?.();
     await this.services.shutdown();
     await stopPromptPreviews();
     await Promise.allSettled([...this.starts]);
@@ -406,12 +406,12 @@ export class Host implements SessionHost {
     if (!['prepare_daemon_restart', 'plugin_status', 'detach'].includes(name) && await DaemonRestart.blocking()) {
       throw new Error('The daemon is restarting. Reconnect before retrying.');
     }
-    return clientPayload(await work());
+    return work();
   }
 
   checkIdle(): Promise<true> { return this.open('check_daemon_idle', () => { this.assertIdle(); return true as const; }); }
 
-  prepareRestart(request: Record<string, unknown>): Promise<any> {
+  prepareRestart(request: { enabled: string[]; revision: string }): Promise<{ enabled: string[]; previous: string[] }> {
     return this.open('prepare_daemon_restart', () => { this.assertIdle(); return this.services.prepareRestart(request); });
   }
 
@@ -427,7 +427,7 @@ export class Host implements SessionHost {
   }
 
   previewAgentPrompt(spec: unknown, agent: string): Promise<unknown> {
-    return this.open('agent_prompt_preview', () => previewPrompt(spec, agent, this.home));
+    return this.open('agent_prompt_preview', () => previewPrompt(spec, agent, this.home, this.storageRoot()));
   }
 
   moveAgentDefinition(agent: string, revision: string, from: string | null, to: string | null): Promise<{ revision: string; warnings: string[] }> {
@@ -451,14 +451,16 @@ export class Host implements SessionHost {
   cancelProviderAuth(owner: string): Promise<void> { return this.open('provider_auth_cancel_owner', () => this.services.cancelProviderAuth(owner)); }
 
   pluginStatus(): Promise<any> { return this.open('plugin_status', () => this.services.pluginStatus()); }
+  pluginClient(id: string): Promise<{ source: string }> { return this.open('plugin_client', () => this.services.pluginClient(id)); }
 
   applyConfiguration(configuration: HostConfiguration): Promise<void> { return this.open('configure', () => this.configure(configuration)); }
 
-  attach(request: AttachRequest): Promise<any> { return this.open('attach', () => attach(this, request)); }
+  // attach, orchestrate and command give Pi's data, in the form for clients: see clientPayload.
+  attach(request: AttachRequest): Promise<any> { return this.open('attach', async () => clientPayload(await attach(this, request))); }
 
   retire(sessionKey: string, sessionPath: string | null, archive: boolean): Promise<null> { return this.open('retire', () => this.retireSession(sessionKey, sessionPath, archive)); }
 
-  orchestrate(request: OrchestrationRequest): Promise<any> { return this.open('orchestration', () => this.orchestration.handle(request)); }
+  orchestrate(request: OrchestrationRequest): Promise<any> { return this.open('orchestration', async () => clientPayload(await this.orchestration.handle(request))); }
 
   detachRuntime(runtimeId: string, discardBlank: boolean, preserveRunning: boolean): Promise<any> {
     return this.open('detach', () => {
@@ -479,7 +481,7 @@ export class Host implements SessionHost {
     });
   }
 
-  command(runtimeId: string, command: any): Promise<any> { return this.open('command', () => this.runtimeCommand(runtimeId, command)); }
+  command(runtimeId: string, command: any): Promise<any> { return this.open('command', async () => clientPayload(await this.runtimeCommand(runtimeId, command))); }
 
   private assertIdle(): void {
     const sessions = [...this.sessions.values()];

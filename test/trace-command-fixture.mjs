@@ -12,9 +12,10 @@ import { randomUUID } from 'node:crypto';
 import { build } from 'esbuild';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 import { installBroker } from './runtime-events-fixture.mjs';
+import { localStorageChannel } from './local-storage-channel.mjs';
 
 export async function buildTraceControls(outfile) {
-  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
+  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports(), localStorageChannel()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
 }

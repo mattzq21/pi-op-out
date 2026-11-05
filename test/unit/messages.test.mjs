@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { normalizeMessage, applyAssistantMessageEvent, branchMessages } from '../../clients/ui/lib/messages.ts';
 import { promptContext } from '../prompt-context-fixture.mjs';
+import { historyViewSchema } from '../../clients/ui/lib/responseSchemas.ts';
 
 test('message normalization preserves content and selects stable identifiers and roles', () => {
   const content = [{ type: 'text', text: 'hello' }];
@@ -26,7 +27,10 @@ test('message normalization preserves content and selects stable identifiers and
   assert.equal(normalizeMessage({ role: 'toolResult' }).toolStatus, 'done');
   assert.equal(normalizeMessage({ role: 'toolResult' }).role, 'tool');
 
-  for (const customType of ['pi-desktop-mcp-status', 'piop-review-link']) assert.equal(normalizeMessage({ role: 'custom', customType }).role, 'system');
+  assert.equal(normalizeMessage({ role: 'custom', customType: 'pi-desktop-mcp-status' }).role, 'system');
+  // A plugin's message comes with how to show it, from the plugin's manifest.
+  assert.equal(normalizeMessage({ role: 'custom', customType: 'piop-review-link', pluginMessage: { customRole: 'system', contextInjection: false } }).role, 'system');
+  assert.equal(normalizeMessage({ role: 'custom', customType: 'piop-review-link' }).role, 'custom');
   assert.equal(normalizeMessage({ role: 'custom', customType: 'other' }).role, 'custom');
   assert.equal(original.id, 'original');
 });
@@ -109,7 +113,7 @@ test('branch reconstruction handles orphaned metadata and custom visibility', ()
   const entries = [
     custom('c', null, 'pi-desktop-prompt-context', {}),
     msg('u', 'c', 'user'),
-    { id: 's', parentId: 'u', type: 'custom_message', customType: 'piop-review-link' },
+    { id: 's', parentId: 'u', type: 'custom_message', customType: 'piop-review-link', pluginMessage: { customRole: 'system', contextInjection: false } },
     { id: 'hidden', parentId: 's', type: 'custom_message', customType: 'piop-session-operation', display: false },
     msg('unsupported', 'hidden', 'system'),
     msg('t', 'unsupported', 'toolResult', '', { toolCallId: 'unknown' }),
@@ -120,4 +124,14 @@ test('branch reconstruction handles orphaned metadata and custom visibility', ()
   assert.equal(result[1].role, 'system');
   assert.equal(result[1].content, '');
   assert.equal(result[2].toolInput, undefined);
+});
+
+test('a plugin message read from a chat history keeps how its host shows it', () => {
+  const history = historyViewSchema.parse({ leafId: 'link', entries: [
+    { id: 'u', parentId: null, type: 'message', message: { role: 'user', content: 'Review this' } },
+    { id: 'link', parentId: 'u', type: 'custom_message', customType: 'piop-review-link', content: 'Code review', display: true, pluginMessage: { customRole: 'system', contextInjection: false } },
+  ] });
+  const link = branchMessages(history.entries, history.leafId).at(-1);
+  assert.equal(link.role, 'system');
+  assert.deepEqual(link.pluginMessage, { customRole: 'system', contextInjection: false });
 });

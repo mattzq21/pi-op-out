@@ -6,15 +6,12 @@ import { homeDir } from './environment';
 import { ensurePrivateDir } from './private_fs';
 import * as R from './resources';
 import * as Contributions from './plugin_contributions';
-import { publish } from './settings_records';
 import type { AppSettings } from './settings_types';
 import { errorText } from './util/sync';
 
 export function extensionBase(): string {
   return join(homeDir(), STORAGE_DIRECTORY);
 }
-
-export function contextCapSettingsPath(): string { return join(extensionBase(), 'context-cap-settings.json'); }
 
 export function skillLists(settings: AppSettings): { userInvokedSkills: string[]; agentInvokedSkills: string[] } {
   const enabled = settings.skills.filter(skill => skill?.enabled === true && typeof skill.path === 'string');
@@ -35,10 +32,6 @@ export function contextCapSettings(settings: AppSettings) {
     contextWindowCapEnabled: settings.contextWindowCapEnabled,
     modelContextWindowCaps: settings.modelContextWindowCaps,
   };
-}
-
-export function saveContextCapSettings(settings: AppSettings): void {
-  publish(contextCapSettingsPath(), JSON.stringify(contextCapSettings(settings)));
 }
 
 export function agentResources(settings: AppSettings): any {
@@ -87,11 +80,10 @@ function sources(): Sources {
   for (const [name, path] of Object.entries(CORE) as Array<[keyof typeof CORE, string]>) add(path, R.CORE_EXTENSIONS[name]);
   const plugins: Sources['plugins'] = [];
   for (const plugin of Contributions.enabled()) {
-    if (!plugin.extension) continue;
-    if (!/^[a-z0-9-]+$/.test(plugin.id)) throw new Error('Invalid plugin ID: ' + plugin.id);
-    const path = 'plugins/' + plugin.id + '.mjs';
-    add(path, plugin.extension.source);
-    plugins.push({ after: plugin.extension.after, path });
+    if (!plugin.manifest.extension || plugin.extension === undefined) continue;
+    const path = 'plugins/' + plugin.manifest.id + '.mjs';
+    add(path, plugin.extension);
+    plugins.push({ after: plugin.manifest.extension.after, path });
   }
   return { files, plugins };
 }

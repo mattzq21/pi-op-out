@@ -1,6 +1,6 @@
 use super::*;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{mpsc as async_mpsc, Mutex as AsyncMutex};
+use tokio::sync::{mpsc as async_mpsc, oneshot, Mutex as AsyncMutex};
 use tokio_tungstenite::{connect_async_with_config, tungstenite::{Message, protocol::WebSocketConfig}};
 
 const MAX_DAEMON_RESPONSE: usize = piop_protocol::MAX_RESPONSE_BYTES;
@@ -8,7 +8,6 @@ const MAX_DAEMON_RESPONSE: usize = piop_protocol::MAX_RESPONSE_BYTES;
 #[derive(Default)]
 pub(crate) struct DesktopDaemon {
     connections: AsyncMutex<HashMap<String, Arc<WindowConnection>>>,
-    runtimes: Mutex<HashMap<String, Arc<Connection>>>,
     startup: AsyncMutex<()>,
 }
 
@@ -23,8 +22,7 @@ pub(crate) struct Connection {
     restarting: AtomicBool,
     sequence: AtomicU64,
     outgoing: async_mpsc::UnboundedSender<Message>,
-    pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>,
-    terminals: Mutex<std::collections::HashSet<String>>,
+    pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>,
     log_statuses: Mutex<HashMap<String, Value>>,
 }
 
@@ -36,40 +34,27 @@ impl Connection {
         })
     }
 
-    fn register_terminal(&self, terminal: &Option<String>) -> Result<(), String> {
-        let mut terminals = self.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
-        if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon".into()); }
-        if let Some(id) = terminal { terminals.insert(id.clone()); }
-        Ok(())
-    }
-
-    fn update_terminal(&self, command: &str, terminal: Option<String>, succeeded: bool) {
-        if (command == "close_terminal" && succeeded) || (command == "start_terminal" && !succeeded) {
-            if let (Some(id), Ok(mut terminals)) = (terminal, self.terminals.lock()) { terminals.remove(&id); }
-        }
-    }
-
-    pub(crate) fn invoke(&self, command: &str, args: Value) -> Result<Value, String> {
+    // Sends one request and waits for its answer without holding a thread. The connection is a plain pipe: it does
+    // not know what the commands do.
+    pub(crate) async fn invoke(&self, command: &str, args: Value) -> Result<Value, String> {
         if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon. Reconnect before retrying.".into()); }
-        let terminal = args["terminalId"].as_str().map(str::to_owned);
         let id = self.sequence.fetch_add(1, Ordering::SeqCst);
         let packet = serde_json::to_string(&piop_protocol::Request { id, command: command.into(), args }).map_err(|error| error.to_string())?;
         if packet.len() > piop_protocol::MAX_REQUEST_BYTES { return Err("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message.".into()); }
-        if command == "start_terminal" {
-            self.register_terminal(&terminal)?;
-        }
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = oneshot::channel();
         {
             let mut pending = self.pending.lock().map_err(|_| "Daemon requests unavailable")?;
             if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon".into()); }
             pending.insert(id, sender);
         }
-        let result = self.outgoing.send(Message::Text(packet.into())).map_err(|_| "Disconnected from the Piop daemon".to_string())
-            .and_then(|_| {
-                receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Daemon request interrupted or timed out; it may have completed. Refresh before retrying.".to_string())?
-            });
+        let result = match self.outgoing.send(Message::Text(packet.into())) {
+            Err(_) => Err("Disconnected from the Piop daemon".to_string()),
+            Ok(()) => match tokio::time::timeout(Duration::from_secs(660), receiver).await {
+                Ok(Ok(result)) => result,
+                _ => Err("Daemon request interrupted or timed out; it may have completed. Refresh before retrying.".to_string()),
+            },
+        };
         if let Ok(mut pending) = self.pending.lock() { pending.remove(&id); }
-        self.update_terminal(command, terminal, result.is_ok());
         result
     }
 
@@ -88,9 +73,6 @@ impl Connection {
                 return;
             }
             if event == "pi://daemon-restarting" && payload["hostId"] == "local" { self.restarting.store(true, Ordering::SeqCst); }
-            if event == "pi://event" && payload["type"] == "terminal_exit" {
-                if let (Some(id), Ok(mut terminals)) = (payload["terminalId"].as_str(), self.terminals.lock()) { terminals.remove(id); }
-            }
             let _ = app.emit_to(&self.window, event, payload);
     }
 
@@ -114,17 +96,9 @@ impl Connection {
             }
             self.alive.store(false, Ordering::SeqCst);
         }
-        if let Ok(mut terminals) = self.terminals.lock() {
-            for id in terminals.drain() { let _ = app.emit_to(&self.window, "pi://event", json!({"type":"terminal_exit", "terminalId":id})); }
-        }
         if let Ok(mut pending) = self.pending.lock() { for (_, sender) in pending.drain() { let _ = sender.send(Err(format!("Disconnected from the Piop daemon ({reason}); the command may have completed."))); } }
-        let state = app.state::<DesktopDaemon>();
-        if let Ok(mut runtimes) = state.runtimes.lock() {
-            for (id, connection) in runtimes.iter().filter(|(_, connection)| std::ptr::eq(Arc::as_ptr(connection), self)) {
-                let _ = app.emit_to(&connection.window, "pi://event", json!({"runtimeId":id,"event":{"type":"disconnected"}}));
-            }
-            runtimes.retain(|_, connection| !std::ptr::eq(Arc::as_ptr(connection), self));
-        };
+        // One notice for the whole window: each chat and terminal of the window knows that it used this connection.
+        let _ = app.emit_to(&self.window, "pi://event", json!({"type":"disconnected"}));
     }
 }
 
@@ -160,7 +134,7 @@ impl DesktopDaemon {
         };
         if app.get_webview_window(window).is_none() { return Err("The client window was closed".into()); }
         let (outgoing, incoming) = async_mpsc::unbounded_channel();
-        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), restarting: AtomicBool::new(false), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), terminals: Mutex::new(std::collections::HashSet::new()), log_statuses: Mutex::new(HashMap::new()) });
+        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), restarting: AtomicBool::new(false), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), log_statuses: Mutex::new(HashMap::new()) });
         *registered = Some(connection.clone());
         let reader = connection.clone();
         tokio::spawn(run_connection(socket, incoming, reader, app.clone()));
@@ -180,9 +154,6 @@ impl DesktopDaemon {
                 }
                 let _ = connection.outgoing.send(Message::Close(None));
             };
-        }
-        if let Ok(mut runtimes) = self.runtimes.lock() {
-            runtimes.retain(|_, connection| connection.window != window);
         }
     }
 }
@@ -436,25 +407,6 @@ pub(crate) async fn daemon_log_statuses(app: AppHandle, window: tauri::WebviewWi
 
 #[tauri::command]
 pub(crate) async fn daemon_invoke(app: AppHandle, window: tauri::WebviewWindow, command: String, args: Value) -> Result<Value, String> {
-    let state = app.state::<DesktopDaemon>();
-    let connection = state.connect(&app, window.label()).await?;
-    let runtime_id = args["runtimeId"].as_str().map(str::to_owned);
-    let starting = command == "start_pi";
-    let stopping = command == "stop_pi";
-    if starting {
-        if let Some(id) = &runtime_id {
-            let mut runtimes = state.runtimes.lock().map_err(|_| "Daemon runtime registry unavailable")?;
-            if !connection.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon".into()); }
-            runtimes.insert(id.clone(), connection.clone());
-        }
-    }
-    let target = connection.clone();
-    let result = tokio::task::spawn_blocking(move || target.invoke(&command, args)).await.map_err(|error| error.to_string()).and_then(|result| result);
-    if starting && result.is_err() || stopping && result.is_ok() {
-        if let Some(id) = runtime_id {
-            let mut runtimes = state.runtimes.lock().map_err(|_| "Daemon runtime registry unavailable")?;
-            if runtimes.get(&id).is_some_and(|registered| Arc::ptr_eq(registered, &connection)) { runtimes.remove(&id); }
-        }
-    }
-    result
+    let connection = app.state::<DesktopDaemon>().connect(&app, window.label()).await?;
+    connection.invoke(&command, args).await
 }

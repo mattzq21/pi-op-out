@@ -3,7 +3,7 @@ import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus } from "./orchestration.ts";
+import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus, watchSession } from "./orchestration.ts";
 import { saveRun, type SubagentRun } from "./subagent-state.ts";
 import { activeConversation } from "./conversation-location.ts";
 
@@ -122,6 +122,7 @@ function interrupted(pi: ExtensionAPI, ctx: ExtensionContext, run: SubagentRun, 
 
 class SubagentObserver {
   private failures = 0;
+  private stateKey: string | null = null;
 
   constructor(private run: SubagentRun, private observation: Observation, private lifecycle: ActiveSubagent) {}
 
@@ -187,6 +188,7 @@ class SubagentObserver {
   private async poll() {
     const revision = this.lifecycle.revision;
     const snapshot = await sessionSnapshot(this.run.sessionId, this.run.hostId, this.observation.signal);
+    this.stateKey = snapshot.stateKey ?? null;
 
     if (snapshot.state.sessionFile) this.run.sessionPath = snapshot.state.sessionFile;
 
@@ -224,7 +226,12 @@ class SubagentObserver {
       catch (error) { this.interrupted((error instanceof Error ? error.message : String(error))); this.failures++; }
 
       if (this.run.status !== "running") break;
-      await delay(500 * 2 ** Math.min(this.failures, 4), undefined, { signal }).catch(error => { if (!signal.aborted) throw error; });
+      // After a failure, wait and try again. Otherwise wait until the subagent's chat changes.
+      if (this.failures) await delay(500 * 2 ** Math.min(this.failures, 4), undefined, { signal }).catch(error => { if (!signal.aborted) throw error; });
+      else await watchSession(this.run.sessionId, this.run.hostId, this.stateKey, signal).catch(error => {
+        if (signal.aborted) return;
+        this.interrupted((error instanceof Error ? error.message : String(error))); this.failures++;
+      });
     }
   }
 

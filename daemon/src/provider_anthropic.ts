@@ -1,4 +1,3 @@
-import { piExecutable } from './environment';
 import { resolveProviderAuth } from './host/index';
 
 export interface AnthropicUsage { remainingPercent: number; resetAt?: number }
@@ -20,7 +19,7 @@ export function anthropicUsageValues(response: any): AnthropicUsage | undefined 
 }
 
 export async function anthropicUsage(): Promise<AnthropicUsage | undefined> {
-  const auth = await resolveProviderAuth(piExecutable(), 'anthropic');
+  const auth = await resolveProviderAuth('anthropic');
   if (auth === null) return undefined;
   const token = auth?.apiKey;
   if (typeof token !== 'string' || !token.trim()) throw new Error('Anthropic login is not configured');

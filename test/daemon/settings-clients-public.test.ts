@@ -32,12 +32,14 @@ test.concurrent('saved settings survive a daemon restart and the saved version r
 
     const restored = await daemon.invoke('load_settings_change');
     expect(restored.settings.plugins.review.reviewAgent).toBe('Check that user data survives failures');
-    expect(restored.revision).toBe(saved.committedRevision);
+    // Revisions count the changes of one daemon run; the new run is a new source, so clients do not compare across it.
+    expect(restored.source).not.toBe(saved.source);
     expect(restored.settings.settingsRevision).toBe(saved.settings.settingsRevision);
     const next = await daemon.invoke('save_app_settings', {
       settings: { ...saved.settings, plugins: { ...saved.settings.plugins, review: { reviewAgent: 'Check recovery after a second save' } } },
     });
-    expect(next.committedRevision).toBe(saved.committedRevision + 1);
+    expect(next.committedRevision).toBe(restored.revision + 1);
+    expect(next.source).toBe(restored.source);
     expect((await daemon.invoke('load_app_settings')).plugins.review.reviewAgent)
       .toBe('Check recovery after a second save');
   } finally { await daemon.stop(); }

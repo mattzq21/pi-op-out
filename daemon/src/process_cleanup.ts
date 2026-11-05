@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
-import { sleep, isMissing } from './util/sync';
+import { isMissing } from './util/sync';
+import { processesEnded, startTime } from './util/process_exit';
 
 export const PROCESS_TAG = 'PIOP_PROCESS_TAG';
 
@@ -13,16 +14,6 @@ export function newProcessTag(): string {
     ownerPrefix = process.pid + '.' + started + '.';
   }
   return ownerPrefix + randomUUID();
-}
-
-function startTime(pid: number): string | undefined {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const index = stat.lastIndexOf(')');
-    if (index < 0) return undefined;
-    const fields = stat.slice(index + 1).trim().split(/\s+/);
-    return fields[0] === 'Z' ? undefined : fields[19];
-  } catch { return undefined; }
 }
 
 export function descendantProcesses(parent: number, group?: number, session?: number): Array<{ pid: number; started: string }> {
@@ -90,10 +81,8 @@ export async function stopOrphanedProcesses(): Promise<boolean> {
   if (!orphans.length) return true;
   console.error('Stopping processes left by a stopped Piop daemon: ' + orphans.map(({ pid }) => pid).join(', '));
   killVerified(orphans);
-  const deadline = Date.now() + 2000;
-  const alive = () => orphans.filter(({ pid, started }) => startTime(pid) === started);
-  while (Date.now() < deadline && alive().length) await sleep(50);
-  const remaining = alive();
+  await processesEnded(orphans, 2000);
+  const remaining = orphans.filter(({ pid, started }) => startTime(pid) === started);
   if (remaining.length) console.error('Processes left by a stopped Piop daemon did not exit after SIGKILL: ' + remaining.map(({ pid }) => pid).join(', '));
   return remaining.length === 0;
 }
@@ -113,4 +102,3 @@ export function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean
   }
 }
 
-export { sleep };

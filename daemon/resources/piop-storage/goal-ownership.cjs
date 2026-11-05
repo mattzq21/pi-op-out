@@ -1,7 +1,25 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 const { randomBytes } = require('node:crypto');
+
+// The chats that use the attachments of a goal folder, and the deleted chats that used them.
+const recordSchema = Type.Object({
+  version: Type.Literal(1), kind: Type.Literal('goal-assets'),
+  owners: Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) })),
+  retiredOwners: Type.Optional(Type.Array(Type.String())),
+});
+
+function parsed(directory, text) {
+  const record = JSON.parse(text);
+
+  if (!Check(recordSchema, record)) throw new Error(`Damaged goal ownership retained: ${directory}`);
+
+  return record;
+}
 
 function withDatabase(root, operation) {
   return operation(database.connection(root));
@@ -31,7 +49,7 @@ function read(root, directory) {
       return undefined;
     }
 
-    return row.record_json === null ? undefined : JSON.parse(row.record_json);
+    return row.record_json === null ? undefined : parsed(directory, row.record_json);
   });
 }
 
@@ -42,7 +60,7 @@ function assertSavedIdentity(db, directory, expected) {
 function missingDirectoryRecord(root, directory) {
   const row = missingDirectoryRow(root, directory);
 
-  return row ? JSON.parse(row.record_json) : undefined;
+  return row ? parsed(directory, row.record_json) : undefined;
 }
 
 function savedIdentity(root, directory) { return missingDirectoryRow(root, directory)?.identity; }
@@ -57,26 +75,29 @@ function missingDirectoryRow(root, directory) {
   });
 }
 
-function save(root, directory, record, destination = directory) {
+const save = onMainThread('goal-ownership.save', (root, directory, record, destination = directory) => {
+  if (record !== undefined && !Check(recordSchema, record)) throw new Error('Invalid goal ownership record');
   const expected = identity(directory);
   withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json')
     .run(destination, expected, record === undefined ? null : JSON.stringify(record)));
 
   return expected;
-}
+});
 
 function retained(root, directory, expected) {
   return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_ownership WHERE directory=? AND identity=? AND record_json IS NOT NULL').get(directory, expected)));
 }
 
-function remove(root, directory, expected) {
+const remove = onMainThread('goal-ownership.remove', (root, directory, expected) => {
   withDatabase(root, db => db.prepare('DELETE FROM goal_ownership WHERE directory=? AND identity=?').run(directory, expected));
-}
+});
+
+const reserveDirectory = onMainThread('goal-ownership.reserveDirectory', (root, directory) => Number(withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL) ON CONFLICT DO NOTHING').run(directory, '').changes)));
 
 function allocate(root, parent) {
   for (let attempt = 0; attempt < 16; attempt++) {
     const directory = path.join(parent, `goal-${randomBytes(3).toString('hex')}`);
-    const reserved = withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL) ON CONFLICT DO NOTHING').run(directory, '').changes);
+    const reserved = reserveDirectory(root, directory);
 
     if (!reserved) continue;
 
@@ -96,7 +117,7 @@ function allocate(root, parent) {
   throw new Error('Could not allocate goal attachment storage');
 }
 
-function publishAllocation(root, directory) {
+const publishAllocation = onMainThread('goal-ownership.publishAllocation', (root, directory) => {
   const expected = identity(directory);
   withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
     db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL)').run(directory, expected);
@@ -106,7 +127,7 @@ function publishAllocation(root, directory) {
   }));
 
   return expected;
-}
+});
 
 function directories(root, sessionId) {
   return withDatabase(root, db => {

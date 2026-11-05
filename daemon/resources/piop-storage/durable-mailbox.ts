@@ -1,57 +1,21 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
-import type { DatabaseSync } from "node:sqlite";
-import { connection, register, storageRoot, transaction } from "../session-database.cjs";
+import { call } from "../storage-channel.cjs";
+import { assertSameDelivery, messageDetails, messageSchema, objectSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
 
-const detailsSchema = Type.Object({ notificationId: Type.String(), mailboxSessionId: Type.String(), mailboxFingerprint: Type.String() });
-
-const objectSchema = Type.Record(Type.String(), Type.Unknown());
-
-const messageSchema = Type.Object({
-  customType: Type.Union([Type.Literal("piop-agent-message"), Type.Literal("piop-subagent-result")]),
-  content: Type.Union([Type.String(), Type.Array(Type.Union([
-    Type.Object({ type: Type.Literal("text"), text: Type.String() }),
-    Type.Object({ type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() }),
-  ]))]),
-  display: Type.Boolean(), details: Type.Intersect([objectSchema, detailsSchema]),
-});
-
-const recordSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String(), deliveryId: Type.String(), sequence: Type.Integer({ minimum: 0 }), message: messageSchema });
-
-const headerSchema = Type.Object({ type: Type.Literal("session"), id: Type.String() });
-
-const storedMessageSchema = Type.Object({ type: Type.Literal("message"), message: Type.Object({ details: detailsSchema }) });
-
-const customMessageSchema = Type.Object({ type: Type.Literal("custom_message"), details: detailsSchema });
-
-export type MailboxMessage = Static<typeof messageSchema>;
-
-export type MailboxDetails = Static<typeof detailsSchema>;
-
-type MailboxRecord = Static<typeof recordSchema>;
+export type { MailboxDetails, MailboxMessage } from "./mailbox-records.ts";
 
 type SendMessage = Parameters<ExtensionAPI["sendMessage"]>[0];
 
-function missing(error: Error) { return "code" in error && error.code === "ENOENT"; }
+// Agent mail waits in the database until the chat saves it. The daemon keeps it; Pi asks through its storage channel.
 
-async function syncDirectory(path: string) {
-  const directory = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-
-  try { await directory.sync(); }
-  finally { await directory.close(); }
-}
-
-function mailboxPath(ctx: ExtensionContext) {
+function chat(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
 
   if (!path?.endsWith(".jsonl")) throw new Error("Durable agent mail requires a saved conversation");
 
-  return join(path.slice(0, -6) + ".snapshots", "mailbox");
+  return { sessionId: ctx.sessionManager.getSessionId(), path };
 }
 
 function normalizeMessage(ctx: ExtensionContext, message: SendMessage, deliveryId: string): MailboxMessage {
@@ -61,194 +25,27 @@ function normalizeMessage(ctx: ExtensionContext, message: SendMessage, deliveryI
   return Parse(messageSchema, { ...message, details: { ...details, notificationId: deliveryId, mailboxSessionId: ctx.sessionManager.getSessionId(), mailboxFingerprint: fingerprint } });
 }
 
-function messageDetails(entry: SessionEntry): MailboxDetails | undefined {
-  if (Check(customMessageSchema, entry)) return entry.details;
-
-  if (Check(storedMessageSchema, entry)) return entry.message.details;
-
-  return undefined;
-}
-
-async function* transcriptLines(file: FileHandle) {
-    let pending = "";
-
-    for await (const chunk of file.createReadStream({ autoClose: false, encoding: "utf8" })) {
-      const lines = (pending + chunk).split("\n");
-      pending = lines.pop() ?? "";
-      yield* lines;
-    }
-}
-
-async function readDeliveries(file: FileHandle, sessionId: string) {
-  const saved = new Map<string, string>();
-  let header = false;
-
-  for await (const line of transcriptLines(file)) {
-    if (!header) {
-      if (Parse(headerSchema, JSON.parse(line)).id !== sessionId) throw new Error("Agent mailbox transcript belongs to another conversation");
-      header = true;
-      continue;
-    }
-
-    const details = savedMessageDetails(line);
-
-    if (details?.mailboxSessionId === sessionId) saved.set(details.notificationId, details.mailboxFingerprint);
-  }
-
-  if (!header) throw new Error("Agent mailbox transcript has no complete conversation header");
-
-  return saved;
-}
-
-function savedMessageDetails(line: string) {
-  try { return messageDetails(JSON.parse(line)); }
-  catch { return undefined; }
-}
-
-const receiptCacheSchema = Type.Array(Type.Tuple([Type.String(), Type.String()]));
-
-function cachedReceipts(db: DatabaseSync, id: string, path: string, fingerprint: string | undefined) {
-  if (fingerprint === undefined) return undefined;
-  const row = db.prepare("SELECT deliveries_json FROM session_mailbox_receipt_cache WHERE session_id=? AND session_path=? AND fingerprint=?").get(id, path, fingerprint);
-
-  return row ? new Map<string, string>(Parse(receiptCacheSchema, JSON.parse(String(row.deliveries_json)))) : undefined;
-}
-
-function registeredFingerprint(db: DatabaseSync, id: string, path: string) {
-  const row = db.prepare(`SELECT modified_ns, size FROM session_file_metadata WHERE session_id=? AND session_path=?
-    AND NOT EXISTS (SELECT 1 FROM session_file_writes WHERE session_id=?)`).get(id, path, id);
-
-  return row ? `${row.modified_ns}:${row.size}` : undefined;
-}
-
-function saveReceipts(db: DatabaseSync, id: string, path: string, fingerprint: string, receipts: Map<string, string>) {
-  db.prepare(`INSERT INTO session_mailbox_receipt_cache SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
-    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, fingerprint=excluded.fingerprint, deliveries_json=excluded.deliveries_json`)
-    .run(fingerprint, JSON.stringify([...receipts]), id, path);
-}
-
 async function savedDeliveries(ctx: ExtensionContext, required = false) {
-  const path = ctx.sessionManager.getSessionFile();
-
-  if (!path) throw new Error("Durable agent mail requires a saved conversation");
-  const id = ctx.sessionManager.getSessionId();
-  const db = connection(storageRoot(path));
-  const cached = cachedReceipts(db, id, path, registeredFingerprint(db, id, path));
-
-  return cached ?? await readSavedDeliveries(db, id, path, required);
+  return new Map<string, string>(await call("mailbox.saved", { ...chat(ctx), required }) as Array<[string, string]>);
 }
 
-async function readSavedDeliveries(db: DatabaseSync, id: string, path: string, required: boolean) {
-  let file;
+async function pendingRecords(ctx: ExtensionContext) {
+  const request = chat(ctx);
+  const records = await call("mailbox.pending", request) as MailboxRecord[];
 
-  try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
-  catch (error) { if (!required && error instanceof Error && missing(error)) return new Map<string, string>(); throw error; }
+  if (request.sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed while reading agent mail");
 
-  try {
-    const before = await file.stat({ bigint: true });
-
-    if (!before.isFile()) throw new Error("Agent mailbox transcript must be a regular file");
-    const fingerprint = `${before.mtimeNs}:${before.size}`;
-    const cached = cachedReceipts(db, id, path, fingerprint);
-
-    if (cached) return cached;
-    const saved = await readDeliveries(file, id);
-
-    await file.sync();
-    await syncDirectory(dirname(path));
-
-    const after = await file.stat({ bigint: true });
-
-    if (before.mtimeNs === after.mtimeNs && before.size === after.size) saveReceipts(db, id, path, fingerprint, saved);
-
-    return saved;
-  } finally { await file.close(); }
+  return records;
 }
 
-function assertSameDelivery(fingerprint: string, message: MailboxMessage) {
-  if (fingerprint !== message.details.mailboxFingerprint) throw new Error("Agent delivery ID was reused for a different message");
+async function storePending(ctx: ExtensionContext, deliveryId: string, message: MailboxMessage) {
+  if (message.details.mailboxSessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
+
+  return await call("mailbox.store", { ...chat(ctx), deliveryId, message }) as MailboxRecord;
 }
 
-async function mailboxDatabase(ctx: ExtensionContext, _root: string) {
-  const sessionId = ctx.sessionManager.getSessionId();
-  const file = ctx.sessionManager.getSessionFile();
-
-  if (!file) throw new Error("Durable agent mail requires a saved conversation");
-  const db = connection(storageRoot(file));
-
-  if (!db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) {
-    if (ctx.sessionManager.getSessionId() !== sessionId) throw new Error("Conversation changed while recovering agent mail");
-    initializeMailbox(db, sessionId, file);
-  }
-
-  return db;
-}
-
-function initializeMailbox(db: DatabaseSync, sessionId: string, file: string) {
-  transaction(db, "IMMEDIATE", () => {
-    if (db.prepare("SELECT 1 FROM session_mailbox_state WHERE session_id=?").get(sessionId)) return;
-    register(db, sessionId, file);
-    db.prepare("INSERT INTO session_mailbox_state VALUES (?)").run(sessionId);
-  });
-}
-
-function insertPending(db: DatabaseSync, record: MailboxRecord) {
-  db.prepare("INSERT INTO session_mailbox VALUES (?, ?, ?, ?, ?)").run(record.sessionId, record.deliveryId,
-    record.sequence, record.message.details.mailboxFingerprint, JSON.stringify(record.message));
-}
-
-const savedRecordSchema = Type.Object({ session_id: Type.String(), delivery_id: Type.String(), sequence: Type.Integer(), fingerprint: Type.String(), message_json: Type.String() });
-
-function mailboxRecord(saved: Static<typeof savedRecordSchema>): MailboxRecord {
-  const record = Parse(recordSchema, { version: 1, sessionId: saved.session_id, deliveryId: saved.delivery_id,
-    sequence: saved.sequence, message: JSON.parse(saved.message_json) });
-
-  if (record.message.details.mailboxSessionId !== record.sessionId || record.message.details.notificationId !== record.deliveryId) throw new Error("Invalid saved agent delivery identity");
-  assertSameDelivery(saved.fingerprint, record.message);
-
-  return record;
-}
-
-async function pendingRecords(ctx: ExtensionContext, root: string) {
-  const sessionId = ctx.sessionManager.getSessionId();
-  const db = await mailboxDatabase(ctx, root);
-
-  if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed while reading agent mail");
-
-  return db.prepare("SELECT * FROM session_mailbox WHERE session_id=? ORDER BY sequence, delivery_id")
-    .all(sessionId).map(row => mailboxRecord(Parse(savedRecordSchema, row)));
-}
-
-async function storePending(ctx: ExtensionContext, root: string, deliveryId: string, message: MailboxMessage) {
-  const db = await mailboxDatabase(ctx, root);
-
-  return transaction(db, "IMMEDIATE", () => {
-    const sessionId = message.details.mailboxSessionId;
-
-    if (sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
-    const existing = db.prepare("SELECT * FROM session_mailbox WHERE session_id=? AND delivery_id=?").get(sessionId, deliveryId);
-    const record = existing ? mailboxRecord(Parse(savedRecordSchema, existing)) : nextRecord(db, sessionId, deliveryId, message);
-    assertSameDelivery(record.message.details.mailboxFingerprint, message);
-
-    return record;
-  });
-}
-
-function nextRecord(db: DatabaseSync, sessionId: string, deliveryId: string, message: MailboxMessage): MailboxRecord {
-  const row = Parse(Type.Object({ sequence: Type.Integer() }), db.prepare(
-    "SELECT max(coalesce(max(sequence)+1, 0), ?) AS sequence FROM session_mailbox WHERE session_id=?").get(Date.now(), sessionId));
-
-  const record: MailboxRecord = { version: 1, sessionId, deliveryId, sequence: row.sequence, message };
-  insertPending(db, record);
-
-  return record;
-}
-
-async function removePending(ctx: ExtensionContext, root: string, record: MailboxRecord) {
-  const db = await mailboxDatabase(ctx, root);
-
-  db.prepare("DELETE FROM session_mailbox WHERE session_id=? AND delivery_id=? AND fingerprint=?")
-    .run(record.sessionId, record.deliveryId, record.message.details.mailboxFingerprint);
+async function removePending(ctx: ExtensionContext, record: MailboxRecord) {
+  await call("mailbox.remove", { ...chat(ctx), record });
 }
 
 export class DurableMailbox {
@@ -299,7 +96,6 @@ export class DurableMailbox {
   send(ctx: ExtensionContext, message: SendMessage, deliveryId: string, send = (item: MailboxMessage) => this.deliver(item)) {
     return this.serial(async () => {
       if (!deliveryId.trim()) throw new Error("Agent mail requires a stable delivery ID");
-      const root = mailboxPath(ctx);
       const sessionId = ctx.sessionManager.getSessionId();
       const normalized = normalizeMessage(ctx, message, deliveryId);
       const saved = (await savedDeliveries(ctx, true)).get(deliveryId);
@@ -310,7 +106,7 @@ export class DurableMailbox {
 
         return false; }
 
-      const record = await storePending(ctx, root, deliveryId, normalized);
+      const record = await storePending(ctx, deliveryId, normalized);
 
       return this.submit(ctx, record, send);
     });
@@ -318,8 +114,7 @@ export class DurableMailbox {
 
   reconcile(ctx: ExtensionContext) {
     return this.serial(async () => {
-      const root = mailboxPath(ctx);
-      const records = await pendingRecords(ctx, root);
+      const records = await pendingRecords(ctx);
 
       if (!records.length) return;
       const saved = await savedDeliveries(ctx);
@@ -330,7 +125,7 @@ export class DurableMailbox {
 
         if (!fingerprint) continue;
         assertSameDelivery(fingerprint, record.message);
-        await removePending(ctx, root, record);
+        await removePending(ctx, record);
         this.queued.delete(this.key(ctx, record.deliveryId));
         this.consumed.delete(this.key(ctx, record.deliveryId));
       }
@@ -340,8 +135,7 @@ export class DurableMailbox {
 
   replay(ctx: ExtensionContext, send = (message: MailboxMessage) => this.deliver(message)) {
     return this.serial(async () => {
-      const root = mailboxPath(ctx);
-      const records = await pendingRecords(ctx, root);
+      const records = await pendingRecords(ctx);
 
       if (!records.length) return;
       const saved = await savedDeliveries(ctx);

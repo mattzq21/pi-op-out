@@ -116,7 +116,7 @@ export async function watchBackend(command, args, options, root, { port, watch =
       return true;
     }
 
-    return !["extensions", "daemon/resources", "daemon"].some(directory => path.startsWith(join(root, directory) + sep));
+    return !["pi-extensions", "plugins", "protocol", "daemon/resources", "daemon"].some(directory => path.startsWith(join(root, directory) + sep));
   };
 
   const applyChanges = async changes => {
@@ -173,7 +173,7 @@ export async function watchBackend(command, args, options, root, { port, watch =
   const observeBackend = () => {
     if (!watch) return;
 
-    for (const directory of ["clients/desktop/src", "clients/desktop/protocol", "daemon", "clients/desktop/capabilities", "clients/desktop/icons", "extensions", "scripts", ".cargo"]) observe(join(root, directory), true);
+    for (const directory of ["clients/desktop/src", "clients/desktop/protocol", "daemon", "clients/desktop/capabilities", "clients/desktop/icons", "pi-extensions", "plugins", "protocol", "scripts", ".cargo"]) observe(join(root, directory), true);
     observe(join(root, "clients/desktop"));
 
     for (const filename of ["package.json", "bun.lock", "Cargo.toml", "Cargo.lock"]) {

@@ -23,13 +23,13 @@ test('the session ids another machine reads list saved and archived chats, but n
 });
 
 test('settings saved from another machine change this host, but keep its own shortcuts and debug mode', async () => {
-  const before = await daemon.invoke('load_host_settings', { hostId: 'local' });
+  const before = await daemon.invoke('load_app_settings', { hostId: 'local' });
   const edited = structuredClone(before);
   edited.contextWindowCap = 200_000;
   edited.debugMode = !before.debugMode;
   edited.keybindings.newConversation = 'Ctrl+F7';
   await daemon.invoke('save_host_settings', { hostId: 'local', settings: edited });
-  const after = await daemon.invoke('load_host_settings', { hostId: 'local' });
+  const after = await daemon.invoke('load_app_settings', { hostId: 'local' });
   expect(after.contextWindowCap).toBe(200_000);
   expect(after.debugMode).toBe(before.debugMode);
   expect(after.keybindings).toEqual(before.keybindings);

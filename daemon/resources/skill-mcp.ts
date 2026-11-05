@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ExtensionAPI, ExtensionContext, McpServerConfig } from "@earendil-works/pi-coding-agent";
-import { mcpServerSchema, mcpServersSchema } from "../../extensions/piop-define-agents/mcp-schema.ts";
+import { mcpServerSchema, mcpServersSchema } from "../../pi-extensions/piop-define-agents/mcp-schema.ts";
 import { subscribeConnections } from "./mcp-connections.cjs";
-import type { AppRequest } from "../../extensions/piop-define-agents/contracts.ts";
+import type { AppRequest } from "../../pi-extensions/piop-define-agents/contracts.ts";
 
 const ENTRY = "piop-skill-mcp";
 const STATUS = "piop-skill-mcp";

@@ -25,7 +25,7 @@ async function agentCommandInventory(files) {
 async function backendScripts() {
   const commandInputs = [];
 
-  for (const root of ["extensions", "daemon/resources"]) {
+  for (const root of ["pi-extensions", "daemon/resources"]) {
     for (const path of await readdir(root, { recursive: true })) {
       if (path.endsWith(".ts") && !path.includes("node_modules")) commandInputs.push(join(root, path));
     }

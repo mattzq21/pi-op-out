@@ -1,14 +1,13 @@
 import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
 import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
 import * as ConversationStorage from '../conversation_storage';
 import * as RestoreRecovery from '../restore_recovery';
 import * as Registry from '../session_registry';
 import { getProjectRepository } from '../project_repositories';
-import { ensurePrivateDir } from '../private_fs';
-import { FileLock, flockDescriptor } from '../util/flock';
+import * as StorageLocks from '../../resources/storage-locks.cjs';
 import { flag } from './json';
 import { readHeaderLine } from './protocol';
 import { errorText } from '../util/sync';
@@ -25,14 +24,16 @@ export function within(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
+export interface Held { release(): void }
+
 export class Guard {
   owned = false;
   saved: SavedConversation | null = null;
   archived = false;
   record: any = null;
   id = '';
-  workerLock: FileLock | null = null;
-  lock: FileLock | null = null;
+  workerLock: Held | null = null;
+  lock: Held | null = null;
 
   static unowned(): Guard { return new Guard(); }
 
@@ -81,15 +82,15 @@ export function registeredPath(root: string, id: string): string | null {
 }
 
 export class ConversationOwnership {
-  readonly directory: string;
   // Identifies this daemon run. Ownership records with another token come from an earlier run, whose clients are gone.
   readonly token = randomUUID();
   private shutdownListeners = new Set<() => void>();
+  // The daemon is the only process that changes conversations, so their locks are storage locks in memory. One lock
+  // serializes the ownership of each conversation; the other keeps runtimes away while it is archived, deleted or moved.
+  // Storage recovery in worker threads takes the same locks before it changes a conversation.
   stopped = false;
 
-  private constructor(readonly root: string, private revocation: Revocation) {
-    this.directory = join(root, 'conversation-ownership');
-  }
+  private constructor(readonly root: string, private revocation: Revocation) {}
 
   static async create(home: string, storage: string, revocation: Revocation): Promise<ConversationOwnership> {
     await RestoreRecovery.recover(join(home, storage));
@@ -101,18 +102,20 @@ export class ConversationOwnership {
     return ConversationStorage.key(id);
   }
 
-  private async lock(id: string, worker: boolean): Promise<FileLock> {
-    const directory = worker ? join(this.root, 'session-claims') : this.directory;
-    ensurePrivateDir(directory);
-    const path = join(directory, (worker ? 'id-' : '') + ConversationOwnership.key(id) + '.lock');
-    const fd = openSync(path, constants.O_RDWR | constants.O_CREAT, 0o600);
-    const deadline = Date.now() + 180_000;
-    try {
-      let locked: boolean;
-      try { locked = await flockDescriptor(fd, true, false, Math.max(0, deadline - Date.now())); } catch (error: any) { throw new Error('Could not lock conversation: ' + (error?.message ?? error)); }
-      if (locked) return new FileLock(fd, path);
-      throw new Error('Conversation is busy; try taking ownership again');
-    } catch (error) { closeSync(fd); throw error; }
+  private async lock(id: string, mutation: boolean): Promise<Held> {
+    const release = await StorageLocks.lock((mutation ? 'conversation-mutation:' : 'conversation:') + ConversationOwnership.key(id), { timeoutMs: 180_000 });
+    if (!release) throw new Error('Conversation is busy; try taking ownership again');
+    return { release };
+  }
+
+  // Both locks of id, or undefined when someone holds one.
+  tryLock(id: string): Held | undefined {
+    const key = ConversationOwnership.key(id);
+    const conversation = StorageLocks.lockSync('conversation:' + key, { wait: false });
+    if (!conversation) return undefined;
+    const mutation = StorageLocks.lockSync('conversation-mutation:' + key, { wait: false });
+    if (!mutation) { conversation(); return undefined; }
+    return { release: () => { mutation(); conversation(); } };
   }
 
   owns(id: string, client: string, allowReleased: boolean): boolean {
@@ -152,9 +155,8 @@ export class ConversationOwnership {
   async begin(id: string, client: string, options: any): Promise<Guard> {
     if (!client) throw new Error('Conversation client is missing');
     const lock = await this.lock(id, false);
-    let workerLock: FileLock | null = null;
+    let workerLock: Held | null = null;
     try {
-      await RestoreRecovery.recover(this.root);
       const record = this.read(id);
       const previous = record ?? null;
       const saved = this.savedForClaim(id, previous, options);
@@ -178,7 +180,7 @@ export class ConversationOwnership {
     }
   }
 
-  private async claimWorkerLock(id: string, previous: any | null, client: string, options: any): Promise<FileLock | null> {
+  private async claimWorkerLock(id: string, previous: any | null, client: string, options: any): Promise<Held | null> {
     if (previous) {
       if (!this.needsHandoff(previous, client, options)) return null;
       if (flag(options, 'take') && !flag(options, 'mutation') && previous.token === this.token) {

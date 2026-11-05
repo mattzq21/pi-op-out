@@ -1,0 +1,27 @@
+{
+  "id": "review",
+  "name": "Review",
+  "extension": {
+    "after": "session"
+  },
+  "commands": {
+    "review": "queued"
+  },
+  "settings": {
+    "reviewAgent": "reviewer"
+  },
+  "messages": {
+    "piop-review-link": {
+      "customRole": "system",
+      "contextInjection": false
+    }
+  },
+  "auxiliary": {
+    "label": "Review",
+    "letter": "R",
+    "color": "#c58d43"
+  },
+  "client": {
+    "scope": "host"
+  }
+}

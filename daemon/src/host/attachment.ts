@@ -97,8 +97,7 @@ class Attachment {
     const raw = typeof savedCwd === 'string' ? savedCwd : (typeof this.packet.cwd === 'string' ? this.packet.cwd : null);
     const cwd = raw === null ? null : expandHome(raw, this.host.home);
     const spec: LaunchSpec = { program: this.spec.program, args: [...this.spec.args], env: { ...this.spec.env }, cwd: this.spec.cwd };
-    if (spec.env.PIOP_REMOTE_SESSION_CLAIMS !== undefined) spec.env.PIOP_SESSION_CWD = cwd ?? '~';
-    else if (cwd !== null) spec.cwd = cwd;
+    if (cwd !== null) spec.cwd = cwd;
     const timeout = this.packet.timeout;
     return {
       key: this.identity, spec,

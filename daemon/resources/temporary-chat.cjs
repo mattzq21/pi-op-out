@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const database = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 const { folderNames, ownsFolder, uuid } = require('./temporary-chat-inventory.cjs');
 
 function directoryExists(directory) {
@@ -23,17 +25,28 @@ function sync(directory) {
   finally { fs.closeSync(descriptor); }
 }
 
-function create(db, root, id) {
+// Saves which folder belongs to the temporary chat id, or returns the one it has.
+const allocate = onMainThread('temporary-chat.allocate', (root, id) => {
+  const db = database.connection(root);
+
+  return database.transaction(db, 'IMMEDIATE', () => {
+    let directory = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id)?.original_path;
+
+    if (directory === undefined) {
+      const taken = db.prepare('SELECT 1 FROM temporary_chat_allocations WHERE original_path=?');
+      directory = folderNames(id).map(name => path.join(root, 'tmp', name)).find(candidate => !taken.get(candidate) && !directoryExists(candidate));
+
+      if (directory === undefined) throw new Error('Every folder name for this temporary chat is in use');
+      db.prepare('INSERT INTO temporary_chat_allocations (session_id, original_path) VALUES (?, ?)').run(id, directory);
+    } else if (!ownsFolder(root, id, directory)) throw new Error('Temporary chat directory does not match its saved record');
+
+    return directory;
+  });
+});
+
+function create(root, id) {
   const tmp = path.join(root, 'tmp');
-  let directory = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id)?.original_path;
-
-  if (directory === undefined) {
-    const taken = db.prepare('SELECT 1 FROM temporary_chat_allocations WHERE original_path=?');
-    directory = folderNames(id).map(name => path.join(tmp, name)).find(candidate => !taken.get(candidate) && !directoryExists(candidate));
-
-    if (directory === undefined) throw new Error('Every folder name for this temporary chat is in use');
-    db.prepare('INSERT INTO temporary_chat_allocations (session_id, original_path) VALUES (?, ?)').run(id, directory);
-  } else if (!ownsFolder(root, id, directory)) throw new Error('Temporary chat directory does not match its saved record');
+  const directory = allocate(root, id);
 
   if (!directoryExists(tmp)) fs.mkdirSync(tmp);
 
@@ -71,8 +84,19 @@ function deferReference(file, reason) {
   return { deferred: `Temporary folder cleanup deferred: cannot read the working folder from ${file}: ${reason}` };
 }
 
+const queuedText = `SELECT session_id, cwd || COALESCE(session_path, '') AS text FROM queue_origins UNION ALL SELECT session_id, message || details_json AS text FROM queue_items UNION ALL SELECT q.session_id, a.details_json AS text FROM queue_attachments a JOIN queue_items q USING(queue_item_id)`;
+
+// The saved chats and queued messages that the references come from. When it is unchanged, so are the references.
+function referenceVersion(db) {
+  const rows = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL ORDER BY session_id').all();
+
+  return createHash('sha256').update(JSON.stringify([rows, db.prepare(queuedText).all()])).digest('hex');
+}
+
+const unchanged = onMainThread('temporary-chat.unchanged', (root, version) => referenceVersion(database.connection(root)) === version);
+
 function references(db, excluded) {
-  const version = db.prepare('PRAGMA data_version').get().data_version;
+  const version = referenceVersion(db);
   const rows = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL').all();
   const directories = [];
 
@@ -94,7 +118,7 @@ function references(db, excluded) {
     }
   }
 
-  const queued = db.prepare(`SELECT session_id, cwd || COALESCE(session_path, '') AS text FROM queue_origins UNION ALL SELECT session_id, message || details_json AS text FROM queue_items UNION ALL SELECT q.session_id, a.details_json AS text FROM queue_attachments a JOIN queue_items q USING(queue_item_id)`).all().filter(row => row.session_id !== excluded).map(row => row.text);
+  const queued = db.prepare(queuedText).all().filter(row => row.session_id !== excluded).map(row => row.text);
 
   return { version, directories, queued };
 }
@@ -104,14 +128,13 @@ function inUse(snapshot, directory) {
     || snapshot.queued.some(body => body.includes(directory));
 }
 
-function removeChecked(db, directory, id) {
+function removeChecked(root, db, directory, id) {
   const snapshot = references(db, id);
 
   if (snapshot.deferred) console.error(snapshot.deferred);
-  database.transaction(db, 'IMMEDIATE', () => {
-    if (snapshot.deferred || db.prepare('PRAGMA data_version').get().data_version !== snapshot.version || inUse(snapshot, directory)) return;
-    remove(db, directory, id);
-  });
+
+  if (snapshot.deferred || inUse(snapshot, directory) || !unchanged(root, snapshot.version)) return;
+  remove(root, db, directory, id);
 }
 
 function cleanupDeleted(root) {
@@ -123,11 +146,8 @@ function cleanupDeleted(root) {
   const snapshot = references(db);
 
   if (snapshot.deferred) throw new Error(snapshot.deferred);
-  const failures = database.transaction(db, 'IMMEDIATE', () => {
-    if (db.prepare('PRAGMA data_version').get().data_version !== snapshot.version) throw new Error('Temporary folder cleanup deferred: session storage changed while references were checked');
-
-    return removeCandidates(db, root, snapshot, candidates);
-  });
+  if (!unchanged(root, snapshot.version)) throw new Error('Temporary folder cleanup deferred: session storage changed while references were checked');
+  const failures = removeCandidates(db, root, snapshot, candidates);
 
   if (failures.length) throw new Error(`Temporary folder cleanup failed: ${failures.join('; ')}`);
   const pending = db.prepare('SELECT a.original_path FROM temporary_chat_allocations a WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.session_id=a.session_id)').all().map(row => row.original_path).filter(directory => !inUse(snapshot, directory));
@@ -143,14 +163,23 @@ function removeCandidates(db, root, snapshot, candidates) {
 
     if (!ownsFolder(root, candidate.session_id, directory) || inUse(snapshot, directory)) continue;
 
-    try { remove(db, directory, candidate.session_id); }
+    try { remove(root, db, directory, candidate.session_id); }
     catch (error) { failures.push(`${directory}: ${error.message}`); }
   }
 
   return failures;
 }
 
-function remove(db, directory, id) {
+const forgetAllocation = onMainThread('temporary-chat.forgetAllocation', (root, directory, id) => {
+  const db = database.connection(root);
+
+  database.transaction(db, 'IMMEDIATE', () => {
+    db.prepare('DELETE FROM temporary_chat_allocations WHERE session_id=? AND original_path=?').run(id, directory);
+    db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
+  });
+});
+
+function remove(root, db, directory, id) {
   const allocation = db.prepare('SELECT original_path FROM temporary_chat_allocations WHERE session_id=?').get(id);
   const deleted = !db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(id);
 
@@ -167,8 +196,7 @@ function remove(db, directory, id) {
   }
 
   if (directoryExists(path.dirname(directory))) sync(path.dirname(directory));
-  db.prepare('DELETE FROM temporary_chat_allocations WHERE session_id=? AND original_path=?').run(id, directory);
-  db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
+  forgetAllocation(root, directory, id);
 }
 
 function temporaryChat(request) {
@@ -188,13 +216,13 @@ function temporaryChat(request) {
   directoryExists(path.join(root, 'tmp'));
   const db = database.connection(root);
 
-  if (request.action === 'create') return database.transaction(db, 'IMMEDIATE', () => create(db, root, request.id));
+  if (request.action === 'create') return create(root, request.id);
   const id = db.prepare('SELECT session_id FROM temporary_chat_allocations WHERE original_path=?').get(request.path)?.session_id;
 
   if (id === undefined) return null;
 
   if (!ownsFolder(root, id, request.path)) throw new Error('Temporary chat directory does not match its saved record');
-  removeChecked(db, request.path, id);
+  removeChecked(root, db, request.path, id);
 
   return null;
 }

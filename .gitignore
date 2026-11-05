@@ -9,8 +9,8 @@ clients/desktop/gen/
 logs/
 .trace/
 graphify-out/
-extensions/pi-orchestration/config.json
-extensions/piop-define-agents/config.json
+pi-extensions/pi-orchestration/config.json
+pi-extensions/piop-define-agents/config.json
 .DS_Store
 piop.png
 piop-settings.png

@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
+const { onMainThread } = require('./main-thread.cjs');
 
 const targetsSchema = Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), path: Type.String() }));
 
@@ -11,7 +12,7 @@ function removeSessionRecords(db, targets) {
   for (const target of targets) remove.run(target.sessionId);
 }
 
-function forget(root, targets) {
+const forget = onMainThread('registry-deletion.forget', (root, targets) => {
   if (!Check(targetsSchema, targets) || !targets.every(target => path.isAbsolute(target.path))) throw new Error('Invalid committed deletion identities');
 
   const database = require('./session-database.cjs');
@@ -37,6 +38,6 @@ function forget(root, targets) {
 
   try { fs.fsyncSync(directory); }
   finally { fs.closeSync(directory); }
-}
+});
 
 module.exports = { forget };

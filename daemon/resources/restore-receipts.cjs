@@ -1,12 +1,12 @@
-const { lockSync } = require('./file-lock.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-transactions.cjs');
-const { heldTransactionLock } = require('./piop-storage/session-publication-io.cjs');
+const { holdsTransactionLock } = require('./piop-storage/session-publication-io.cjs');
 const database = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 
 const traceSchema = Type.Object({ source: Type.String(), destination: Type.String(), identity: Type.String({ pattern: '^\\d+:\\d+$' }) });
 
@@ -40,9 +40,9 @@ function receiptIds(root) {
 
 function unchanged(root, snapshot) { return readReceipt(root, snapshot.id)?.body === snapshot.body; }
 
-function removeReceipt(root, snapshot) {
+const removeReceipt = onMainThread('restore-receipts.removeReceipt', (root, snapshot) => {
   return withDatabase(root, db => db.prepare('DELETE FROM session_restore_receipts WHERE record_id=? AND record_json=?').run(snapshot.id, snapshot.body).changes === 1);
-}
+});
 
 function canonicalRoot(root) {
   if (!path.isAbsolute(root) || path.resolve(root) !== root || fs.realpathSync(root) !== root) throw new Error('Restore receipt storage has ambiguous ancestry');
@@ -60,13 +60,8 @@ function sameEntry(file, expected) {
 
 function assertLocked(root) {
   canonicalRoot(root);
-  const lock = path.join(root, 'session-transactions.lock');
 
-  if (!io.exists(lock)?.isFile() || fs.realpathSync(lock) !== lock) throw new Error('Restore receipt cleanup requires the session transaction lock');
-  const held = heldTransactionLock(lock);
-
-  if (held === undefined) throw new Error('Restore receipt cleanup requires the held session transaction lock');
-  if (!lockSync(held, false, true)) throw new Error('Restore receipt cleanup requires the session transaction lock');
+  if (!holdsTransactionLock(root)) throw new Error('Restore receipt cleanup requires the held session transaction lock');
 }
 
 function parse(body) {
@@ -179,9 +174,12 @@ function record(root, journal) {
 
   if (destinationState(receipt).kind !== 'valid') return;
 
-  withDatabase(root, db => db.prepare('INSERT INTO session_restore_receipts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json')
-    .run(key(receipt.trace.source), JSON.stringify(receipt)));
+  saveReceipt(root, key(receipt.trace.source), JSON.stringify(receipt));
 }
+
+const saveReceipt = onMainThread('restore-receipts.saveReceipt', (root, id, body) => {
+  withDatabase(root, db => db.prepare('INSERT INTO session_restore_receipts VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json').run(id, body));
+});
 
 function pruneReceipt(root, id) {
   const snapshot = readReceipt(root, id);

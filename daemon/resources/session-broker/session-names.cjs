@@ -1,4 +1,5 @@
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 
 const MAX_NAME_LENGTH = 50;
 
@@ -31,20 +32,20 @@ function sessionName(file, sessionId, connection) {
   return nameOf(connection ?? database.connection(database.storageRoot(file)), sessionId);
 }
 
-function nameSession(file, sessionId, name, replace = true) {
+const nameSession = onMainThread('session-names.nameSession', (file, sessionId, name, replace = true) => {
   transaction(database.storageRoot(file), db => {
     database.register(db, sessionId, file);
     write(db, sessionId, name, replace);
   });
-}
+});
 
-function renameSession(root, sessionId, name) {
+const renameSession = onMainThread('session-names.renameSession', (root, sessionId, name) => {
   return transaction(root, db => {
     if (!db.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path IS NOT NULL').get(sessionId)) throw new Error('Conversation not found');
     write(db, sessionId, name, true);
 
     return nameOf(db, sessionId);
   });
-}
+});
 
 module.exports = { capSessionName, promptName, validName, sessionName, nameSession, renameSession, nameOf };

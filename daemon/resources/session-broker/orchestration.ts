@@ -101,6 +101,13 @@ export async function sessionSnapshot(sessionId: string, hostId: string, signal?
   return Parse(snapshotSchema, await request("/orchestration", { action: "read", sessionId, hostId }, signal, 30_000));
 }
 
+const WATCH_MS = 5 * 60_000;
+
+// Waits until the chat's state differs from stateKey (the stateKey of a snapshot), or a while has passed.
+export async function watchSession(sessionId: string, hostId: string, stateKey: string | null, signal?: AbortSignal) {
+  await request("/orchestration", { action: "watch", sessionId, hostId, stateKey, waitMs: WATCH_MS }, signal, WATCH_MS + 30_000);
+}
+
 export const MAX_MESSAGE_LENGTH = 100_000;
 
 export function requireMessageLength(message: string) {

@@ -3,7 +3,7 @@ import { daemonImports } from '../../scripts/daemon-imports.mjs';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { daemonExecutable, startDaemon, temporaryDirectory } from './harness';
+import { startDaemon, temporaryDirectory } from './harness';
 
 let bundle: Promise<string> | undefined;
 function hostExecutable(): Promise<string> {
@@ -18,7 +18,7 @@ import { createInterface } from 'node:readline';
 if (isHostOperationWorker()) { runHostOperationWorker(); } else {
 const output = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
 const events = new Proxy({}, { get: (_, name) => name === 'then' ? undefined : (...args) => output({ type: 'event', name, args }) });
-const host = await startHost(process.env.HOME, '.piop', process.argv[2], events, async () => ({ error: 'This host has no broker', transient: false }));
+const host = await startHost(process.env.HOME, '.piop', events, async () => ({ error: 'This host has no broker', transient: false }));
 const stop = () => host.shutdown().then(() => process.exit(0));
 const input = createInterface({ input: process.stdin });
 input.on('line', line => {
@@ -58,7 +58,7 @@ export async function startHost(options: { home?: string; env?: Record<string, s
     const bootstrap = await startDaemon({ home, env: options.env });
     await bootstrap.stop();
   }
-  const child = spawn(process.execPath, [await hostExecutable(), await daemonExecutable()], {
+  const child = spawn(process.execPath, [await hostExecutable()], {
     env: { ...process.env, ...options.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const events: any[] = [];

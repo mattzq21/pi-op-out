@@ -1,6 +1,5 @@
-import { realpathSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
-import { isMissing } from './util/sync';
 
 export function homeDir(): string {
   const home = process.env.HOME;
@@ -20,39 +19,13 @@ export function exists(path: string): boolean {
   try { statSync(path); return true; } catch { return false; }
 }
 
-export function piExecutable(): string {
-  return piExecutableIn(process.env.HOME || undefined);
-}
-
-export function piExecutableIn(home: string | undefined): string {
-  if (home) {
-    for (const candidate of [join(home, '.local/bin/pi'), join(home, '.npm-global/bin/pi'), join(home, '.bun/bin/pi')]) if (isFile(candidate)) return candidate;
-  }
-  return piOnPath() ?? 'pi';
-}
-
-function piOnPath(): string | undefined {
-  const paths = process.env.PATH;
-  if (!paths) return undefined;
-  return paths.split(delimiter).map(directory => join(directory, 'pi')).find(isFile);
-}
-
+// The Node.js that runs Pi: the user's own in ~/.local/bin, else the one on PATH, else a system one.
 export function nodeExecutable(): string {
-  const pi = piExecutable();
-  if (isAbsolute(pi)) {
-    const candidates = [join(dirname(pi), 'node')];
-    try {
-      for (let directory = dirname(realpathSync(pi)); directory !== dirname(directory); directory = dirname(directory)) {
-        candidates.push(join(directory, 'bin', 'node'));
-      }
-    } catch (error) { if (!isMissing(error)) throw error; }
-    const found = candidates.find(isFile);
-    if (found) return found;
-  }
-  const paths = process.env.PATH;
-  const found = paths?.split(delimiter).filter(Boolean).map(directory => join(directory, 'node')).find(isFile);
-  if (found) return found;
-  return ['/usr/local/bin/node', '/usr/bin/node'].find(isFile) ?? 'node';
+  const home = process.env.HOME;
+  const own = home ? join(home, '.local/bin/node') : undefined;
+  if (own && isFile(own)) return own;
+  const found = process.env.PATH?.split(delimiter).filter(Boolean).map(directory => join(directory, 'node')).find(isFile);
+  return found ?? ['/usr/local/bin/node', '/usr/bin/node'].find(isFile) ?? 'node';
 }
 
 export function pathWithNode(node: string): string | undefined {

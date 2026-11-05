@@ -1,19 +1,8 @@
 import { createSignal } from "solid-js";
-import { ClipboardCheck, Globe } from "lucide-solid";
-import { z } from "zod";
 import { invoke } from "../lib/platform";
-import type { PluginDefinition } from "./types";
 import { flushPlugins, waitForClientPlugins } from "./lifecycle";
-
-// The client parts of the host's plugins. The host names and describes its plugins in its plugin status.
-export const plugins: PluginDefinition[] = [
-  { id: "cost", scope: "host", load: () => import("./cost/plugin") },
-  { id: "review", scope: "host", load: () => import("./review/plugin"),
-    settings: { section: "review", label: "Review", description: "Choose the agent that runs /review.", icon: ClipboardCheck, load: () => import("./review/ReviewSettings").then(module => ({ default: module.ReviewSettings })) },
-    messages: { "piop-review-link": () => import("./review/ReviewLink").then(module => ({ default: module.ReviewLink })) } },
-  { id: "web-search", scope: "host",
-    settings: { section: "web-search", label: "Web search", description: "Choose the OpenAI or Anthropic model that runs web searches.", icon: Globe, load: () => import("./web-search/WebSearchSettings").then(module => ({ default: module.WebSearchSettings })) } },
-];
+import { loadPluginClients } from "./clientModules";
+import type { AuxiliaryLook, PluginStatus } from "../../../protocol/plugins";
 
 // True when the host runs this slash command only after the current response, never as a steering message.
 export function queuedCommand(text: string, queuedCommands: readonly string[]) {
@@ -22,10 +11,7 @@ export function queuedCommand(text: string, queuedCommands: readonly string[]) {
   return word.startsWith("/") && queuedCommands.includes(word.slice(1));
 }
 
-export const pluginStatusSchema = z.object({ enabled: z.array(z.string()), configured: z.array(z.string()), revision: z.string(), error: z.string().nullable(),
-  plugins: z.array(z.object({ id: z.string(), name: z.string() })), queuedCommands: z.array(z.string()) });
-
-export type PluginStatus = z.infer<typeof pluginStatusSchema>;
+export type { PluginStatus };
 
 const [statuses, setStatuses] = createSignal<Record<string, PluginStatus>>({});
 
@@ -36,6 +22,17 @@ const requests = new Map<string, number>();
 export const pluginStatus = (host: string) => statuses()[host];
 
 export const pluginName = (host: string, id: string) => pluginStatus(host)?.plugins.find(plugin => plugin.id === id)?.name ?? id;
+
+// How the side chats of a kind look. The kind of a plugin's side chats is the plugin's ID.
+export function auxiliaryLook(kind: string): AuxiliaryLook {
+  for (const status of Object.values(statuses())) {
+    const look = status.plugins.find(plugin => plugin.id === kind)?.auxiliary;
+
+    if (look) return look;
+  }
+
+  return { label: kind, letter: kind.slice(0, 1).toUpperCase(), color: "#8f8b82" };
+}
 
 export const pluginError = (host: string) => errors()[host] ?? statuses()[host]?.error;
 
@@ -49,12 +46,16 @@ function nextRequest(host: string) {
 }
 
 function acceptPluginStatus(host: string, status: PluginStatus, request: number) {
-  if (requests.get(host) === request) { setStatuses(previous => ({ ...previous, [host]: status })); setPluginError(host); }
+  if (requests.get(host) !== request) return;
+  setStatuses(previous => ({ ...previous, [host]: status })); setPluginError(host);
+  void loadPluginClients(host, status).then(failures => {
+    if (failures.length && pluginStatus(host)?.revision === status.revision) setPluginError(host, `Plugins could not load: ${failures.join("\n")}`);
+  });
 }
 
 export async function refreshPlugins(host: string) {
   const request = nextRequest(host);
-  const status = await invoke("plugin_status", { hostId: host }, pluginStatusSchema);
+  const status = await invoke("plugin_status", { hostId: host });
   acceptPluginStatus(host, status, request);
 
   return status;
@@ -65,13 +66,6 @@ export async function restartPlugins(host: string, enabled: string[], revision: 
 
   if (previous.revision !== revision) throw new Error("Plugin setup changed in another client. Reload the plugin setup before restarting.");
   await flushPlugins(host, enabled);
-
-  for (const id of enabled) {
-    const plugin = plugins.find(plugin => plugin.id === id);
-
-    if (plugin?.load) await plugin.load();
-  }
-
   const response = await restartDaemon(host, enabled, revision, closeTerminals);
 
   if ("confirmationRequired" in response) return response;
@@ -111,10 +105,7 @@ async function restorePlugins(host: string, enabled: string[], revision: string,
 }
 
 async function restartDaemon(host: string, enabled: string[], revision: string, closeTerminals: boolean) {
-  const response = await invoke("restart_daemon", { hostId: host, enabled, revision, closeTerminals }, z.union([
-    z.object({ restartId: z.string() }),
-    z.object({ confirmationRequired: z.literal("terminals"), terminalCount: z.number() }),
-  ]));
+  const response = await invoke("restart_daemon", { hostId: host, enabled, revision, closeTerminals });
 
   if ("confirmationRequired" in response) return response;
   const { restartId } = response;
@@ -126,15 +117,13 @@ async function restartDaemon(host: string, enabled: string[], revision: string, 
   return { status, result };
 }
 
-const restartStatusSchema = z.object({ phase: z.string(), error: z.string().nullable() });
-
 async function waitForRestart(host: string, restartId: string) {
   const deadline = Date.now() + 240000;
   let lastError: unknown;
 
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 500));
-    const result = await invoke("daemon_restart_status", { hostId: host, restartId }, restartStatusSchema).catch((reason: unknown) => { lastError = reason; return undefined; });
+    const result = await invoke("daemon_restart_status", { hostId: host, restartId }).catch((reason: unknown) => { lastError = reason; return undefined; });
 
     if (result?.phase === "failed") throw new Error(result.error ?? "Daemon restart failed");
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { STORAGE_DIRECTORY } from './config';
-import { homeDir, piExecutable } from './environment';
-import { agentResources, contextCapSettings, saveContextCapSettings } from './extensions';
+import { homeDir } from './environment';
+import { agentResources, contextCapSettings } from './extensions';
 import { startHost, type Host, type HostEvents, type SessionClosedReport, type SessionStateReport } from './host/index';
 import type { AppSettings } from './settings_types';
 import { piBrokerRequest } from './broker';
@@ -21,7 +21,6 @@ export class LocalHost {
     const key = JSON.stringify(configuration);
     if (key === this.appliedConfiguration) return;
     this.appliedConfiguration = undefined;
-    saveContextCapSettings(settings);
     await this.host.applyConfiguration(configuration);
     this.appliedConfiguration = key;
   }
@@ -31,10 +30,11 @@ export class LocalHost {
     this.alive = false;
     this.sessionEpochs.clear();
     const runtime = app.pi;
-    const ids = runtime.disconnectHost(this);
+    const removed = runtime.disconnectHost(this);
+    const ids = removed.map(([id]) => id);
     for (const key of [...runtime.activeAgents.keys()]) if (key.startsWith(this.agentPrefix) || ids.includes(key)) runtime.activeAgents.delete(key);
     for (const key of [...runtime.settingsPendingSessions]) if (key.startsWith(this.agentPrefix)) updateSettingsPending(app, key, false);
-    for (const id of ids) app.emit('pi://event', { runtimeId: id, event: { type: 'disconnected' } });
+    for (const [id, owner] of removed) app.emit('pi://event', { runtimeId: id, event: { type: 'disconnected' } }, owner);
     await this.host.shutdown();
   }
 }
@@ -42,7 +42,7 @@ export class LocalHost {
 export async function startLocalHost(app: App, settings: AppSettings): Promise<LocalHost> {
   if (app.pi.host) throw new Error('The Host has already started');
   const local = new LocalHost();
-  local.host = await startHost(homeDir(), STORAGE_DIRECTORY, piExecutable(), hostEvents(app, local), (source, request) => piBrokerRequest(app, app.broker, source, request));
+  local.host = await startHost(homeDir(), STORAGE_DIRECTORY, hostEvents(app, local), (source, request) => piBrokerRequest(app, app.broker, source, request));
   app.pi.host = local;
   try { await local.configure(settings); }
   catch (error) {
@@ -94,7 +94,7 @@ function hostEvents(app: App, local: LocalHost): HostEvents {
   };
   return {
     runtimeEvent: live((runtimeId: string, event: any) => runtimeEvent(app, local, runtimeId, event)),
-    stderr: live((runtimeId: string, line: string) => app.emit('pi://stderr', { type: 'stderr', runtimeId, line })),
+    stderr: live((runtimeId: string, line: string) => app.emit('pi://stderr', { type: 'stderr', runtimeId, line }, app.pi.owner(runtimeId))),
     sessionState: live((report: SessionStateReport) => sessionState(app, local, report)),
     sessionClosed: live((report: SessionClosedReport) => sessionClosed(app, local, report)),
     sessionRemoved: live((sessionId: string, sessionPath: string | null) => app.emit('pi://session-removed', { hostId: 'local', sessionId, sessionPath })),
@@ -113,16 +113,18 @@ function runtimeEvent(app: App, local: LocalHost, runtimeId: string, event: any)
   const agent = app.pi.activeAgents.get(runtimeId);
   if (agent) {
     switch (event?.type) {
-      case 'agent_start': agent.working = true; break;
-      case 'agent_settled': agent.working = false; break;
-      case 'ownership_lost': agent.working = false; agent.messageable = true; break;
+      case 'agent_start': app.pi.activeAgents.update(agent, { working: true }); break;
+      case 'agent_settled': app.pi.activeAgents.update(agent, { working: false }); break;
+      case 'ownership_lost': app.pi.activeAgents.update(agent, { working: false, messageable: true }); break;
     }
   }
+  // A runtime's events go only to the client that started it.
+  const owner = app.pi.owner(runtimeId);
   if (event?.type === 'disconnected') {
     if (!app.pi.disconnectProcess(runtimeId, local)) return;
     app.pi.activeAgents.delete(runtimeId);
   }
-  app.emit('pi://event', { runtimeId, event: event ?? null });
+  app.emit('pi://event', { runtimeId, event: event ?? null }, owner);
 }
 
 function sessionState(app: App, local: LocalHost, report: SessionStateReport): void {
@@ -132,9 +134,11 @@ function sessionState(app: App, local: LocalHost, report: SessionStateReport): v
   const sessionId = typeof state.sessionId === 'string' ? state.sessionId : undefined;
   const sessionPath = typeof state.sessionFile === 'string' ? state.sessionFile : undefined;
   const previous = app.pi.activeAgents.get(key);
+  // A turn that starts or ends changes the chat's row in the list: its time, preview and cost. The running mark of the
+  // row changes at once on its own event (see ActiveAgents).
   const listChanged = !previous || previous.working !== report.working || previous.sessionId !== sessionId || previous.sessionPath !== sessionPath;
   if (sessionId !== undefined) {
-    for (const agent of app.pi.activeAgents.values()) if (agent.hostId === 'local' && agent.sessionId === sessionId) agent.working = report.working;
+    for (const agent of app.pi.activeAgents.values()) if (agent.hostId === 'local' && agent.sessionId === sessionId && agent.working !== report.working) app.pi.activeAgents.update(agent, { working: report.working });
   }
   local.sessionEpochs.set(key, report.epoch);
   app.pi.activeAgents.set(key, { hostId: 'local', sessionId, sessionPath, working: report.working, messageable: report.messageable });

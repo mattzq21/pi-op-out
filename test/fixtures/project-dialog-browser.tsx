@@ -18,7 +18,7 @@ render(() => <>
   <Show when={visible()}>
     <ProjectDialog initialPath={new URLSearchParams(location.search).get('path') ?? ''} hostId="local" hosts={[{ id: "local", name: "Local" }, { id: "remote", name: "Remote" }]}
       onHomeDirectory={host => settleHome(failure === "home" ? Promise.reject(new Error("home unavailable")) : window.projectHome(host))}
-      onChooseDirectory={async (path, host) => { if (failure === "listing") { if (path.endsWith("/alpha/")) throw "listing failed"; return null; } const result = await window.listProjectFolders(path, host); setDelivered(value => value + 1); return result; }}
+      onChooseDirectory={async (path, host) => { if (failure === "listing") throw path.endsWith("/alpha/") ? "listing failed" : new Error("listing unavailable"); const result = await window.listProjectFolders(path, host); setDelivered(value => value + 1); return result; }}
       onOpen={async (...args) => { setOpened(values => [...values, args]); await window.openProject(...args); }}
       onCancel={() => { setCancelled(value => value + 1); setVisible(false); }} />
   </Show>

@@ -26,6 +26,7 @@ beforeAll(async () => {
     names: require('../../daemon/resources/session-broker/session-names.cjs'),
     lock: require('../../daemon/resources/piop-storage/reference-publication-lock.cjs'),
     operation: require('../../daemon/resources/storage-operation.cjs'),
+    locks: require('../../daemon/resources/storage-locks.cjs'),
   };
 });
 afterAll(() => {
@@ -66,10 +67,7 @@ async function sourceChat() {
 }
 
 async function deleteChat(path: string) {
-  const open = (file: string) => openSync(file, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
-  const locks = { restore: open(join(root, 'restore.lock')), transactions: open(join(root, 'session-transactions.lock')) };
-  try { return await modules.operation.runStorageTransaction({ root, locks, begin: () => true }, { action: 'delete', targets: [{ area: 'sessions', path }], activeSessionIds: [] }); }
-  finally { Object.values(locks).forEach(descriptor => closeSync(descriptor)); }
+  return await modules.locks.withinFlow(() => modules.operation.runStorageTransaction({ root, begin: () => true }, { action: 'delete', targets: [{ area: 'sessions', path }], activeSessionIds: [] }));
 }
 
 function owners(directory: string) { return modules.assets.readOwners(root, directory).owners.map((owner: any) => owner.sessionId).sort(); }
@@ -88,7 +86,6 @@ function leftovers(id: string, path: string) {
     state: db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n,
     journals: modules.database.publications(root).length,
     quarantine: existsSync(join(root, 'session-publication-quarantine')) ? readdirSync(join(root, 'session-publication-quarantine')).length : 0,
-    locks: existsSync(join(root, 'session-publication-locks')) ? readdirSync(join(root, 'session-publication-locks')).length : 0,
   };
 }
 
@@ -96,7 +93,6 @@ test('a branch copies history through the selected final response, current setti
   const source = await sourceChat();
   const sourceBody = readFileSync(source.path, 'utf8');
   const sessionId = modules.database.reserve(root);
-  const locksBefore = leftovers(source.id, source.path).locks;
   const result = await modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' });
 
   expect(result.forkSource).toEqual({ sessionId: source.id, sessionPath: source.path, entryId: 'a1' });
@@ -113,7 +109,7 @@ test('a branch copies history through the selected final response, current setti
   expect(owners(source.attachment)).toEqual([source.id, sessionId].sort());
 
   await modules.history.discardBranchHistory(root, sessionId, result.sessionPath);
-  expect(leftovers(sessionId, result.sessionPath)).toMatchObject({ transcript: false, registry: false, goal: false, state: 0, journals: 0, locks: locksBefore });
+  expect(leftovers(sessionId, result.sessionPath)).toMatchObject({ transcript: false, registry: false, goal: false, state: 0, journals: 0 });
   expect(owners(source.attachment)).toEqual([source.id]);
   expect(existsSync(join(source.attachment, 'goal-objective.md'))).toBe(true);
   expect(readFileSync(source.path, 'utf8')).toBe(sourceBody);
@@ -126,7 +122,6 @@ test('a branch copies history through the selected final response, current setti
 test('a publication that fails after claiming resources removes everything it created', async () => {
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
-  const locksBefore = leftovers(source.id, source.path).locks;
   const db = modules.database.connection(root);
   db.exec("CREATE TRIGGER reject_branch_state BEFORE INSERT ON auxiliary_child_state WHEN NEW.session_id='" + sessionId + "' BEGIN SELECT RAISE(ABORT, 'Index write failed'); END");
   try {
@@ -138,7 +133,7 @@ test('a publication that fails after claiming resources removes everything it cr
   }
   const files = readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId));
   expect(files).toEqual([]);
-  expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0, locks: locksBefore });
+  expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0 });
   expect(owners(source.attachment)).toEqual([source.id]);
 });
 
@@ -178,7 +173,6 @@ test('shared attachments stay while the branch exists after its source is delete
 test('a publication that saves the transcript but cannot finish is removed', async () => {
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
-  const locksBefore = leftovers(source.id, source.path).locks;
   const db = modules.database.connection(root);
   db.exec("CREATE TRIGGER keep_branch_publication BEFORE DELETE ON session_publications WHEN json_extract(OLD.record_json, '$.sessionId')='" + sessionId + "' AND json_extract(OLD.record_json, '$.phase')='linked' BEGIN SELECT RAISE(ABORT, 'Retirement failed'); END");
   try {
@@ -190,7 +184,7 @@ test('a publication that saves the transcript but cannot finish is removed', asy
   }
   await modules.history.discardBranchHistory(root, sessionId, null);
   expect(readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId))).toEqual([]);
-  expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0, locks: locksBefore });
+  expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0 });
   expect(owners(source.attachment)).toEqual([source.id]);
 });
 

@@ -1,16 +1,10 @@
-export const defaultKeybindings = {
-  newConversation: "Ctrl+N",
-  toggleConversations: "Ctrl+B",
-  toggleTerminal: "Ctrl+J",
-  toggleDebugMode: "Ctrl+D",
-  focusComposer: "Ctrl+E",
-  openSettings: "Ctrl+,",
-  toggleQueueHold: "Ctrl+H",
-};
+import { DEFAULT_KEYBINDINGS, type KeybindingAction, type Keybindings } from "../../../protocol/settings";
 
-export type KeybindAction = keyof typeof defaultKeybindings;
+export const defaultKeybindings = DEFAULT_KEYBINDINGS;
 
-export type Keybindings = Record<KeybindAction, string>;
+export type KeybindAction = KeybindingAction;
+
+export type { Keybindings };
 
 const definitions: Array<{ action: KeybindAction; label: string; description: string }> = [
   { action: "newConversation", label: "New conversation", description: "Start a fresh conversation" },

@@ -5,6 +5,7 @@ import * as database from "./session-database.cjs";
 import { sessionName } from "./session-broker/session-names.cjs";
 import { sessionHeaderMatches } from "./piop-storage/transcript-file.mjs";
 import { patchMethod, requireMethods } from "./pi-patch.cjs";
+import { call } from "./storage-channel.cjs";
 
 const cached = new Map();
 
@@ -158,16 +159,10 @@ async function summary(db, row, signal) {
 
   if (stat && stamp !== `${stat.mtimeNs}:${stat.size}`) return value;
 
-  if (!stored) persistSummary(db, row, stamp, value);
+  if (!stored) call("records.saveSummary", { path: row.session_path, sessionId: row.session_id, stamp, value });
   remember(row, stamp, value);
 
   return structuredClone(value);
-}
-
-function persistSummary(db, row, stamp, value) {
-  db.prepare(`INSERT INTO sdk_session_summaries SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
-    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, fingerprint=excluded.fingerprint, body=excluded.body`)
-    .run(stamp, JSON.stringify(value), row.session_id, row.session_path);
 }
 
 function remember(row, stamp, value) {

@@ -185,28 +185,21 @@ test('a log failure reported before connection loss is not replayed to listeners
   } finally { client.close(); }
 });
 
-test('connection loss ends only terminals still running and a later connection does not end them again', async () => {
+test('each lost connection tells the app once that it is gone', async () => {
   const { client, socket: lost } = await connected();
-  const exits = [];
-  const event = z.object({ type: z.string(), terminalId: z.string().optional() });
+  const notices = [];
+  const event = z.object({ type: z.string() }).loose();
   try {
-    await client.listen('pi://event', ({ payload }) => { if (payload.type === 'terminal_exit') exits.push(payload.terminalId); }, event);
-    for (const terminalId of ['lifecycle-exited-terminal', 'lifecycle-running-terminal']) {
-      const started = client.invoke('start_terminal', { terminalId, sessionKey: 'local:lifecycle-session', cwd: '/home/me', cols: 80, rows: 24 });
-      const request = lost.sent.find(packet => packet.command === 'start_terminal' && packet.args.terminalId === terminalId);
-      lost.receive({ id: request.id, result: null });
-      await started;
-    }
-    lost.receive({ event: 'pi://event', payload: { type: 'terminal_exit', terminalId: 'lifecycle-exited-terminal' } });
+    await client.listen('pi://event', ({ payload }) => { if (payload.type === 'disconnected') notices.push(payload); }, event);
     lost.close();
-    assert.deepEqual(exits, ['lifecycle-exited-terminal', 'lifecycle-running-terminal']);
+    assert.deepEqual(notices, [{ type: 'disconnected' }]);
 
     const reconnect = client.connect(host);
     const current = FakeSocket.instances.at(-1);
     current.onopen(); current.receive({ type: 'ready', protocol: 1, backend: 'daemon' });
     await reconnect;
     client.close();
-    assert.deepEqual(exits, ['lifecycle-exited-terminal', 'lifecycle-running-terminal']);
+    assert.equal(notices.length, 2, 'closing the second connection adds one notice');
   } finally { client.close(); }
 });
 

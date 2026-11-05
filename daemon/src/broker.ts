@@ -88,12 +88,14 @@ export function clientBrokerRequest(app: App, path: string, body: any): Promise<
 }
 
 async function brokerRequest(app: App, broker: BrokerRuntime, path: string, body: any): Promise<any> {
-  if (broker.closing || broker.active >= BROKER_WORKERS + BROKER_QUEUE_DEPTH) throw new BrokerBusyError('Session broker is busy');
-  broker.active += 1;
+  // A watch only waits for a chat to change, often for long; it does no work, so it does not use a work slot.
+  const counted = !(path === '/orchestration' && body?.action === 'watch');
+  if (broker.closing || (counted && broker.active >= BROKER_WORKERS + BROKER_QUEUE_DEPTH)) throw new BrokerBusyError('Session broker is busy');
+  if (counted) broker.active += 1;
   try {
     if (path === '/orchestration') return await enqueueOrchestration(app, broker, body);
     return await withBrokerAccess(app, () => respondBrokerRequest(app, broker, path, body));
-  } finally { broker.active -= 1; }
+  } finally { if (counted) broker.active -= 1; }
 }
 
 function registerDelivery(broker: BrokerRuntime, value: any): (() => void) | undefined {
@@ -112,6 +114,11 @@ function registerDelivery(broker: BrokerRuntime, value: any): (() => void) | und
 }
 
 async function enqueueOrchestration(app: App, broker: BrokerRuntime, value: any): Promise<any> {
+  // A watch changes nothing, so it does not hold back a daemon restart.
+  if (value?.action === 'watch') {
+    if (app.clients.closing()) throw new Error('The daemon is restarting or shutting down. Reconnect before retrying.');
+    return brokerOrchestration(app, broker, value);
+  }
   const worker = value?.action === 'send' || value?.action === 'branch_off';
   if (worker && broker.messageCount >= BROKER_WORKERS) throw new BrokerBusyError('Session broker is busy');
   const delivery = registerDelivery(broker, value);
@@ -194,7 +201,7 @@ async function brokerSettleFirstMessage(app: App, value: any, id: string): Promi
   const location = await host.orchestrate({ action: 'locate', sessionKey: id }).catch(error => { logFailure('Could not find chat ' + id + ' to settle its first message')(error); return null; });
   const request: OrchestrationRequest = { action: 'settle_first_message', sessionKey: id, sessionPath: value.sessionPath, deliveryId: value.deliveryId ?? null, clientId: value.clientId ?? null };
   if (typeof location?.cwd === 'string' && typeof location?.sessionPath === 'string') {
-    request.spec = launchSpec(buildPiCommand(settings, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }));
+    request.spec = launchSpec(await buildPiCommand(settings, { kind: 'rpc', cwd: location.cwd, sessionPath: location.sessionPath }));
     request.cwd = location.cwd;
   }
   return { arrived: (await host.orchestrate(request))?.arrived === true };
@@ -214,7 +221,7 @@ async function brokerConversationOperation(app: App, value: any, id: string, act
     sourceSessionId: field('sourceSessionId'), sourceHostId: field('sourceHostId'), sourceName: field('sourceName'), message: field('message'), wake: field('wake'), clientId: field('clientId'),
     deliveryId: field('deliveryId'), discardOnFailure: field('discardOnFailure'), deliverAs: field('deliverAs') };
   if (action === 'send') {
-    request.spec = launchSpec(buildPiCommand(settings, { kind: 'rpc', cwd, sessionPath: path }));
+    request.spec = launchSpec(await buildPiCommand(settings, { kind: 'rpc', cwd, sessionPath: path }));
     request.cwd = cwd;
   }
   return local.orchestrate(request);

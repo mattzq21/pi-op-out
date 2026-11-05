@@ -17,22 +17,19 @@ export interface PluginInstance {
   transcript?: Component<TranscriptProps>;
 }
 
-export interface PluginModule { createPlugin: (context: PluginContext) => PluginInstance }
-
 // A plugin's settings page sees and changes only its own settings.
 export interface PluginSettingsProps { settings: Record<string, unknown>; agents: AgentProfile[]; models: Model[]; onChange: (patch: Record<string, unknown>) => void }
 
-export interface PluginSettingsSection { section: string; label: string; description: string; icon: (props: LucideProps) => JSX.Element; load: () => Promise<{ default: Component<PluginSettingsProps> }> }
+export interface PluginSettingsPage { label: string; description: string; icon: (props: LucideProps) => JSX.Element; component: Component<PluginSettingsProps> }
 
-export type PluginScope = "client" | "host" | "conversation";
+// What a plugin's client.mjs exports. Each part is optional.
+// createPlugin: starts the plugin in a conversation; the plugin stops when its owner is disposed.
+// settings: the plugin's page in the settings of its host.
+// messages: the views of the plugin's custom messages, by custom type.
+export interface PluginModule {
+  createPlugin?: (context: PluginContext) => PluginInstance;
+  settings?: PluginSettingsPage;
+  messages?: Record<string, Component<{ details: unknown }>>;
+}
 
 export interface SidepaneOpening { requestId: string; initialPrompt?: string; initialImages?: ImageAttachment[] }
-
-export interface PluginDefinition {
-  id: string;
-  scope: PluginScope;
-  retainOnHostRestart?: boolean;
-  load?: () => Promise<PluginModule>;
-  settings?: PluginSettingsSection;
-  messages?: Record<string, () => Promise<{ default: Component<{ details: unknown }> }>>;
-}

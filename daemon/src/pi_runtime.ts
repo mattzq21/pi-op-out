@@ -9,11 +9,13 @@ import { claimAgent, type BrokerRuntime, type BusyAgent } from './broker';
 import { localHost, spec, type LocalHost } from './local_host';
 import { locateSessionFile } from './archives';
 import { buildPiCommand, sessionIdentity } from './pi_launch';
+import { installedPi } from './pi_install';
 import { validateSessionWorkingDirectory } from './session_index';
 import { loadAppSettings } from './settings';
 import * as storageTransactions from './storage_transactions';
 import * as Registry from './session_registry';
 import { Mutex, observedElsewhere } from './util/sync';
+import { ActiveAgents } from './active_agents';
 import type { AgentAddress, BlankSessionCleanup } from './types';
 import type { AppSettings } from './settings_types';
 import type { AttachRequest } from './host/index';
@@ -30,16 +32,20 @@ export class PiRuntime {
   processes = new Map<string, PiProcess>();
   pendingStarts = new Map<string, Set<PendingStart>>();
   lifecycle = new Mutex();
-  activeAgents = new Map<string, AgentAddress>();
+  activeAgents = new ActiveAgents();
   settingsPendingSessions = new Set<string>();
 
   containsProcess(id: string): boolean { return this.processes.has(id); }
 
-  disconnectHost(host: LocalHost): string[] {
-    const ids = [...this.processes].filter(([, process]) => process.connection === host).map(([id]) => id);
-    for (const id of ids) this.processes.delete(id);
-    return ids;
+  // Removes the runtimes of a stopped Host. Returns each runtime with the client that started it.
+  disconnectHost(host: LocalHost): Array<[id: string, owner: string]> {
+    const removed = [...this.processes].filter(([, process]) => process.connection === host).map(([id, process]): [string, string] => [id, process.windowLabel]);
+    for (const [id] of removed) this.processes.delete(id);
+    return removed;
   }
+
+  // The client that started the runtime, while it runs.
+  owner(id: string): string | undefined { return this.processes.get(id)?.windowLabel; }
 
   cancelPendingStarts(match: { runtimeId?: string; owner?: string }): void {
     for (const [id, starts] of this.pendingStarts) {
@@ -120,8 +126,9 @@ async function preparePiStart(app: App, owner: string, runtime: PiRuntime, broke
     if (readOnly) {
       if (sessionPath === undefined || forkPath !== undefined) throw new Error('A read-only view requires a saved conversation');
     } else if (claimId !== undefined) claim = claimAgent(broker, claimId);
+    const command = await buildPiCommand(settings, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath });
+    assertNotCancelled();
     const connection = localHost(app);
-    const command = buildPiCommand(settings, { kind: 'rpc', cwd: options.cwd, sessionPath, sessionId, forkPath });
     blankCleanup.path = sessionPath;
     let settle!: PreparedStart['settle'];
     const attached = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
@@ -147,7 +154,11 @@ export async function startPiForOwner(app: App, owner: string, runtime: PiRuntim
   if (!starts) { starts = new Set(); runtime.pendingStarts.set(options.runtimeId, starts); }
   starts.add(pending);
   let prepared: Awaited<ReturnType<typeof preparePiStart>>;
-  try { prepared = await runtime.lifecycle.run(() => preparePiStart(app, owner, runtime, broker, options, pending)); }
+  try {
+    // A first start can install Pi. It waits outside the lifecycle lock, so stops and other starts are not held.
+    await installedPi();
+    prepared = await runtime.lifecycle.run(() => preparePiStart(app, owner, runtime, broker, options, pending));
+  }
   finally {
     starts.delete(pending);
     if (!starts.size && runtime.pendingStarts.get(options.runtimeId) === starts) runtime.pendingStarts.delete(options.runtimeId);
@@ -255,11 +266,11 @@ export function updateRuntimeSnapshot(runtime: PiRuntime, runtimeId: string, sta
     if (typeof state.sessionId === 'string') process.blankCleanup.id = state.sessionId;
   }
   const agent = runtime.activeAgents.get(runtimeId);
-  if (agent) {
-    agent.sessionId = typeof state.sessionId === 'string' ? state.sessionId : undefined;
-    agent.sessionPath = typeof state.sessionFile === 'string' ? state.sessionFile : undefined;
-    agent.working = state.isStreaming === true;
-  }
+  if (agent) runtime.activeAgents.update(agent, {
+    sessionId: typeof state.sessionId === 'string' ? state.sessionId : undefined,
+    sessionPath: typeof state.sessionFile === 'string' ? state.sessionFile : undefined,
+    working: state.isStreaming === true,
+  });
 }
 
 async function openSystemResource(target: string): Promise<void> {

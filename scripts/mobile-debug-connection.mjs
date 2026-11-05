@@ -6,16 +6,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { developmentEndpointKey } from "../protocol/connection.ts";
 
 const project = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 
-const legacyEndpointIdentity = join(project, "src-tauri");
-
-let key = 0xcbf29ce484222325n;
-
-for (const byte of Buffer.from(legacyEndpointIdentity)) key = BigInt.asUintN(64, (key ^ BigInt(byte)) * 0x100000001b3n);
-
-const endpointDirectory = join(homedir(), ".piop-dev", "daemons", key.toString(16).padStart(16, "0"));
+const endpointDirectory = join(homedir(), ".piop-dev", "daemons", developmentEndpointKey(project));
 
 const daemon = join(project, "target", "debug", "piopd");
 
@@ -34,7 +29,7 @@ function readDaemonEndpoint() {
     database = new DatabaseSync(join(endpointDirectory, "sessions.sqlite"), { readOnly: true });
     database.exec("PRAGMA busy_timeout=2000");
 
-    const row = database.prepare("SELECT body FROM application_settings WHERE name=?").get("debug-mobile.json");
+    const row = database.prepare("SELECT body FROM application_settings WHERE name=?").get("debug-mobile");
 
     return row?.body ? JSON.parse(Buffer.from(row.body).toString("utf8")) : undefined;
   } catch {

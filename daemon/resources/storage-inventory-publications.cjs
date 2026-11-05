@@ -50,7 +50,7 @@ async function transcripts(diagnostic, journal, discovery, transcript) {
 }
 
 async function namespaces(profile, discovery) {
-  for (const name of ['session-publications', 'session-publication-locks', 'session-publication-quarantine']) {
+  for (const name of ['session-publications', 'session-publication-quarantine']) {
     const directory = path.join(profile, name);
 
     try {

@@ -1,5 +1,7 @@
-**Plugins** - piop-wide extensions, usually based on pi extensions.  
+**Plugins** - piop-wide extensions, usually based on pi extensions. A plugin is a folder with `plugin.json`, and its built Pi extension and app part. The built-in ones are in `plugins/`; a user adds others in `~/.piop/plugins/`.  
 **Extensions** - agent defined, work only in that agent's session.  
+**Pi extension** - code that uses Pi's extension API. piop's core ones are in `pi-extensions/` and `daemon/resources/`; a plugin's is in its folder. Not to confuse with Extensions.  
+**Client server** - the daemon's WebSocket server (`client_server.ts`), which all clients use: the desktop app, the Android app and other daemons.  
 **Button tool** - a tool that has no parameters.  
 **Debug mode** - the mode toggled in piop's UI.  
 **Orchestration** - root agents messaging each other. Not to confuse with subagents.  

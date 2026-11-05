@@ -1,13 +1,13 @@
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import * as records from './settings_records';
+import { connection, transaction } from './util/db';
 import type { ToolConfig } from './settings_types';
 import { reported } from './pi_discovery';
 
 const changeListeners = new Set<() => void>();
 
-function defaultSettingsFile(): string { return join(homeDir(), STORAGE_DIRECTORY, 'settings.json'); }
+function defaultRoot(): string { return join(homeDir(), STORAGE_DIRECTORY); }
 
 function toolEntry(value: any): ToolConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('A reported tool must be an object');
@@ -27,13 +27,27 @@ export function parseTools(value: unknown): ToolConfig[] {
   return tools;
 }
 
-export function savedTools(settingsFile = defaultSettingsFile()): ToolConfig[] {
-  return parseTools(records.toolInventory(settingsFile));
+// The tools that Pi last reported in the storage root.
+export function savedTools(root = defaultRoot()): ToolConfig[] {
+  const row = connection(root).prepare('SELECT entries_json FROM tool_inventory WHERE id=1').get() as { entries_json: string } | undefined;
+  return parseTools(row ? JSON.parse(row.entries_json) : []);
 }
 
-export function recordTools(value: unknown, settingsFile = defaultSettingsFile()): void {
+// Saves the tools that Pi reported. True when they changed.
+function saveTools(root: string, tools: ToolConfig[]): boolean {
+  const entries = JSON.stringify(tools);
+  const database = connection(root);
+  return transaction(database, 'IMMEDIATE', () => {
+    const row = database.prepare('SELECT entries_json FROM tool_inventory WHERE id=1').get() as { entries_json: string } | undefined;
+    if (row?.entries_json === entries) return false;
+    database.prepare('INSERT INTO tool_inventory VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET entries_json=excluded.entries_json').run(entries);
+    return true;
+  });
+}
+
+export function recordTools(value: unknown, root = defaultRoot()): void {
   const tools = parseTools(value);
-  const changed = records.saveToolInventory(settingsFile, tools);
+  const changed = saveTools(root, tools);
   reported('tools');
   if (changed) for (const listener of changeListeners) listener();
 }

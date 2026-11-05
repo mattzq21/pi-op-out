@@ -52,7 +52,7 @@ test('skill discovery reads metadata, skips hidden and package folders and stops
 
 test('a started Pi receives the reported tools and only the enabled skills', async () => {
   const bin = join(daemon.home, '.local/bin');
-  fakePi(bin);
+  fakePi(daemon.home);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs'); const path = require('node:path');
 fs.writeFileSync(path.join(process.env.HOME, 'runtime.json'), process.env.PIOP_AGENT_RESOURCES);
@@ -65,7 +65,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   write('off/SKILL.md', '---\nname: Off\n---\n');
   try {
     const settings = await daemon.invoke('load_app_settings', { refreshSkills: true });
-    recordTools([{ name: 'read', description: 'Read files', source: 'builtin:read' }], join(daemon.home, '.piop/settings.json'));
+    recordTools([{ name: 'read', description: 'Read files', source: 'builtin:read' }], join(daemon.home, '.piop'));
     for (const skill of settings.skills) skill.enabled = skill.name !== 'Off';
     settings.contextWindowCap = 123456; settings.contextWindowCapEnabled = false;
     await daemon.invoke('save_app_settings', { settings });

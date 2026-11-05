@@ -3,6 +3,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { createHash } = require('node:crypto');
 const database = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 
 function list(root) {
   return database.connection(root).prepare('SELECT record_id, record_json FROM external_transcripts ORDER BY record_id').all();
@@ -16,8 +17,8 @@ function transcript(row) {
   return record.path;
 }
 
-function remove(root, row) {
+const remove = onMainThread('external-transcripts.remove', (root, row) => {
   database.connection(root).prepare('DELETE FROM external_transcripts WHERE record_id=? AND record_json=?').run(row.record_id, row.record_json);
-}
+});
 
 module.exports = { list, transcript, remove };

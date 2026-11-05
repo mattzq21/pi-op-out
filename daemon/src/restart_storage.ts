@@ -1,51 +1,61 @@
-import { realpathSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
-import { connection, type Database } from './util/db';
-import { isMissing } from './util/sync';
+import { Type, type Static } from 'typebox';
+import { Check } from 'typebox/value';
+import { connection } from './util/db';
 
-function use<T>(directory: string, operation: (db: Database) => T): T {
-  return operation(connection(directory));
+// The records of a daemon restart in the storage database of root:
+//   plan: the restart in progress: its identity, the daemon that asked for it, the new and the fallback daemon file,
+//     the plugins to turn on and those that were on, and the addresses the new daemon listens on.
+//   status: its phase, which clients read, with the error and the new daemon's process while they are known.
+// And the backups of the running daemon that a restart can return to, each with the digest of its file.
+const planSchema = Type.Object({
+  id: Type.String(), owner: Type.Integer(), executable: Type.String(), fallback: Type.String(),
+  enabled: Type.Array(Type.String()), previous: Type.Array(Type.String()), bind: Type.String(), debug_bind: Type.Union([Type.String(), Type.Null()]),
+});
+
+const statusSchema = Type.Object({
+  restartId: Type.String(), phase: Type.Union([Type.Literal('preparing'), Type.Literal('armed'), Type.Literal('restarting'), Type.Literal('failed'), Type.Literal('complete'), Type.Literal('rolled_back')]),
+  error: Type.Union([Type.String(), Type.Null()]), processId: Type.Union([Type.Integer(), Type.Null()]), expiresAt: Type.Integer(),
+});
+
+const SCHEMAS = { plan: planSchema, status: statusSchema };
+
+export type RestartPlan = Static<typeof planSchema>;
+export type RestartStatus = Static<typeof statusSchema>;
+type Records = { plan: RestartPlan; status: RestartStatus };
+export type RestartRecord = keyof Records;
+
+function checked<Name extends RestartRecord>(name: Name, value: unknown): Records[Name] {
+  if (!Check(SCHEMAS[name], value)) throw new Error('Invalid restart ' + name);
+  return value as Records[Name];
 }
 
-export function saveBackup(directory: string, id: string, record: any): void {
-  use(directory, db => db.prepare('INSERT INTO daemon_restart_backups VALUES (?, ?, ?) ON CONFLICT(directory, id) DO UPDATE SET record_json=excluded.record_json').run(directory, id, JSON.stringify(record)));
+export function read<Name extends RestartRecord>(root: string, name: Name): Records[Name] | null {
+  const row: any = connection(root).prepare('SELECT record_json FROM restart_records WHERE name=?').get(name);
+  return row ? checked(name, JSON.parse(row.record_json)) : null;
 }
 
-export function readBackup(directory: string, id: string): any | null {
-  const row: any = use(directory, db => db.prepare('SELECT record_json FROM daemon_restart_backups WHERE directory=? AND id=?').get(directory, id));
-  if (!row || row.record_json === null) return null;
-  return JSON.parse(row.record_json);
+export function write<Name extends RestartRecord>(root: string, name: Name, value: Records[Name]): void {
+  connection(root).prepare('INSERT INTO restart_records VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET record_json=excluded.record_json').run(name, JSON.stringify(checked(name, value)));
 }
 
-export function removeBackup(directory: string, id: string): void {
-  use(directory, db => db.prepare('DELETE FROM daemon_restart_backups WHERE directory=? AND id=?').run(directory, id));
+export function remove(root: string, name: RestartRecord): void {
+  connection(root).prepare('DELETE FROM restart_records WHERE name=?').run(name);
 }
 
-export function backups(directory: string): string[] {
-  return use(directory, db => db.prepare('SELECT id FROM daemon_restart_backups WHERE directory=? ORDER BY id').all(directory).map((row: any) => String(row.id)));
+// digest is null while the backup file is still being written.
+export function saveBackup(root: string, id: string, digest: string | null): void {
+  connection(root).prepare('INSERT INTO restart_backups VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET digest=excluded.digest').run(id, digest);
 }
 
-function location(path: string): [string, string] {
-  const parent = dirname(path);
-  let directory = parent;
-  try { directory = realpathSync(parent); } catch (error) { if (!isMissing(error)) throw error; }
-  const name = basename(path);
-  if (!name) throw new Error('Invalid restart record name');
-  return [directory, name];
+export function readBackup(root: string, id: string): { digest: string | null } | null {
+  const row: any = connection(root).prepare('SELECT digest FROM restart_backups WHERE id=?').get(id);
+  return row ? { digest: row.digest ?? null } : null;
 }
 
-export function read(path: string): any | null {
-  const [directory, name] = location(path);
-  const row: any = use(directory, db => db.prepare('SELECT record_json FROM daemon_restart_records WHERE directory=? AND name=?').get(directory, name));
-  return row ? JSON.parse(row.record_json) : null;
+export function removeBackup(root: string, id: string): void {
+  connection(root).prepare('DELETE FROM restart_backups WHERE id=?').run(id);
 }
 
-export function write(path: string, value: any): void {
-  const [directory, name] = location(path);
-  use(directory, db => db.prepare('INSERT INTO daemon_restart_records VALUES (?, ?, ?) ON CONFLICT(directory, name) DO UPDATE SET record_json=excluded.record_json').run(directory, name, JSON.stringify(value)));
-}
-
-export function remove(path: string): void {
-  const [directory, name] = location(path);
-  use(directory, db => db.prepare('DELETE FROM daemon_restart_records WHERE directory=? AND name=?').run(directory, name));
+export function backups(root: string): string[] {
+  return connection(root).prepare('SELECT id FROM restart_backups ORDER BY id').all().map((row: any) => String(row.id));
 }

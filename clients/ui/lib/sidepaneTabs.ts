@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, on, type Accessor } from "solid
 import type { SidepaneOpening } from "../plugins/types";
 import type { SessionSummary } from "../types";
 import type { SubagentTarget } from "./subagentNavigation";
+import { required } from "./required";
 
 export interface SidepaneTab { key: string; kind: string; session: SessionSummary; label: string; running: boolean }
 
@@ -58,7 +59,7 @@ export function createSidepaneTabs(options: Options) {
     const children = new Map<string, SessionSummary[]>();
 
     for (const session of known.values()) {
-      if (!session.auxiliaryParentId) continue;
+      if (!session.auxiliaryParentId || !session.auxiliaryKind) continue;
       const parent = `${session.hostId ?? "local"}:${session.auxiliaryParentId}`;
       children.set(parent, [...children.get(parent) ?? [], session]);
     }
@@ -84,7 +85,7 @@ export function createSidepaneTabs(options: Options) {
   }));
 
   const agents = createMemo<SidepaneTab[]>(() => auxiliaryTree()
-    .map(session => ({ key: sessionKey(session), kind: session.auxiliaryKind ?? "btw", session, label: tabLabel(session), running: options.running(session) })));
+    .map(session => ({ key: sessionKey(session), kind: required(session.auxiliaryKind), session, label: tabLabel(session), running: options.running(session) })));
   const tabs = createMemo<SidepaneTab[]>(() => agents().filter(tab => tab.kind !== "subagent" || pinned().has(tab.key)));
 
   const selected = createMemo(() => tabs().find(tab => tab.key === selectedKey()) ?? tabs()[0]);

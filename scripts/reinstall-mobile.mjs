@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { developmentEndpointKey } from '../protocol/connection.ts';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -62,14 +63,6 @@ function buildRelease() {
   return signed;
 }
 
-function endpointKey(project) {
-  let key = 0xcbf29ce484222325n;
-
-  for (const byte of Buffer.from(project.replace(/\/+$/, '') + '/src-tauri')) key = BigInt.asUintN(64, (key ^ BigInt(byte)) * 0x100000001b3n);
-
-  return key.toString(16).padStart(16, '0');
-}
-
 function servePort(key) {
   return 20000 + Number(BigInt('0x' + key) % 40000n);
 }
@@ -95,7 +88,7 @@ function serveStatus() {
 function worktreePorts() {
   const worktrees = run('git', ['worktree', 'list', '--porcelain'], true).split('\n').filter(line => line.startsWith('worktree ')).map(line => line.slice('worktree '.length));
 
-  return new Map(worktrees.map(path => { const key = endpointKey(path); return [key, servePort(key)]; }));
+  return new Map(worktrees.map(path => { const key = developmentEndpointKey(path); return [key, servePort(key)]; }));
 }
 
 // Removes Serve ports that point to development daemons of deleted worktrees, or to an old port of a live worktree.

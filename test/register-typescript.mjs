@@ -40,6 +40,11 @@ registerHooks({
     return result;
   },
   resolve(specifier, context, nextResolve) {
+    if (specifier === 'piop-builtin-plugins') return nextResolve(new URL('./builtin-plugins.mjs', import.meta.url).href, context);
+
+    // Plugin client parts get this module from the app.
+    if (specifier === 'piop/plugin') return nextResolve(new URL('../clients/ui/plugins/api.ts', import.meta.url).href, context);
+
     if (specifier === 'solid-js' || specifier.startsWith('solid-js/')) return nextResolve(specifier, { ...context, conditions: [...context.conditions.filter(condition => condition !== 'node'), 'browser'] });
 
     if (['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-serialize'].includes(specifier)) return nextResolve(new URL('./terminal-runtime.mjs', import.meta.url).href, context);

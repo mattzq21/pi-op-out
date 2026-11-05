@@ -1,4 +1,4 @@
-import { lockSync } from "../../../resources/file-lock.cjs";
+import * as StorageLocks from "../../../resources/storage-locks.cjs";
 import { begin as beginDirectoryRecovery, finish as finishDirectoryRecovery, recoverPublished } from "../../../resources/piop-storage/goal-directory-recovery.cjs";
 import { read as readDependencies, textContents, savePreparedText, removePreparedText } from "../../../resources/piop-storage/goal-dependencies.cjs";
 import { markCleanup } from "../../../resources/session-database.cjs";
@@ -6,13 +6,11 @@ import { link, mkdir, open, rename, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Type, type Static } from "typebox";
-import { Parse } from "typebox/value";
-import { read as readPreparation } from "../../../resources/piop-storage/goal-prepared-files.cjs";
-import { save as savePreparation } from "../../../resources/piop-storage/goal-preparations.cjs";
+import { parsePreparation, read as readPreparation, save as savePreparation, type GoalAttachment, type GoalDraft, type GoalPreparation } from "../../../resources/piop-storage/goal-preparations.cjs";
 import { allocate as allocateGoalDirectory } from "../../../resources/piop-storage/goal-ownership.cjs";
 import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "../../../resources/piop-storage/goal-assets.cjs";
 import { acquireReferencePublicationLockAsync } from "../../../resources/piop-storage/reference-publication-lock.cjs";
+import { requestRetention } from "../../retention_requests";
 
 export interface GoalPlace { file: string; sessionId: string; cwd: string }
 
@@ -22,19 +20,8 @@ export function validateObjective(value: string) {
   return objective;
 }
 
-const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });
+export type { GoalPreparation };
 
-const attachmentSchema = Type.Object({ name: Type.String(), text: Type.Optional(Type.String()), image: Type.Optional(Type.Union([Type.Null(), imageSchema])) });
-
-const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Array(attachmentSchema) });
-
-const savedFileSchema = Type.Object({ name: Type.String({ pattern: "^(?:goal-objective\\.md|attachment-[1-9][0-9]*\\.(?:txt|png|jpg|gif|webp))$" }), data: Type.String(), digest: Type.String({ pattern: "^[a-f0-9]{64}$" }) });
-
-const preparationSchema = Type.Object({ version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(), sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()), input: Type.Optional(draftSchema), files: Type.Optional(Type.Array(savedFileSchema)) });
-
-export type GoalPreparation = Static<typeof preparationSchema>;
-
-type Attachment = Static<typeof attachmentSchema>;
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -51,17 +38,15 @@ async function withGoalPublication<T>(place: GoalPlace, operation: () => Promise
   finally { publication(); }
 }
 
-function ownGoalDirectory(directory: string) {
-  const descriptor = openSync(join(directory, "allocation.lock"), constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+// Keeps deferred cleanup away from goal attachments while they are prepared, under each path that they have meanwhile.
+function ownGoalDirectory(...directories: string[]) {
+  const releases: Array<() => void> = [];
 
   try {
-    if (!fstatSync(descriptor).isFile()) throw new Error("Invalid goal attachment ownership lock");
-    const child = lockSync(descriptor, false, false);
+    for (const directory of directories) releases.push(StorageLocks.lockSync("goal-allocation:" + directory, { busy: "Goal attachments are being cleaned up. Try again." })!);
+  } catch (error) { for (const release of releases.reverse()) release(); throw error; }
 
-    if (!child) throw new Error("Could not own goal attachments");
-
-    return () => closeSync(descriptor);
-  } catch (error) { closeSync(descriptor); throw error; }
+  return () => { for (const release of releases.reverse()) release(); };
 }
 
 function markGoalAllocation(place: GoalPlace) {
@@ -110,7 +95,7 @@ async function restoreGoalFiles(preparation: GoalPreparation, directory: string,
   if (!preparation.input) return restoreSavedFiles(preparation, directory);
 
   if (hash(JSON.stringify(preparation.input)) !== preparation.digest) throw new Error("Saved goal input changed");
-  const release = ownGoalDirectory(directory);
+  const release = ownGoalDirectory(...new Set([directory, destination]));
 
   try {
     const saved = await saveObjective(directory, destination, preparation.input, true);
@@ -144,7 +129,7 @@ async function restoreGoalDirectory(place: GoalPlace, preparation: GoalPreparati
 
     await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
     const recovery = beginDirectoryRecovery(root, directory);
-    const saved = Parse(preparationSchema, JSON.parse(recovery.preparation));
+    const saved = parsePreparation(recovery.preparation);
     await restoreGoalFiles(saved, recovery.staging, directory);
     await syncDirectory(recovery.staging);
 
@@ -154,7 +139,7 @@ async function restoreGoalDirectory(place: GoalPlace, preparation: GoalPreparati
   } finally { release(); }
 }
 
-function retainGoalInput(place: GoalPlace, preparation: GoalPreparation, directory: string, input: Static<typeof draftSchema>) {
+function retainGoalInput(place: GoalPlace, preparation: GoalPreparation, directory: string, input: GoalDraft) {
   if (preparation.input) return;
   preparation.input = input;
   savePreparation(storageRoot(place), directory, preparation);
@@ -166,7 +151,7 @@ async function readGoalPreparation(place: GoalPlace, id: string) {
   const saved = readPreparation(root, preparationDirectory(place, id));
 
   if (saved === undefined) return;
-  const preparation = Parse(preparationSchema, saved);
+  const preparation = saved;
 
   if (preparation.submissionId !== id) throw new Error("Saved goal preparation identity is inconsistent");
   validateObjective(preparation.objective);
@@ -211,7 +196,7 @@ export async function restoreGoalAttachments(place: GoalPlace, objective: string
       recoverPublished(root, directory);
       const record = readPreparation(root, directory);
 
-      if (record !== undefined) await restoreGoalDirectory(place, Parse(preparationSchema, record), directory);
+      if (record !== undefined) await restoreGoalDirectory(place, record, directory);
       const dependencies = readDependencies(root, directory);
 
       for (const dependency of dependencies?.directories ?? []) directories.add(dependency.path);
@@ -228,7 +213,7 @@ export async function materializeGoal(place: GoalPlace, value: string, submissio
 }
 
 async function materializeLocked(place: GoalPlace, value: string, submissionId: string | undefined) {
-  const draft = { objective: value, attachments: [] as Attachment[] };
+  const draft = { objective: value, attachments: [] as GoalAttachment[] };
 
   if (!draft.objective.trim()) throw new Error("Goal objective must not be empty.");
   const digest = hash(JSON.stringify(draft));
@@ -257,7 +242,7 @@ async function materializeLocked(place: GoalPlace, value: string, submissionId: 
   let release: (() => void) | undefined;
 
   try {
-    release = ownGoalDirectory(staging);
+    release = ownGoalDirectory(staging, directory);
     const { objective, textFiles } = await saveObjective(staging, directory, draft);
     const preparation: GoalPreparation = { version: 1, submissionId: id, digest, objective, input: draft, sessionId: place.sessionId, sessionPath: place.file, cwd: place.cwd };
     savedIdentity = savePreparedText(profile, staging, textFiles, JSON.stringify(preparation), directory);
@@ -272,6 +257,8 @@ async function materializeLocked(place: GoalPlace, value: string, submissionId: 
     release?.();
     await rm(staging, { recursive: true, force: true });
     removePreparedText(profile, staging, allocation.identity);
+    // The goal cleanup request can end now, or collect what a failed preparation left.
+    requestRetention(profile);
 
     if (!published && savedIdentity) {
       removePreparedText(profile, directory, savedIdentity);
@@ -279,7 +266,7 @@ async function materializeLocked(place: GoalPlace, value: string, submissionId: 
   }
 }
 
-async function saveObjective(staging: string, directory: string, draft: Static<typeof draftSchema>, restore = false) {
+async function saveObjective(staging: string, directory: string, draft: GoalDraft, restore = false) {
   if (!draft.attachments.length && [...draft.objective.trim()].length <= 4000) return { objective: validateObjective(draft.objective), textFiles: [] };
   const references = await Promise.all(draft.attachments.map((attachment, index) => saveAttachment(staging, directory, attachment, index, restore)));
   const path = join(directory, "goal-objective.md");
@@ -291,7 +278,7 @@ async function saveObjective(staging: string, directory: string, draft: Static<t
   };
 }
 
-async function saveAttachment(staging: string, directory: string, attachment: Attachment, index: number, restore: boolean) {
+async function saveAttachment(staging: string, directory: string, attachment: GoalAttachment, index: number, restore: boolean) {
   const extensions = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
   const image = attachment.image;
 

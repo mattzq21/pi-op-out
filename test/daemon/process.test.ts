@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { daemonExecutable, fakePi, fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
 import { runLimited } from '../../daemon/src/process_io';
@@ -14,9 +14,9 @@ function publicSession(home: string, options: { cwd: string; folder: string }): 
   }));
 }
 
-function installFakePi(home: string): void {
+function installFakePi(home: string): string {
   const bin = join(home, '.local/bin');
-  fakePi(bin);
+  const cli = fakePi(home);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
@@ -31,15 +31,17 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: sessionFile ? fs.readFileSync(sessionFile, 'utf8').trim().split('\\n').filter(Boolean).map(line => JSON.parse(line)) : [] } : null }) + '\\n');
 });
 `);
+  return cli;
 }
 
 type Launch = { args: string[]; cwd: string; pid: number; env: Record<string, string> };
 const launches = (home: string): Launch[] => existsSync(join(home, 'launches.jsonl')) ? readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
 
 let daemon: TestDaemon;
+let piCli: string;
 beforeAll(async () => {
   daemon = await startDaemon();
-  installFakePi(daemon.home);
+  piCli = installFakePi(daemon.home);
 }, 60_000);
 afterAll(() => daemon?.stop());
 
@@ -50,22 +52,21 @@ test('Pi starts in the requested directory with each argument kept whole and the
   await daemon.invoke('start_pi', { runtimeId: 'launch-runtime', clientId: 'launch-client', cwd, sessionPath: session.path });
   const launch = launches(daemon.home).at(-1)!;
   expect(launch.cwd).toBe(cwd);
-  expect(launch.args.slice(1, 4)).toEqual([join(daemon.home, '.local/bin/pi'), '--mode', 'rpc']);
+  expect(launch.args.slice(1, 4)).toEqual([realpathSync(piCli), '--mode', 'rpc']);
   expect(launch.args[launch.args.lastIndexOf('--session') + 1]).toBe(session.path);
   expect(launch.env).toEqual({ HOME: daemon.home, PIOP_STORAGE_DIRECTORY: '.piop', PI_CODING_AGENT_DIR: join(daemon.home, '.piop') });
   await daemon.invoke('stop_pi', { runtimeId: 'launch-runtime' });
 });
 
 test('Pi of another version is not started, and the error names the needed version', async () => {
-  const bin = join(daemon.home, '.local/bin');
   const session = publicSession(daemon.home, { cwd: daemon.home, folder: 'pi version' });
   const count = launches(daemon.home).length;
-  fakePi(bin, '0.0.1');
+  fakePi(daemon.home, '0.0.1');
   try {
     expect(await daemon.failure('start_pi', { runtimeId: 'version-runtime', clientId: 'version-client', cwd: daemon.home, sessionPath: session.path }))
       .toMatch(/^Piop needs Pi \d+\.\d+\.\d+, but found Pi 0\.0\.1 at /);
     expect(launches(daemon.home)).toHaveLength(count);
-  } finally { fakePi(bin); }
+  } finally { fakePi(daemon.home); }
 });
 
 test('a local Pi stays attached while remote machines change, and an unknown machine is rejected', async () => {

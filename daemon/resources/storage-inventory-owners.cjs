@@ -1,7 +1,7 @@
 const path = require('node:path');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { addRoot, legacyRecovery } = require('./storage-inventory-roots.cjs');
+const { addRoot } = require('./storage-inventory-roots.cjs');
 const { validGoalPath, observeGoalContract } = require('./storage-inventory-goals.cjs');
 
 const safeId = value => value.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
@@ -36,11 +36,6 @@ function recordSession(discovery, details, candidate, root) {
   }
 
   addRoot(discovery.cwds, details.cwd, source, 'referenced', [owner]);
-
-  if (legacyRecovery(details.cwd || '')) {
-    const root = path.basename(details.cwd) === 'workdir' ? path.dirname(details.cwd) : details.cwd;
-    addRoot(discovery.legacy, root, source, 'unattributed', [owner]);
-  }
 
   recordGoals(discovery, details, owner, candidate);
 }

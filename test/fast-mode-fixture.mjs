@@ -9,7 +9,7 @@ import { installBroker } from './runtime-events-fixture.mjs';
 let bundle;
 function compiledFastMode() {
   return bundle ??= build({
-    entryPoints: ['extensions/piop-openai-fast-mode/src/index.ts'], write: false,
+    entryPoints: ['pi-extensions/piop-openai-fast-mode/src/index.ts'], write: false,
     bundle: true, format: 'esm', platform: 'node', target: 'node22', logLevel: 'silent',
     plugins: [storageSchemaImports(), { name: 'external-pi-sdk', setup(builder) {
       builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: 'sdk', namespace: 'fixture' }));

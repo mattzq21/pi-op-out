@@ -20,7 +20,7 @@ let pi: { answers: Record<string, any> };
 
 function installFakePi(home: string, unknownHost: string): void {
   const bin = join(home, '.local/bin');
-  fakePi(bin);
+  fakePi(home);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');

@@ -142,25 +142,17 @@ function acknowledge(journal) {
   return true;
 }
 
+// The locks of the parent conversation, as the daemon's conversation ownership takes them. A parent that a client holds is
+// not changed here; its runtime saves the link.
 function parentLocks(journal) {
   const key = io.hash(journal.link.record.parentSessionId.toLowerCase()).slice(0, 40);
+  const control = io.claim('conversation:' + key);
 
-  const claims = path.join(journal.root, 'session-claims');
+  if (control === null) return null;
+  const mutation = io.claim('conversation-mutation:' + key);
 
-  const ownership = path.join(journal.root, 'conversation-ownership');
-  io.mkdir(claims);
-  io.mkdir(ownership);
-  const worker = io.claim(path.join(claims, `id-${key}.lock`));
-
-  if (worker === null) return null;
-
-  try {
-    const control = io.claim(path.join(ownership, `${key}.lock`));
-
-    if (control !== null) return [worker, control];
-  } catch (error) { fs.closeSync(worker); throw error; }
-
-  fs.closeSync(worker);
+  if (mutation !== null) return [mutation, control];
+  control();
 
   return null;
 }
@@ -190,13 +182,13 @@ function reattachLocked(journal) {
 }
 
 function reattach(journal) {
-  if (!Check(linkSchema, journal.link) || !io.writerDead(journal.writer)) return false;
+  if (!Check(linkSchema, journal.link)) return false;
   const locks = parentLocks(journal);
 
   if (!locks) return false;
 
   try { return reattachLocked(journal); }
-  finally { for (const descriptor of locks) fs.closeSync(descriptor); }
+  finally { for (const release of locks) release(); }
 }
 
 module.exports = { recordSchema, linkSchema, prepare, acknowledge, reattach, currentRecord };

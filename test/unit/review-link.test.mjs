@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import { createComponent } from 'solid-js';
 import { act, installDom, renderComponent } from '../dom.mjs';
-import { ReviewLink } from '../../clients/ui/plugins/review/ReviewLink.tsx';
+import { ReviewLink } from '../../plugins/review/client/ReviewLink.tsx';
 import { AuxiliaryChatsContext } from '../../clients/ui/lib/auxiliaryChats.ts';
 import { PluginMessageContext } from '../../clients/ui/plugins/messages.ts';
 

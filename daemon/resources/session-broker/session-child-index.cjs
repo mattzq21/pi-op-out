@@ -6,6 +6,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('../piop-storage/session-publication-io.cjs');
 const tables = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 
 const childSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String(), kind: Type.String({ minLength: 1 }) });
 
@@ -42,12 +43,12 @@ function write(db, value) {
   }
 }
 
-function store(root, value) {
+const store = onMainThread('session-child-index.store', (root, value) => {
   if (!Check(indexSchema, value)) throw new Error('Invalid conversation child index');
   const db = tables.connection(root);
 
   tables.transaction(db, 'IMMEDIATE', () => write(db, value));
-}
+});
 
 function ensure(root, sessionId, sessionPath, complete = false) {
   if (sessionPath) tables.registerPath(root, sessionId, sessionPath);
@@ -62,7 +63,7 @@ function ensure(root, sessionId, sessionPath, complete = false) {
   return value;
 }
 
-function add(root, parentSessionId, parentSessionPath, child) {
+const add = onMainThread('session-child-index.add', (root, parentSessionId, parentSessionPath, child) => {
   const value = { version: 1, sessionId: parentSessionId, sessionPath: parentSessionPath ?? '', complete: false, children: [child] };
 
   if (!Check(indexSchema, value)) throw new Error('Invalid conversation child index');
@@ -75,7 +76,7 @@ function add(root, parentSessionId, parentSessionPath, child) {
       ON CONFLICT(parent_id, child_id) DO UPDATE SET kind=excluded.kind`)
       .run(parentSessionId, child.sessionId, child.kind);
   });
-}
+});
 
 function registerTranscript(root, sessionPath, body) {
   const entries = stateRecords.merge(sessionPath, body.trim().split('\n').map(JSON.parse));

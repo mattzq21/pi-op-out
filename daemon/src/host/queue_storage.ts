@@ -2,7 +2,6 @@ import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction, type Database } from '../util/db';
-import { lockPath, type FileLock } from '../util/flock';
 import * as Publication from './reference_publication';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
@@ -15,14 +14,6 @@ export function parseIdentity(id: string): string {
   const hex = value.replaceAll('-', '').toLowerCase();
   if (value.includes('-') && value.length !== 36) throw new Error('Invalid queued-input session identity');
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
-}
-
-export async function temporaryLock(root: string): Promise<FileLock> {
-  ensurePrivateDir(root);
-  const path = join(root, 'queued-input.lock');
-  const lock = await lockPath(path, { blocking: true, timeoutMs: 10_000, nofollow: true, regularFile: 'Invalid queued-input storage lock' });
-  if (!lock) throw new Error('Queued-input storage is locked by another process; try again');
-  return lock;
 }
 
 const saves = new Map<string, Promise<void>>();
@@ -88,12 +79,9 @@ export class QueueStorage {
   async saveHeld(held: boolean): Promise<void> {
     const root = this.root();
     return inOrder(resolve(root), async () => {
-      const lock = await temporaryLock(root);
-      try {
-        const db = Registry.connection(root);
-        if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
-        else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
-      } finally { lock.release(); }
+      const db = Registry.connection(root);
+      if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
+      else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
     });
   }
 
@@ -123,12 +111,9 @@ export class QueueStorage {
     const root = this.root();
     const publication = await Publication.lock(root);
     try {
-      const storage = await temporaryLock(root);
-      try {
-        await Publication.validateNewReferences(root, items, this.load());
-        const db = Registry.connection(root);
-        transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin));
-      } finally { storage.release(); }
+      await Publication.validateNewReferences(root, items, this.load());
+      const db = Registry.connection(root);
+      transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin));
     } finally { publication.release(); }
   }
 

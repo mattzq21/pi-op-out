@@ -18,7 +18,7 @@ const files = (folder: string): string[] => readdirSync(folder, { recursive: tru
 
 function installFakePi(home: string): void {
   const bin = join(home, '.local/bin');
-  fakePi(bin);
+  fakePi(home);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
@@ -28,7 +28,7 @@ try {
   const resources = JSON.parse(process.env.PIOP_AGENT_RESOURCES);
   launch.skills = resources.skills;
   launch.tools = resources.tools;
-  launch.contextSettings = require(${JSON.stringify(join(root, 'daemon/resources/session-broker/app-settings.cjs'))}).readFile(process.env.PIOP_CONTEXT_CAP_SETTINGS_PATH);
+  launch.contextSettings = JSON.parse(process.env.PIOP_CONTEXT_CAP_SETTINGS);
 } catch (error) { launch.readError = String(error?.message ?? error); }
 fs.appendFileSync(path.join(process.env.HOME, 'launches.jsonl'), JSON.stringify(launch) + '\\n');
 const sessionFile = args.includes('--session') ? args[args.lastIndexOf('--session') + 1] : undefined;
@@ -149,7 +149,7 @@ test('a started Pi receives the reported tools, skill lists and separate context
   mkdirSync(skill, { recursive: true });
   writeFileSync(join(skill, 'SKILL.md'), '---\nname: spaced\n---\n');
   await daemon.invoke('load_app_settings', { refreshSkills: true });
-  recordTools([{ name: 'web_search', description: 'Search', source: '/ext/web-search.ts' }, { name: 'read', description: 'Read', source: 'builtin:read' }], join(storage, 'settings.json'));
+  recordTools([{ name: 'web_search', description: 'Search', source: '/ext/web-search.ts' }, { name: 'read', description: 'Read', source: 'builtin:read' }], storage);
   for (const enabled of [true, false]) {
     const settings = await daemon.invoke('load_app_settings');
     for (const entry of settings.skills) entry.enabled = enabled;
