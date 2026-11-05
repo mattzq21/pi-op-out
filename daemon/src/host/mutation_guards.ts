@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { flag, text } from './json';
 import { ownershipError, type Guard } from './ownership';
-import { clearSaved } from './queue_storage';
+import { clearSaved } from './queue';
 import { announceRemoved } from './readonly_views';
 import type { Host } from './controller';
 

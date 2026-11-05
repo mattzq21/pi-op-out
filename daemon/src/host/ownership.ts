@@ -3,11 +3,11 @@ import { sessionName } from "../../resources/session-broker/session-names.cjs";
 import { randomUUID } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
-import * as ConversationStorage from '../conversation_storage';
-import * as RestoreRecovery from '../restore_recovery';
+import * as ConversationStorage from '../storage';
+import { recoverPending } from '../storage';
 import * as Registry from '../session_registry';
 import * as ChildIndex from '../../resources/session-broker/session-child-index.cjs';
-import { getProjectRepository } from '../project_repositories';
+import { getProjectRepository } from '../projects';
 import * as StorageLocks from '../../resources/storage-locks.cjs';
 import { flag } from './json';
 import { readHeaderLine } from './protocol';
@@ -45,7 +45,7 @@ export class Guard {
   }
 
   async restoreFinished(ownership: ConversationOwnership, path: string | null | undefined): Promise<void> {
-    try { await RestoreRecovery.recover(ownership.root); } catch (error) { this.drop(); throw error; }
+    try { await recoverPending(ownership.root); } catch (error) { this.drop(); throw error; }
     let saved: SavedConversation | null;
     try { saved = ownership.locate(this.id, path, false, true); } catch (error) { this.drop(); throw error; }
     if (saved) return this.restored(ownership, saved.path);
@@ -94,7 +94,7 @@ export class ConversationOwnership {
   private constructor(readonly root: string, private revocation: Revocation) {}
 
   static async create(home: string, storage: string, revocation: Revocation): Promise<ConversationOwnership> {
-    await RestoreRecovery.recover(join(home, storage));
+    await recoverPending(join(home, storage));
     return new ConversationOwnership(join(home, storage), revocation);
   }
 

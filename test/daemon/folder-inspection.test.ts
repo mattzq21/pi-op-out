@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inspectSessionProjectsWith } from '../../daemon/src/folder_inspection';
+import { inspectSessionProjectsWith } from '../../daemon/src/projects/folder_inspection';
 import type { SessionSummary } from '../../daemon/src/types';
 
 const session = (cwd: string) => ({ id: cwd, cwd, cwdExists: true } as SessionSummary);

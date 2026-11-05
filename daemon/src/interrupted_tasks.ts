@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import { buildPiCommand, launchSpec } from './pi_launch';
+import { buildPiCommand, launchSpec } from './pi';
 import { loadAppSettings } from './settings';
 import { localHost } from './local_host';
 import type { OrchestrationRequest } from './host/index';

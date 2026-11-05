@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type * as system from '../../daemon/src/tailscale_system';
+import type * as system from '../../daemon/src/clients/tailscale_system';
 
 const read = (name: string) => readFileSync(join(process.env.HOME!, name), 'utf8');
 

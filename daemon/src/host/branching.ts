@@ -1,7 +1,7 @@
 import { basename, isAbsolute, join } from 'node:path';
-import { getProjectRepository, rememberProjectRepository } from '../project_repositories';
-import * as Worktrees from '../chat_worktree_records';
-import { publishBranchHistory } from '../chat_branch_operations';
+import { getProjectRepository, rememberProjectRepository } from '../projects';
+import * as Worktrees from '../worktrees';
+import { publishBranchHistory } from '../worktrees';
 import * as Registry from '../session_registry';
 import { flag, kind, text } from './json';
 import { Guard, ownershipError } from './ownership';

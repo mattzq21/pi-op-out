@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { rememberProjectRepository, getProjectRepository, refreshProjectRepository } from '../../daemon/src/project_repositories';
+import { rememberProjectRepository, getProjectRepository, refreshProjectRepository } from '../../daemon/src/projects/repositories';
 
 test('repository status changes only on an explicit project or new-chat check', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'piop-project-git-'));

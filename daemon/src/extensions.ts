@@ -5,7 +5,7 @@ import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { ensurePrivateDir } from './private_fs';
 import * as R from './resources';
-import * as Contributions from './plugin_contributions';
+import * as Contributions from './plugins';
 import type { AppSettings } from './settings_types';
 import { errorText } from './util/sync';
 

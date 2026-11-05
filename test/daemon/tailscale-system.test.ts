@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { connect, createServer, type Socket } from 'node:net';
 import { join } from 'node:path';
-import { peerCredentials } from '../../daemon/src/tailscale_system';
+import { peerCredentials } from '../../daemon/src/clients/tailscale_system';
 import { daemonExecutable, temporaryDirectory } from './harness';
 import { readFileSync } from 'node:fs';
 

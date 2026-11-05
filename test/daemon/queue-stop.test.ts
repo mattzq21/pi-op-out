@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { SessionQueue } from '../../daemon/src/host/queue';
+import { SessionQueue } from '../../daemon/src/host/queue/queue';
 
 // Pi calls back into the queue while it stops: a pull still in flight from its loop, then the release of unused messages.
 function chat() {

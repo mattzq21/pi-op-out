@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, expect, test } from 'bun:test';
-import * as Worktrees from '../../daemon/src/chat_worktrees';
+import * as Worktrees from '../../daemon/src/worktrees/worktrees';
 import { temporaryDirectory } from './harness';
 
 beforeAll(() => {

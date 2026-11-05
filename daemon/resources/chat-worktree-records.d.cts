@@ -1,4 +1,4 @@
-import type { ChatWorktreeRecord, NewChatWorktree } from '../src/chat_worktree_records';
+import type { ChatWorktreeRecord, NewChatWorktree } from '../src/worktrees/records';
 
 export function archiveRef(chatId: string): string;
 export function check(record: unknown): ChatWorktreeRecord;
