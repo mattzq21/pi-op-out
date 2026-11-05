@@ -1,214 +1,24 @@
-import sessionRegistry from "../resources/session-registry.cjs?raw";
-import storageRecovery from "../resources/piop-storage/recovery.cjs?raw";
-import storageIdentities from "../resources/piop-storage/identities.mjs?raw";
-import storageBootstrap from "../resources/piop-storage/bootstrap.mjs?raw";
-import storageIndex from "../resources/piop-storage/index.ts?raw";
-import storageInterface from "../resources/piop-storage/interface.ts?raw";
-import sessionStorageRaw from "../resources/piop-storage/session-storage.mjs?raw";
-import storageFile from "../resources/storage-file.mjs?raw";
-import agentResources from "../../extensions/piop-define-agents/resources.ts?raw";
-import fileLockSource from '../resources/file-lock.cjs?raw';
-import sessionDatabase from '../resources/session-database.cjs?raw';
-import appSettingsCjs from '../resources/session-broker/app-settings.cjs?raw';
-import transcriptReferences from '../resources/transcript-references.cjs?raw';
-import sdkStorageRaw from '../resources/sdk-storage.mjs?raw';
 import agentCommands from '../resources/agent-commands.json?raw';
-import sdkStorageBundleRaw from '../resources/sdk-storage.bundle.mjs?raw';
-import providerSdk from '../resources/provider-sdk.mjs?raw';
-import fastModelDiscovery from '../resources/fast-model-discovery.mjs?raw';
-import sessionBroker from '../resources/session-broker.ts?raw';
-import hooksExtendedIndex from '../resources/hooks-extended/index.ts?raw';
-import hooksExtendedInterface from '../resources/hooks-extended/interface.ts?raw';
-import sdkSessionList from '../resources/sdk-session-list.mjs?raw';
-import runtimeConfiguration from '../resources/runtime-configuration.cjs?raw';
-import runtimeBridge from '../resources/runtime-bridge.cjs?raw';
-import queuePull from '../resources/queue-pull.cjs?raw';
-import runtimeAvailability from '../resources/runtime-availability.cjs?raw';
-import mcpConnections from '../resources/mcp-connections.cjs?raw';
-import hooksAvailability from '../resources/hooks-extended/availability.ts?raw';
-import mcpSchemaBundle from '../resources/mcp-schema.bundle.mjs?raw';
-import mcpBridgeBundle from '../resources/mcp-bridge.bundle.mjs?raw';
-import fastModeBundle from '../resources/fast-mode.bundle.mjs?raw';
-import providersRefreshExtension from '../../extensions/piop-providers-refresh/index.ts?raw';
-import ocxProviderExtension from '../../extensions/piop-ocx-provider/index.ts?raw';
-import ocxProviderModule from '../../extensions/piop-ocx-provider/ocx-provider.mjs?raw';
-import openaiCacheForkExtension from '../../extensions/piop-openai-cache-fork/index.ts?raw';
-import agentState from '../../extensions/piop-define-agents/state.ts?raw';
-import agentPrompts from '../../extensions/piop-define-agents/prompts.ts?raw';
-import agentProfiles from '../../extensions/piop-define-agents/profiles.ts?raw';
-import agentMcpConfig from '../../extensions/piop-define-agents/mcp-config.ts?raw';
-import definedAgentsExtension from '../../extensions/piop-define-agents/index.ts?raw';
-import agentExtensionLoader from '../../extensions/piop-define-agents/extension-loader.ts?raw';
-import agentFastModels from '../../extensions/piop-define-agents/fast-models.ts?raw';
-import contextWindowCapExtension from '../../extensions/piop-context-window-cap/index.ts?raw';
-import contextWindowCapDefaults from '../../extensions/piop-context-window-cap/defaults.ts?raw';
-import contextWindowCapInterface from '../../extensions/piop-context-window-cap/interface.ts?raw';
-import contextBarExtension from '../../extensions/piop-context-bar/index.ts?raw';
-import compactionTimingExtension from '../../extensions/piop-compaction-timing/index.ts?raw';
-import storageGoalRecovery from '../resources/piop-storage/goal-directory-recovery.cjs?raw';
-import brokerModule2 from '../resources/session-broker/app-settings.cjs?raw';
-import brokerModule4 from '../resources/session-broker/client.ts?raw';
-import brokerModule5 from '../resources/session-broker/conversation-location.ts?raw';
-import brokerModule7 from '../resources/session-broker/fast-mode.ts?raw';
-import storagePublication from '../resources/piop-storage/session-file.ts?raw';
-import brokerModule9 from '../resources/session-broker/session-child-index.cjs?raw';
-import brokerModule10 from '../resources/session-broker/session-child-index.d.cts?raw';
-import brokerSessionNames from '../resources/session-broker/session-names.cjs?raw';
-import brokerSessionNameTypes from '../resources/session-broker/session-names.d.cts?raw';
-import storagePublicationJournal from '../resources/piop-storage/session-publication.cjs?raw';
-import storagePublicationIoRaw from '../resources/piop-storage/session-publication-io.cjs?raw';
-import storagePublicationDependencies from '../resources/piop-storage/session-publication-dependencies.cjs?raw';
-import storageReviews from '../resources/piop-storage/review-publication.cjs?raw';
-import storageAuxiliaryCopies from '../resources/piop-storage/auxiliary-copies.cjs?raw';
-import storagePublicationTypes from '../resources/piop-storage/session-publication.d.cts?raw';
-import brokerModule17 from '../resources/session-broker/subagents.ts?raw';
-import brokerModule18 from '../resources/session-broker/subagent-state.ts?raw';
-import brokerModule19 from '../resources/session-broker/subagent-reconciliation.ts?raw';
-import brokerModule21 from '../resources/session-broker/orchestration.ts?raw';
-import brokerInputHold from '../resources/session-broker/input-hold.ts?raw';
-import brokerQueueTools from '../resources/session-broker/queue-tools.ts?raw';
-import brokerContextInsertions from '../resources/session-broker/context-insertions.ts?raw';
-import brokerQueueHold from '../resources/session-broker/queue-hold.ts?raw';
-import brokerPromptTools from '../resources/session-broker/prompt-tools.ts?raw';
-import brokerToolInventory from '../resources/session-broker/tool-inventory.ts?raw';
-import brokerAuxiliary from '../resources/session-broker/auxiliary.ts?raw';
-import storageMailbox from '../resources/piop-storage/durable-mailbox.ts?raw';
-import brokerModule23 from '../resources/session-broker/agent-profiles.ts?raw';
-import storageRuns from '../resources/piop-storage/subagent-results.ts?raw';
-import brokerModule29 from '../resources/session-broker/subagent-identity.ts?raw';
-import brokerModule30 from '../resources/session-broker/subagent-looks.ts?raw';
-import brokerSteering from '../resources/session-broker/steering.ts?raw';
-import sessionStateRecords from '../resources/piop-storage/session-records.cjs?raw';
-import goalsRecords from '../resources/piop-storage/goals.cjs?raw';
-import storageReferencesRaw from '../resources/piop-storage/reference-publication-lock.cjs?raw';
-import storageGoalDependencies from '../resources/piop-storage/goal-dependencies.cjs?raw';
-import storageGoalPreparedFiles from '../resources/piop-storage/goal-prepared-files.cjs?raw';
-import storageGoalPreparations from '../resources/piop-storage/goal-preparations.cjs?raw';
-import storageGoalOwnership from '../resources/piop-storage/goal-ownership.cjs?raw';
-import storageGoalAssetsRaw from '../resources/piop-storage/goal-assets.cjs?raw';
-import controlsIndex from '../resources/piop-controls/index.ts?raw';
-import controlsInterface from '../resources/piop-controls/interface.ts?raw';
-import controlsStop from '../resources/piop-controls/stop.ts?raw';
-import controlsFork from '../resources/piop-controls/fork.ts?raw';
-import controlsAuxiliaryCopy from '../resources/piop-controls/auxiliary-copy.ts?raw';
-import controlsCommands from '../resources/piop-controls/commands.ts?raw';
-import controlsFastMode from '../resources/piop-controls/fast-mode.ts?raw';
-import controlsSkills from '../resources/piop-controls/skills.ts?raw';
-import controlsSkillCalls from '../resources/piop-controls/skill-calls.ts?raw';
+import runtimeBridge from '../resources/runtime-bridge.cjs?node-program' with { type: 'text' };
+import providerSdk from '../resources/provider-sdk.mjs?node-program' with { type: 'text' };
+import ocx from '../../pi-extensions/piop-ocx-provider/index.ts?pi-extension' with { type: 'text' };
+import providersRefresh from '../../pi-extensions/piop-providers-refresh/index.ts?pi-extension' with { type: 'text' };
+import mcp from '../resources/mcp-bridge.ts?pi-extension' with { type: 'text' };
+import storage from '../resources/piop-storage/index.ts?pi-extension' with { type: 'text' };
+import hooks from '../resources/hooks-extended/index.ts?pi-extension' with { type: 'text' };
+import controls from '../resources/piop-controls/index.ts?pi-extension' with { type: 'text' };
+import broker from '../resources/session-broker.ts?pi-extension' with { type: 'text' };
+import compactionTiming from '../../pi-extensions/piop-compaction-timing/index.ts?pi-extension' with { type: 'text' };
+import contextWindowCap from '../../pi-extensions/piop-context-window-cap/index.ts?pi-extension' with { type: 'text' };
+import contextBar from '../../pi-extensions/piop-context-bar/index.ts?pi-extension' with { type: 'text' };
+import fastMode from '../../pi-extensions/piop-openai-fast-mode/src/index.ts?pi-extension' with { type: 'text' };
+import openaiCacheFork from '../../pi-extensions/piop-openai-cache-fork/index.ts?pi-extension' with { type: 'text' };
+import definedAgents from '../../pi-extensions/piop-define-agents/index.ts?pi-extension' with { type: 'text' };
+import skills from '../resources/piop-controls/skills.ts?pi-extension' with { type: 'text' };
 
+export { agentCommands, runtimeBridge, providerSdk };
 
-const bunEnvironment = 'process.env.PIOP_BUN = ' + JSON.stringify(process.execPath) + ';\n';
-const sdkStorageBundle = bunEnvironment + sdkStorageBundleRaw;
-const fileLockModule = fileLockSource
-  .replace("const { spawn, spawnSync } = require('node:child_process');", "import { spawn, spawnSync } from 'node:child_process';")
-  .replace('module.exports = { lockSync, lock, bunExecutable, shellLock };', 'export { lockSync, lock, bunExecutable, shellLock };');
-const fileLockUrl = 'data:text/javascript;base64,' + Buffer.from(fileLockModule).toString('base64');
-function embedFileLock(source: string): string {
-  return source
-    .replace(/from ["'][^"']*file-lock\.cjs["']/g, 'from ' + JSON.stringify(fileLockUrl))
-    .replace(/require\(['"][^'"]*file-lock\.cjs['"]\)/g, () => '(function () { const module = { exports: {} }; ' + fileLockSource + '; return module.exports; })()');
-}
-const sdkStorage = embedFileLock(sdkStorageRaw);
-const storagePublicationIo = embedFileLock(storagePublicationIoRaw);
-const storageReferences = embedFileLock(storageReferencesRaw);
-const storageGoalAssets = embedFileLock(storageGoalAssetsRaw);
-
-export {
-  sessionDatabase,
-  sessionRegistry,
-  appSettingsCjs,
-  transcriptReferences,
-  sdkStorage,
-  storageFile,
-  agentCommands,
-  sdkStorageBundle,
-  providerSdk,
-  fastModelDiscovery,
-  sessionBroker,
-  sdkSessionList,
-  runtimeConfiguration,
-  runtimeBridge,
-  queuePull,
-  runtimeAvailability,
-  mcpConnections,
-  mcpSchemaBundle,
-  mcpBridgeBundle,
-  fastModeBundle,
-  providersRefreshExtension,
-  ocxProviderExtension,
-  ocxProviderModule,
-  openaiCacheForkExtension,
-  agentState,
-  agentResources,
-  agentPrompts,
-  agentProfiles,
-  agentMcpConfig,
-  definedAgentsExtension,
-  agentExtensionLoader,
-  agentFastModels,
-  contextWindowCapExtension,
-  contextWindowCapInterface,
-  contextWindowCapDefaults,
-  contextBarExtension,
-  compactionTimingExtension,
+export const CORE_EXTENSIONS = {
+  ocx, providersRefresh, mcp, storage, hooks, controls, broker, compactionTiming,
+  contextWindowCap, contextBar, fastMode, openaiCacheFork, definedAgents, skills,
 };
-
-export const SESSION_BROKER_MODULES: Array<[string, string]> = [
-  ['app-settings.cjs', brokerModule2],
-  ['client.ts', brokerModule4],
-  ['conversation-location.ts', brokerModule5],
-  ['fast-mode.ts', brokerModule7],
-  ['session-child-index.cjs', brokerModule9],
-  ['session-child-index.d.cts', brokerModule10],
-  ['session-names.cjs', brokerSessionNames],
-  ['session-names.d.cts', brokerSessionNameTypes],
-  ['subagents.ts', brokerModule17],
-  ['subagent-state.ts', brokerModule18],
-  ['subagent-reconciliation.ts', brokerModule19],
-  ['orchestration.ts', brokerModule21],
-  ['input-hold.ts', brokerInputHold],
-  ['queue-hold.ts', brokerQueueHold],
-  ['prompt-tools.ts', brokerPromptTools],
-  ['queue-tools.ts', brokerQueueTools],
-  ['context-insertions.ts', brokerContextInsertions],
-  ['tool-inventory.ts', brokerToolInventory],
-  ['auxiliary.ts', brokerAuxiliary],
-  ['agent-profiles.ts', brokerModule23],
-  ['subagent-identity.ts', brokerModule29],
-  ['subagent-looks.ts', brokerModule30],
-  ['steering.ts', brokerSteering],
-];
-
-export const SESSION_EXTENSIONS: Array<[string, Array<[string, string]>]> = [
-  ['hooks-extended', [['index.ts', hooksExtendedIndex], ['interface.ts', hooksExtendedInterface], ['availability.ts', hooksAvailability]]],
-  ['piop-storage', [
-    ['index.ts', storageIndex],
-    ['recovery.cjs', storageRecovery],
-    ['identities.mjs', storageIdentities],
-    ['bootstrap.mjs', storageBootstrap],
-    ['interface.ts', storageInterface],
-    ['goals.cjs', goalsRecords],
-    ['session-records.cjs', sessionStateRecords],
-    ['session-storage.mjs', embedFileLock(sessionStorageRaw)],
-    ['goal-directory-recovery.cjs', storageGoalRecovery],
-    ['goal-assets.cjs', storageGoalAssets],
-    ['goal-dependencies.cjs', storageGoalDependencies],
-    ['goal-prepared-files.cjs', storageGoalPreparedFiles],
-    ['goal-preparations.cjs', storageGoalPreparations],
-    ['goal-ownership.cjs', storageGoalOwnership],
-    ['reference-publication-lock.cjs', storageReferences],
-    ['review-publication.cjs', storageReviews],
-    ['auxiliary-copies.cjs', storageAuxiliaryCopies],
-    ['durable-mailbox.ts', storageMailbox],
-    ['subagent-results.ts', storageRuns],
-    ['session-file.ts', storagePublication],
-    ['session-publication.cjs', storagePublicationJournal],
-    ['session-publication-io.cjs', storagePublicationIo],
-    ['session-publication-dependencies.cjs', storagePublicationDependencies],
-    ['session-publication.d.cts', storagePublicationTypes],
-  ]],
-  ['piop-controls', [
-    ['interface.ts', controlsInterface], ['stop.ts', controlsStop], ['fork.ts', controlsFork], ['auxiliary-copy.ts', controlsAuxiliaryCopy],
-    ['commands.ts', controlsCommands], ['fast-mode.ts', controlsFastMode], ['skill-calls.ts', controlsSkillCalls], ['skills.ts', controlsSkills], ['index.ts', controlsIndex],
-  ]],
-];

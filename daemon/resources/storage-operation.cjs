@@ -1,7 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { lockSync } = require('./file-lock.cjs');
-const { holdTransactionLock } = require('./piop-storage/session-publication-io.cjs');
+const storageLocks = require('./storage-locks.cjs');
 const { withStorage } = require('./piop-storage/maintenance.cjs');
 const transaction = require('./storage-transaction.cjs');
 
@@ -9,22 +8,28 @@ const busy = { state: 'skipped', reason: 'busy' };
 
 const cancelled = { state: 'cancelled' };
 
-function lockAll(locks, nonblocking) {
-  for (const descriptor of [locks.restore, locks.transactions]) {
-    if (!lockSync(descriptor, false, nonblocking)) return false;
-  }
+// The restore and session transaction locks of root. Code that the operation calls takes the transaction lock again.
+function lockAll(root, nonblocking) {
+  const restore = storageLocks.lockSync('restore:' + root, { wait: !nonblocking });
 
-  return true;
+  if (!restore) return undefined;
+  const transactions = storageLocks.lockSync('session-transactions:' + root, { wait: !nonblocking });
+
+  if (!transactions) { restore(); return undefined; }
+
+  return () => { transactions(); restore(); };
 }
 
 async function underStorageLock(context, nonblocking, operation) {
-  if (!lockAll(context.locks, nonblocking)) return busy;
+  const release = lockAll(context.root, nonblocking);
 
-  if (!context.begin()) return cancelled;
-  const release = holdTransactionLock(context.root, context.locks.transactions);
+  if (!release) return busy;
 
-  try { return await operation(); }
-  finally { release(); }
+  try {
+    if (!context.begin()) return cancelled;
+
+    return await operation();
+  } finally { release(); }
 }
 
 async function nonblocking(root, operation) {

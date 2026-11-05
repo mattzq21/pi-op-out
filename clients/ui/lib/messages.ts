@@ -1,5 +1,4 @@
 import type { ChatMessage } from "../types";
-import { pluginMessageMetadata } from "../plugins/messageMetadata";
 import { z } from "zod";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
@@ -7,11 +6,11 @@ const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
 
 export const GOAL_PROMPT = "piop-goal-context";
 
-export function isContextInjection(message: { role?: string; customType?: string }) {
-  return message.role === "custom" && (pluginMessageMetadata(message.customType)?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation", "piop-agent-message", GOAL_PROMPT].includes(message.customType ?? "")));
+export function isContextInjection(message: { role?: string; customType?: string; pluginMessage?: ChatMessage["pluginMessage"] }) {
+  return message.role === "custom" && (message.pluginMessage?.contextInjection ?? (!SYSTEM_MESSAGES.has(message.customType ?? "") && !["piop-subagent-result", "piop-session-operation", "piop-agent-message", GOAL_PROMPT].includes(message.customType ?? "")));
 }
 
-export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
+export type PiEntry = { type: string; id: string; parentId: string | null; message?: Partial<WireMessage>; customType?: string; pluginMessage?: ChatMessage["pluginMessage"]; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
 
 const entryIdentitySchema = z.object({ id: z.string() });
 
@@ -59,7 +58,7 @@ function messageTimestamp(source: WireMessage) {
 }
 
 function messageRole(source: WireMessage): ChatMessage['role'] {
-  const customRole = pluginMessageMetadata(source.customType)?.customRole;
+  const customRole = source.pluginMessage?.customRole;
 
   if (source.role === "custom" && customRole) return customRole;
   const isSystemMessage = source.role === "custom" && SYSTEM_MESSAGES.has(String(source.customType));
@@ -78,7 +77,7 @@ export function normalizeMessage(message: Partial<WireMessage> | null | undefine
 
   const normalized: ChatMessage = { ...source, id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? (source.isError ? "error" : "done") : undefined, timestamp: stamp };
 
-  const metadata = pluginMessageMetadata(source.customType);
+  const metadata = source.pluginMessage;
 
   if (metadata?.toolName !== undefined) normalized.toolName = metadata.toolName;
 
@@ -201,8 +200,8 @@ function compactionTokens(tokens: number) {
 }
 
 function customEntryMessage(entry: PiEntry): ChatMessage | undefined {
-  if (entry.type === "custom_message" && (entry.display !== false || isContextInjection({ role: "custom", customType: entry.customType }))) {
-    return normalizeMessage({ role: "custom", customType: entry.customType, details: entry.details, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
+  if (entry.type === "custom_message" && (entry.display !== false || isContextInjection({ role: "custom", customType: entry.customType, pluginMessage: entry.pluginMessage }))) {
+    return normalizeMessage({ role: "custom", customType: entry.customType, pluginMessage: entry.pluginMessage, details: entry.details, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
   }
 }
 

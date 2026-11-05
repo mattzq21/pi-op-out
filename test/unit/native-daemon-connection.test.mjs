@@ -76,12 +76,11 @@ test('remote daemons need an encrypted address; plain ws is allowed only on this
   assert.equal(await app.failure('list_sessions'), 'Remote daemons require wss://; ws:// is allowed only on loopback');
 });
 
-test('a lost connection fails waiting commands, closes open terminals and chats, and the next command reconnects', async t => {
+test('a lost connection fails waiting commands, tells the window once, and the next command reconnects', async t => {
   const buildId = await bundledBuild();
   let hold = false;
   const daemon = await fakeDaemon(t, { buildId, answer: request => hold && request.command === 'pi_command' ? undefined : request.command === 'start_pi' ? { owned: true } : null });
   const app = await desktop(t, daemon.url);
-  await app.invoke('start_terminal', { terminalId: 'term-1' });
   await app.invoke('start_pi', { runtimeId: 'chat-1' });
   hold = true;
   const messages = on(daemon.sockets[0], 'message', { signal: AbortSignal.timeout(10000) });
@@ -91,8 +90,8 @@ test('a lost connection fails waiting commands, closes open terminals and chats,
   }
   daemon.sockets[0].terminate();
   assert.match(await waiting, /^Disconnected from the Piop daemon \(.+\); the command may have completed\.$/);
-  const events = await until(async () => { const events = await app.events(); return events.length >= 2 && events; }, 'disconnect events');
-  assert.deepEqual(events.map(event => event.payload), [{ type: 'terminal_exit', terminalId: 'term-1' }, { runtimeId: 'chat-1', event: { type: 'disconnected' } }]);
+  const events = await until(async () => { const events = await app.events(); return events.length >= 1 && events; }, 'disconnect events');
+  assert.deepEqual(events.map(event => event.payload), [{ type: 'disconnected' }]);
 
   hold = false;
   assert.equal(await app.invoke('list_sessions'), null);

@@ -2,6 +2,7 @@ import { createSignal, onCleanup } from "solid-js";
 import { z } from "zod";
 import { captureDaemonTransport } from "./platform";
 import type { StateUpdate } from "./solid";
+import { clearBackgroundError, reportBackgroundError } from "./backgroundErrors";
 
 /** Per-client sidebar view state. The daemon keeps the shared order. */
 const layoutSchema = z.object({ collapsed: z.array(z.string()) });
@@ -56,7 +57,7 @@ export function createSidebarPersistence() {
   let queue = Promise.resolve();
   const database = Promise.resolve().then(openLayouts);
 
-  const failure = (reason: Error | string) => { if (!disposed) setError(`Sidebar preferences: ${(reason instanceof Error ? reason.message : String(reason))}`); };
+  const failure = (reason: Error | string) => { if (!disposed) { setError(`Sidebar preferences: ${(reason instanceof Error ? reason.message : String(reason))}`); reportBackgroundError("Could not save sidebar preferences", reason, "sidebar-preferences"); } };
 
   const publish = (record: LayoutRecord) => {
     if (disposed || record.revision < revision) return;
@@ -79,7 +80,7 @@ export function createSidebarPersistence() {
 
   window.addEventListener("storage", changed);
   void read().catch(reason => failure((reason instanceof Error ? reason.message : String(reason))));
-  onCleanup(() => { disposed = true; channel?.close(); window.removeEventListener("storage", changed); void queue.catch(() => undefined).then(() => database).then(value => value.close()).catch(() => undefined); });
+  onCleanup(() => { disposed = true; channel?.close(); window.removeEventListener("storage", changed); void queue.catch(() => undefined).then(() => database).then(value => value.close()).catch(reason => reportBackgroundError("Could not close sidebar storage", reason)); });
 
   const mutate = (update: (current: Layout) => Layout) => {
     queue = queue.catch(() => undefined).then(async () => {
@@ -92,7 +93,7 @@ export function createSidebarPersistence() {
 
       if (!disposed) channel?.postMessage(record.revision);
 
-      if (!disposed) setError(undefined);
+      if (!disposed) { setError(undefined); clearBackgroundError("sidebar-preferences"); }
     });
 
     void queue.catch(reason => failure((reason instanceof Error ? reason.message : String(reason))));

@@ -7,7 +7,7 @@ const { randomUUID } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('./session-publication-io.cjs');
-const reviews = require('./review-publication.cjs');
+const links = require('./auxiliary-link-publication.cjs');
 const dependencies = require('./session-publication-dependencies.cjs');
 const children = require('../session-broker/session-child-index.cjs');
 const names = require('../session-broker/session-names.cjs');
@@ -18,9 +18,9 @@ const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
 const journalSchema = Type.Object({
   version: Type.Literal(1), kind: Type.Literal('session-publication'), id: io.uuid, root: Type.String(), rootIdentity: identitySchema,
   target: Type.String(), directoryIdentity: identitySchema, temporary: Type.String(), sessionId: io.uuid,
-  bytes: Type.Integer({ minimum: 1 }), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), lock: Type.String(), lockIdentity: identitySchema,
-  writer: io.writerSchema, phase: Type.Union(['planned', 'writing', 'ready', 'linked', 'parent-pending', 'quarantined'].map(value => Type.Literal(value))),
-  temporaryIdentity: Type.Optional(identitySchema), review: Type.Optional(reviews.reviewSchema),
+  bytes: Type.Integer({ minimum: 1 }), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), lock: Type.String(),
+  phase: Type.Union(['planned', 'writing', 'ready', 'linked', 'parent-pending', 'quarantined'].map(value => Type.Literal(value))),
+  temporaryIdentity: Type.Optional(identitySchema), link: Type.Optional(links.linkSchema),
   state: Type.Array(Type.Unknown()), name: Type.Optional(Type.String({ minLength: 1 })),
   dependencies: Type.Optional(dependencies.contractSchema), preparationComplete: Type.Optional(Type.Boolean()),
   quarantine: Type.Optional(Type.Object({ path: Type.String(), reason: Type.String() })),
@@ -61,9 +61,9 @@ function validateDependencies(journal) {
 function validatePaths(journal) {
   if (!path.basename(journal.target).endsWith(`_${journal.sessionId}.jsonl`) || journal.temporary !== `${journal.target}.${journal.id}.tmp`) throw new Error('Publication target mapping is ambiguous; retained');
 
-  if (journal.lock !== io.lockPath(journal.root, journal.target) || !io.matches(journal.lock, journal.lockIdentity)) throw new Error('Publication writer lock identity changed; retained');
+  if (journal.lock !== io.lockName(journal.target)) throw new Error('Publication writer lock changed; retained');
 
-  if (journal.review && (journal.review.record.sessionId !== journal.sessionId || journal.review.record.publicationId !== journal.id || journal.review.record.sessionPath !== journal.target)) throw new Error('Review publication identity changed; retained');
+  if (journal.link && (journal.link.record.sessionId !== journal.sessionId || journal.link.record.publicationId !== journal.id || journal.link.record.sessionPath !== journal.target)) throw new Error('Auxiliary chat publication identity changed; retained');
 }
 
 function load(root, file) {
@@ -97,7 +97,7 @@ function seedState(journal) {
 }
 
 function prepare(root, target, body, options) {
-  const id = options.review?.record.publicationId ?? randomUUID();
+  const id = options.link?.record.publicationId ?? randomUUID();
 
   if (!Check(io.uuid, id)) throw new Error('Invalid session publication identity');
   const prepared = prepareBody(body, id);
@@ -105,14 +105,13 @@ function prepare(root, target, body, options) {
 
 
   if (!path.basename(target).endsWith(`_${prepared.header.id}.jsonl`) || io.exists(target)) throw new Error('Session publication target is occupied or does not bind its session identity');
-  const lock = io.lockPath(root, target);
-  io.mkdir(path.dirname(lock));
+  const lock = io.lockName(target);
   const lease = io.claim(lock);
 
   if (lease === null) throw new Error('Another writer owns this session publication');
 
   try { return prepareJournal(root, target, prepared, id, lock, lease, options); }
-  catch (error) { fs.closeSync(lease); throw error; }
+  catch (error) { lease(); throw error; }
 }
 
 function prepareJournal(root, target, prepared, id, lock, lease, options) {
@@ -127,7 +126,7 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   const journal = {
     version: 1, kind: 'session-publication', id, root, rootIdentity: io.identity(root), target, directoryIdentity: io.identity(path.dirname(target)),
     temporary: `${target}.${id}.tmp`, sessionId: prepared.header.id, bytes: Buffer.byteLength(prepared.body), digest: io.hash(prepared.body),
-    lock, lockIdentity: io.identity(lock), writer: io.writer(), phase: 'planned', dependencies: contract, state: stateRecords.capture(prepared.entries), ...name ? { name } : {},
+    lock, phase: 'planned', dependencies: contract, state: stateRecords.capture(prepared.entries), ...name ? { name } : {},
   };
 
   if (options.beforeWrite) {
@@ -135,11 +134,9 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
     journal.preparationComplete = false;
   }
 
-  if (options.review) journal.review = reviews.prepare(root, { ...options.review, target }, prepared.header, id, prepared.entries.map(entry => JSON.stringify(entry)).join("\n") + "\n");
+  if (options.link) journal.link = links.prepare(root, { ...options.link, target }, prepared.header, id, prepared.entries.map(entry => JSON.stringify(entry)).join("\n") + "\n");
 
   if (database.publication(root, id)) throw new Error('Session publication operation identity is already in use');
-  io.sync(lock);
-  io.sync(path.dirname(lock));
 
   try { save(journal); }
   catch (error) { if (database.publication(root, id)) throw failedPublication(journal, error); throw error; }
@@ -181,11 +178,11 @@ function complete(journal, location) {
   io.sync(location.path);
   io.sync(path.dirname(location.path));
   children.registerTranscript(journal.root, location.path, io.read(location.path).body);
-  journal.phase = journal.review ? 'parent-pending' : 'linked';
+  journal.phase = journal.link ? 'parent-pending' : 'linked';
   save(journal);
   removeTemporary(journal);
 
-  if (!journal.review) retire(journal);
+  if (!journal.link) retire(journal);
 }
 
 function handle(journal, warnings = []) {
@@ -231,19 +228,19 @@ async function publishLocked(root, target, body, options) {
     fs.linkSync(journal.temporary, journal.target);
     complete(journal, { path: journal.target });
 
-    if (journal.review) { leases.set(journal.id, operation.lease); retained = true; }
+    if (journal.link) { leases.set(journal.id, operation.lease); retained = true; }
 
     return handle(journal);
   } catch (error) {
     if (!linked(journal)) throw failedPublication(journal, error);
 
-    if (journal.review) { leases.set(journal.id, operation.lease); retained = true; }
+    if (journal.link) { leases.set(journal.id, operation.lease); retained = true; }
 
     const warning = `Session was published; durability or cleanup will retry from ${io.journalPath(root, journal.id)}: ${error.message}`;
     console.error(warning);
 
     return handle(journal, [warning]);
-  } finally { if (!retained) fs.closeSync(operation.lease); }
+  } finally { if (!retained) operation.lease(); }
 }
 
 function publish(target, body, withReferences, options = {}) {
@@ -321,9 +318,9 @@ function recoverJournal(journal, result) {
   complete(journal, location);
   result.recovered.push(location.path);
 
-  if (journal.review) {
-    if (reviews.reattach(journal)) retire(journal);
-    else result.pendingReviews.push(reviews.currentRecord(journal));
+  if (journal.link) {
+    if (links.reattach(journal)) retire(journal);
+    else result.pendingLinks.push(links.currentRecord(journal));
   }
 }
 
@@ -332,20 +329,21 @@ function recoverFile(root, file, result) {
 
   try {
     const journal = load(root, file);
-    lease = io.claim(journal.lock, journal.lockIdentity);
+    lease = io.claim(journal.lock);
 
-    if (lease === null || !io.writerDead(journal.writer)) { result.active.push(file);
+    // A writer in this daemon holds the lock while it works on the publication.
+    if (lease === null) { result.active.push(file);
 
     return; }
 
     recoverJournal(journal, result);
   } catch (error) { result.warnings.push(`${file}: ${error.message}`); }
-  finally { if (lease !== undefined && lease !== null) fs.closeSync(lease); }
+  finally { lease?.(); }
 }
 
 function recover(root) {
   return io.locked(root, () => {
-    const result = { recovered: [], pendingReviews: [], quarantined: [], active: [], warnings: [] };
+    const result = { recovered: [], pendingLinks: [], quarantined: [], active: [], warnings: [] };
 
     for (const file of journalFiles(root)) recoverFile(root, file, result);
 
@@ -358,7 +356,7 @@ function release(publication) {
 
   if (lease === undefined) return;
   leases.delete(publication.id);
-  fs.closeSync(lease);
+  lease();
 }
 
 async function acknowledge(publication) {
@@ -366,7 +364,7 @@ async function acknowledge(publication) {
     return await io.lockedAsync(publication.root, () => {
       const journal = load(publication.root, io.journalPath(publication.root, publication.id));
 
-      if (!journal.review || !reviews.acknowledge(journal)) return false;
+      if (!journal.link || !links.acknowledge(journal)) return false;
       const location = io.locate(journal.root, journal.sessionId, journal.id);
 
       if (!location) return false;
@@ -378,7 +376,8 @@ async function acknowledge(publication) {
   } finally { release(publication); }
 }
 
-async function pendingReviews(parentPath, parentId) {
+// The auxiliary chats of one kind whose link to this parent is not saved yet.
+async function pendingLinks(parentPath, parentId, kind) {
   if (!io.exists(parentPath)) return [];
   const root = io.rootForTarget(parentPath);
 
@@ -389,12 +388,12 @@ async function pendingReviews(parentPath, parentId) {
     const result = [];
 
     try {
-      for (const file of journalFiles(root)) pendingReview(root, file, parentId, result);
+      for (const file of journalFiles(root)) pendingLink(root, file, parentId, kind, result);
 
       if (result.length) {
         const parent = io.header(parentPath);
 
-        if (!parent || parent.id !== parentId) throw new Error('Live review publication requires its actual original parent');
+        if (!parent || parent.id !== parentId) throw new Error('Live auxiliary chat publication requires its actual original parent');
       }
     }
     catch (error) { for (const pending of result) release(pending.publication); throw error; }
@@ -423,24 +422,24 @@ function readRetainedDependencies(root) {
   });
 }
 
-function pendingReview(root, file, parentId, result) {
+function pendingLink(root, file, parentId, kind, result) {
   const journal = load(root, file);
 
-  if (!journal.review || journal.phase === 'quarantined' || journal.review.record.parentSessionId !== parentId) return;
+  if (!journal.link || journal.phase === 'quarantined' || journal.link.record.parentSessionId !== parentId || journal.link.record.kind !== kind) return;
 
-  if (journal.parentRepair) throw new Error(`Review parent repair is pending at ${file}; restart after closing its writer`);
-  const lease = io.claim(journal.lock, journal.lockIdentity);
+  if (journal.parentRepair) throw new Error(`Auxiliary chat parent repair is pending at ${file}; restart after closing its writer`);
+  const lease = io.claim(journal.lock);
 
   if (lease === null) return;
 
   try {
-    const record = reviews.currentRecord(journal);
+    const record = links.currentRecord(journal);
     leases.set(journal.id, lease);
     result.push({ publication: handle(journal), record });
-  } catch (error) { fs.closeSync(lease); throw error; }
+  } catch (error) { lease(); throw error; }
 }
 
-module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, awaitRetainedDependencies, pendingReviews, acknowledge, release };
+module.exports = { temporaryPaths, SessionPublicationError, publish, recover, retainedDependencies, awaitRetainedDependencies, pendingLinks, acknowledge, release };
 
 function verifyPreparation(journal) {
   if (journal.preparationComplete === false) throw new Error("Publication preparation is incomplete; retained without replaying its callback");

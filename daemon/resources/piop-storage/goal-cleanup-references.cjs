@@ -4,14 +4,12 @@ const assets = require('./goal-assets.cjs');
 const dependencies = require('./goal-dependencies.cjs');
 const database = require('../session-database.cjs');
 
-const contractSchema = Type.Object({ version: Type.Literal(1), policy: Type.Literal('shared-profile'), directories: Type.Array(Type.Object({ path: Type.String(), identity: Type.String() })) });
-
 const textsSchema = Type.Array(Type.Object({ name: Type.String(), text: Type.String() }));
 
 function addContract(root, contract, directories) {
   if (contract === undefined || contract === null) return;
 
-  if (!Check(contractSchema, contract)) throw new Error('Invalid saved goal links; cleanup retained');
+  if (!dependencies.validContract(contract)) throw new Error('Invalid saved goal links; cleanup retained');
 
   for (const item of contract.directories) {
     if (!assets.validPath(root, item.path)) throw new Error('Saved goal link is outside managed storage');
@@ -35,21 +33,13 @@ function saved(root, directory) {
   const expected = require('./goal-ownership.cjs').savedIdentity(root, directory);
 
   if (expected === undefined) return;
-  const db = database.open(root);
+  const rows = database.connection(root).prepare(`SELECT d.record_json, t.contents_json FROM goal_asset_dependencies d
+    JOIN goal_text_contents t USING(directory, identity) JOIN goal_ownership o USING(directory, identity)
+    WHERE d.directory=? AND d.identity=? AND o.record_json IS NOT NULL`).all(directory, expected);
 
-  try {
-    for (const table of ['goal_ownership', 'goal_text_contents']) {
-      if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) return;
-    }
+  if (rows.length > 1) throw new Error('More than one saved goal folder identity; cleanup retained');
 
-    const rows = db.prepare(`SELECT d.record_json, t.contents_json FROM goal_asset_dependencies d
-      JOIN goal_text_contents t USING(directory, identity) JOIN goal_ownership o USING(directory, identity)
-      WHERE d.directory=? AND d.identity=? AND o.record_json IS NOT NULL`).all(directory, expected);
-
-    if (rows.length > 1) throw new Error('More than one saved goal folder identity; cleanup retained');
-
-    if (rows.length) return { contract: JSON.parse(rows[0].record_json ?? 'null'), texts: JSON.parse(rows[0].contents_json) };
-  } finally { db.close(); }
+  if (rows.length) return { contract: rows[0].record_json === null ? undefined : dependencies.parseContract(rows[0].record_json), texts: JSON.parse(rows[0].contents_json) };
 }
 
 function collect(root, entries) {

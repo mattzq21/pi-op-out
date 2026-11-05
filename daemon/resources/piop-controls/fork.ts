@@ -5,12 +5,12 @@ import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "../session-broker/client.ts";
-import { writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../piop-storage/session-file.ts";
+import { publishAuxiliaryCopies, releaseHistory, retainHistory, writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../piop-storage/session-file.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
-import { releaseHistory, retainHistory, rootForDirectory } from "../piop-storage/goal-assets.cjs";
-import { planAuxiliaryCopies, publishAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.cjs";
+import { rootForDirectory } from "../piop-storage/goal-assets.cjs";
+import { planAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.cjs";
 import { sessionName } from "../session-broker/session-names.cjs";
 import type { ForkMode, ForkResult } from "./interface.ts";
 
@@ -101,7 +101,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   }
 
   if (copies.copies.length) {
-    try { await publishAuxiliaryCopies(rootForDirectory(ctx.sessionManager.getSessionDir()), copies, { id: sessionId }, (path: string, entries: unknown[], publication: Parameters<typeof writeSessionFile>[2]) => writeSessionFile(path, entries, publication)); }
+    try { await publishAuxiliaryCopies(rootForDirectory(ctx.sessionManager.getSessionDir()), copies, { id: sessionId }); }
     catch (error) {
       throw new Error(`The fork was saved at ${sessionPath}, but copying its side chats, reviews and subagents failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
   }
@@ -117,7 +117,7 @@ export function releaseForkAssets(ctx: ExtensionContext, goalAssets: ReturnType<
 }
 
 async function cleanupForkDirectory(cwd: string, options: ForkOptions) {
-  if (options.cwd !== undefined) await rmdir(cwd).catch(() => undefined);
+  if (options.cwd !== undefined) await rmdir(cwd).catch(error => console.error(`Could not remove the folder of a failed fork, ${cwd}: ${error instanceof Error ? error.message : String(error)}`));
 }
 
 async function forkDirectory(cwd: string, options: ForkOptions) {

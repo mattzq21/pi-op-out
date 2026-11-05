@@ -1,16 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { absolute, addRoot } = require('./storage-inventory-roots.cjs');
-
-const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
-
-const directorySchema = Type.Object({ path: Type.String(), identity: identitySchema });
-
-const contractSchema = Type.Object({ version: Type.Literal(1), policy: Type.Literal('shared-profile'), directories: Type.Array(directorySchema) });
-
-const claimsSchema = Type.Object({ version: Type.Literal(1), kind: Type.Literal('goal-assets'), owners: Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) })), retiredOwners: Type.Optional(Type.Array(Type.String())) });
+const { contractSchema } = require('./piop-storage/goal-dependencies.cjs');
 
 function validGoalPath(directory) { return absolute(directory) && /^goal-[a-zA-Z0-9_-]+$/.test(path.basename(directory)) && path.basename(path.dirname(directory)) === 'attachments'; }
 
@@ -76,7 +68,6 @@ async function recordClaims(profile, record, discovery) {
 
     if (claims === undefined) return;
 
-    if (!Check(claimsSchema, claims)) throw new Error('Invalid goal asset ownership claims');
     record.claims = claims;
 
     for (const owner of claims.owners) addRoot(discovery.goals, record.path, 'Durable claim in ' + file + '; claims are provenance, not live owners', record.ownership, [{ ...owner, kind: 'goal-claim-provenance' }]);

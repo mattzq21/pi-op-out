@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { SessionAgentState } from "../../../extensions/piop-define-agents/contracts.ts";
-import type { FastModeSession, FastModeSessionRequest } from "../../../extensions/piop-openai-fast-mode/src/types.ts";
+import type { SessionAgentState } from "../../../pi-extensions/piop-define-agents/contracts.ts";
+import type { FastModeSession, FastModeSessionRequest } from "../../../pi-extensions/piop-openai-fast-mode/src/types.ts";
 
 const STATE_ENTRY = "piop-fast-mode-state";
 

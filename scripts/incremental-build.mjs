@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build, version } from "esbuild";
+import { version } from "esbuild";
 
 const cacheDirectory = ".trace/extension-builds";
 
@@ -97,12 +97,4 @@ export async function buildArtifact({ output, inputs, key }, generate) {
 
     return;
   }
-}
-
-export async function buildBundle(options, output, { script, inputs = [], transform = content => content }) {
-  await buildArtifact({ output, inputs: [fileURLToPath(script), ...inputs], key: options }, async () => {
-    const result = await build({ ...options, write: false, metafile: true });
-
-    return { content: await transform(result.outputFiles[0].contents), dependencies: Object.keys(result.metafile.inputs) };
-  });
 }

@@ -54,7 +54,8 @@ function checkedRelocation(request) {
   const replacement = request.cwd.trim();
   let directory = false;
 
-  try { directory = fs.statSync(replacement).isDirectory(); } catch {}
+  try { directory = fs.statSync(replacement).isDirectory(); }
+  catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw new Error(`Could not check project directory ${replacement}: ${error.message}`); }
 
   if (!directory) throw new Error(`Project directory does not exist: ${replacement}`);
   relocateSession(request.profile, source, replacement);

@@ -2,7 +2,7 @@ import { onCleanup, type Accessor, type Setter } from "solid-js";
 import type { SplitPaneState } from "./appSupport";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { isMobile } from "./lib/platform";
-import { pluginKeybinds, type PluginKeybindBinding } from "./plugins/keybinds";
+import { pluginKeybinds, withPluginKeybinds, type PluginKeybindBinding } from "./plugins/keybinds";
 import { createDependencyEffect } from "./lib/solid";
 import type { AppSettings } from "./types";
 
@@ -25,6 +25,7 @@ type KeyboardContext = {
   view: Accessor<"chat" | "settings">;
   terminalOpen: Accessor<boolean>;
   setTerminalOpen: (open: boolean) => void;
+  pluginHost: () => string;
   pluginEnabled: (id: string) => boolean;
   runPluginKeybind: (keybind: PluginKeybindBinding) => void;
 };
@@ -37,7 +38,7 @@ function isTerminalKey(event: KeyboardEvent) {
 }
 
 export function useAppKeyboard(context: KeyboardContext) {
-  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen, pluginEnabled, runPluginKeybind } = context;
+  const { settings, activePane, splitPane, canLeaveSettings, setView, panelOpen, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, setSplitQueueHoldRequest, setMainQueueHoldRequest, settingsDirty, view, terminalOpen, setTerminalOpen, pluginHost, pluginEnabled, runPluginKeybind } = context;
   const blockTabFocus = (event: KeyboardEvent) => { if ((event.key === "Tab" || event.code === "Tab") && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault(); };
   window.addEventListener("keydown", blockTabFocus);
   onCleanup(() => window.removeEventListener("keydown", blockTabFocus));
@@ -71,7 +72,9 @@ export function useAppKeyboard(context: KeyboardContext) {
         return;
       }
 
-      const pluginKeybind = pluginKeybinds.find((item) => pluginEnabled(item.plugin.id) && matchesShortcut(event, capturedSettings.keybindings[item.action] ?? ""));
+      const bindings = pluginKeybinds(pluginHost());
+      const shortcuts = withPluginKeybinds(capturedSettings.keybindings, bindings);
+      const pluginKeybind = bindings.find((item) => pluginEnabled(item.plugin.id) && matchesShortcut(event, shortcuts[item.action]));
 
       if (pluginKeybind) {
         event.preventDefault();

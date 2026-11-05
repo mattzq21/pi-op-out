@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { daemonExecutable, fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
+import { daemonExecutable, fakePi, fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
 import { runLimited } from '../../daemon/src/process_io';
 import { startHost } from './host-fixture';
 
@@ -14,14 +14,14 @@ function publicSession(home: string, options: { cwd: string; folder: string }): 
   }));
 }
 
-function installFakePi(home: string): void {
+function installFakePi(home: string): string {
   const bin = join(home, '.local/bin');
-  fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
+  const cli = fakePi(home);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const at = flag => { const index = args.lastIndexOf(flag); return index < 0 ? undefined : args[index + 1]; };
-fs.appendFileSync(require('node:path').join(process.env.HOME, 'launches.jsonl'), JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: Object.fromEntries(['HOME', 'PI_DESKTOP_HOST_ID', 'PIOP_STORAGE_DIRECTORY', 'PI_CODING_AGENT_DIR'].map(key => [key, process.env[key]])) }) + '\\n');
+fs.appendFileSync(require('node:path').join(process.env.HOME, 'launches.jsonl'), JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: Object.fromEntries(['HOME', 'PIOP_STORAGE_DIRECTORY', 'PI_CODING_AGENT_DIR'].map(key => [key, process.env[key]])) }) + '\\n');
 const sessionFile = at('--session');
 const sessionId = sessionFile ? JSON.parse(fs.readFileSync(sessionFile, 'utf8').split('\\n')[0]).id : at('--session-id');
 setInterval(() => {}, 1 << 30);
@@ -31,15 +31,17 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   process.stdout.write(JSON.stringify({ type: 'response', id: request.id, command: request.type, success: true, data: request.type === 'get_state' ? state : request.type === 'get_entries' ? { entries: sessionFile ? fs.readFileSync(sessionFile, 'utf8').trim().split('\\n').filter(Boolean).map(line => JSON.parse(line)) : [] } : null }) + '\\n');
 });
 `);
+  return cli;
 }
 
 type Launch = { args: string[]; cwd: string; pid: number; env: Record<string, string> };
-const launches = (home: string): Launch[] => readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+const launches = (home: string): Launch[] => existsSync(join(home, 'launches.jsonl')) ? readFileSync(join(home, 'launches.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
 
 let daemon: TestDaemon;
+let piCli: string;
 beforeAll(async () => {
   daemon = await startDaemon();
-  installFakePi(daemon.home);
+  piCli = installFakePi(daemon.home);
 }, 60_000);
 afterAll(() => daemon?.stop());
 
@@ -50,12 +52,22 @@ test('Pi starts in the requested directory with each argument kept whole and the
   await daemon.invoke('start_pi', { runtimeId: 'launch-runtime', clientId: 'launch-client', cwd, sessionPath: session.path });
   const launch = launches(daemon.home).at(-1)!;
   expect(launch.cwd).toBe(cwd);
-  expect(launch.args.slice(1, 4)).toEqual([join(daemon.home, '.local/bin/pi'), '--mode', 'rpc']);
+  expect(launch.args.slice(1, 4)).toEqual([realpathSync(piCli), '--mode', 'rpc']);
   expect(launch.args[launch.args.lastIndexOf('--session') + 1]).toBe(session.path);
-  expect(launch.env).toEqual({ HOME: daemon.home, PI_DESKTOP_HOST_ID: 'local', PIOP_STORAGE_DIRECTORY: '.piop', PI_CODING_AGENT_DIR: join(daemon.home, '.piop') });
+  expect(launch.env).toEqual({ HOME: daemon.home, PIOP_STORAGE_DIRECTORY: '.piop', PI_CODING_AGENT_DIR: join(daemon.home, '.piop') });
   await daemon.invoke('stop_pi', { runtimeId: 'launch-runtime' });
 });
 
+test('Pi of another version is not started, and the error names the needed version', async () => {
+  const session = publicSession(daemon.home, { cwd: daemon.home, folder: 'pi version' });
+  const count = launches(daemon.home).length;
+  fakePi(daemon.home, '0.0.1');
+  try {
+    expect(await daemon.failure('start_pi', { runtimeId: 'version-runtime', clientId: 'version-client', cwd: daemon.home, sessionPath: session.path }))
+      .toMatch(/^Piop needs Pi \d+\.\d+\.\d+, but found Pi 0\.0\.1 at /);
+    expect(launches(daemon.home)).toHaveLength(count);
+  } finally { fakePi(daemon.home); }
+});
 
 test('a local Pi stays attached while remote machines change, and an unknown machine is rejected', async () => {
   const session = publicSession(daemon.home, { cwd: daemon.home, folder: 'transport' });
@@ -137,15 +149,15 @@ test('bounded process output rejects too much output, keeps only the first 64 Ki
 
 const configuration = { settings: {}, autoCompaction: true, autoRetry: false };
 
-test('a shutdown packet gets no reply, later packets are ignored, and the host finishes once', async () => {
+test('once the host shuts down it refuses new calls, and a second shutdown waits for the first', async () => {
   const host = await startHost();
   try {
-    expect(await host.request({ type: 'configure', configuration })).toBeNull();
-    const unanswered = [{ type: 'shutdown' }, { type: 'configure', configuration }, { type: 'shutdown' }].map(packet => host.request(packet, 30_000).then(() => 'answered', (error: Error) => error.message));
-    await host.finished;
-    expect(await Promise.all(unanswered)).toEqual(['Host stopped', 'Host stopped', 'Host stopped']);
-    expect(host.events.filter(packet => packet.type === 'response')).toEqual([]);
+    expect(await host.call('applyConfiguration', configuration)).toBeNull();
+    const outcome = (call: Promise<unknown>) => call.then(() => 'done', (error: Error) => error.message);
+    const calls = [host.call('shutdown'), host.call('applyConfiguration', configuration), host.call('shutdown')].map(outcome);
+    expect(await Promise.all(calls)).toEqual(['done', 'The host is shutting down', 'done']);
   } finally { await host.stop(); }
+  await host.finished;
 }, 60_000);
 
 test('stopping the daemon warns connected clients before the connection closes', async () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { pluginMessageSchema } from "../../../protocol/plugins";
 
 export function validItems<T extends z.ZodType>(schema: T) {
   return z.array(schema.optional().catch(undefined)).transform(items => items.filter(item => item !== undefined));
@@ -76,6 +77,7 @@ export const wireMessageSchema = z.looseObject({
   toolPayloadVersion: z.number().optional(), loadedToolPayloadVersion: z.number().optional(),
   toolImage: z.boolean().optional(),
   deliveryBehavior: z.enum(["steer", "followUp"]).optional(),
+  pluginMessage: pluginMessageSchema.optional(),
 });
 
 export type WireMessage = z.infer<typeof wireMessageSchema>;

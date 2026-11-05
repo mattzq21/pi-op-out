@@ -25,7 +25,8 @@ function run(node, args) {
   let waiting = basename(args[0]) === 'runtime-bridge.cjs' && !args.includes('--print');
   let readyTimer, killTimer, failed = false, closing = false;
   let partial = Buffer.alloc(0);
-  const child = spawn(node, args, { stdio: ['pipe', 'pipe', 'inherit'], detached: true });
+  // Pi saves its chats through the daemon's storage channel, so that descriptor goes to Pi too.
+  const child = spawn(node, args, { stdio: ['pipe', 'pipe', 'inherit', ...(process.env.PIOP_STORAGE_CHANNEL === '3' ? [3] : [])], detached: true });
 
   function signal(value) {
     if (!child.pid) return;

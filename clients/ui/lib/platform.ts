@@ -6,6 +6,8 @@ import { registerPlugin } from "@capacitor/core";
 import { remoteClient } from "./remoteClient";
 import { z, type JSONType } from "zod";
 import { jsonResultSchema, nativeArgumentsSchema, type NativeArguments } from "./transportSchemas";
+import { DESKTOP_COMMANDS, type NativeCommand } from "./desktopCommands";
+import { COMMANDS, isCommand, type CommandInput, type CommandName, type CommandResult, type InnerProtocolCommand } from "../../../protocol/commands";
 import { invokeWithBackpressure } from "./backpressure";
 import type { SettingsPublication } from "../types";
 import { clientIdentity } from "./clientIdentity";
@@ -51,22 +53,17 @@ export function captureDaemonTransport() {
   const identity = isMobile ? remoteClient.connectionIdentity() : "desktop";
   const active = () => !isMobile || identity !== undefined && remoteClient.connectionIdentity() === identity;
 
-  const scopedInvoke = async <S extends z.ZodType>(command: string, args: NativeArguments, schema: S): Promise<z.output<S>> => {
-    if (!active()) throw new Error("Reconnect to this note's original host to save it.");
-    const result = await invoke(command, args, schema);
-
-    if (!active()) throw new Error("The note's host connection changed.");
-
-    return result;
-  };
-
-  return { identity, active, invoke: scopedInvoke };
+  return { identity, active };
 }
 
-export function invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
-export function invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
-export async function invoke(command: string, args?: NativeArguments, schema: z.ZodType = jsonResultSchema) {
-  try { return await invokeDaemon(command, args, schema); }
+// A daemon command, checked by the shared command table, or a command of the app itself with the schema of its answer.
+export function invoke<Name extends CommandName>(command: Name, args?: CommandInput<Name>): Promise<CommandResult<Name>>;
+export function invoke<Name extends InnerProtocolCommand, S extends z.ZodType>(command: Name, args: CommandInput<Name>, schema: S): Promise<z.output<S>>;
+export function invoke<S extends z.ZodType>(command: NativeCommand, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
+export function invoke(command: NativeCommand, args?: NativeArguments): Promise<JSONType | undefined>;
+export async function invoke(command: string, args?: unknown, schema?: z.ZodType) {
+  const answer = schema ?? (isCommand(command) ? COMMANDS[command].result : jsonResultSchema);
+  try { return await invokeDaemon(command, args as NativeArguments | undefined, answer); }
   catch (reason) { throw daemonError(reason); }
 }
 
@@ -75,9 +72,7 @@ async function invokeDaemon(command: string, args: NativeArguments | undefined, 
   args = nativeArgumentsSchema.parse({ ...args, clientId: await clientIdentity(isMobile ? "mobile" : "desktop") });
 
   if (!isMobile) {
-    const local = ["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "open_local_file", "reveal_local_file", "read_dropped_file"];
-
-    const response = await (local.includes(command) ? nativeInvoke(command, args) : invokeWithBackpressure(() => nativeInvoke("daemon_invoke", { command, args })));
+    const response = await (DESKTOP_COMMANDS.includes(command) ? nativeInvoke(command, args) : invokeWithBackpressure(() => nativeInvoke("daemon_invoke", { command, args })));
 
     return schema.parse(response);
   }

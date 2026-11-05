@@ -1,6 +1,15 @@
-const path = require('node:path');
 const { createHash } = require('node:crypto');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
 const database = require('./session-database.cjs');
+const { onMainThread } = require('./main-thread.cjs');
+
+// The ownership record of each conversation: the client that owns it (null when none does), the daemon run that wrote
+// it, if it was archived or deleted, its transcript, and the client that owned it last.
+const recordSchema = Type.Object({
+  client: Type.Union([Type.String(), Type.Null()]), token: Type.String(), deleted: Type.Boolean(),
+  path: Type.Optional(Type.String()), previousClient: Type.Optional(Type.String()),
+}, { additionalProperties: false });
 
 function key(sessionId) { return createHash('sha256').update(sessionId.toLowerCase()).digest('hex').slice(0, 40); }
 
@@ -10,68 +19,36 @@ function validKey(value) {
   return value;
 }
 
-function location(file) {
-  if (path.basename(path.dirname(file)) !== 'conversation-ownership' || path.extname(file) !== '.json') throw new Error('Invalid conversation ownership location');
-
-  return { root: path.dirname(path.dirname(file)), key: validKey(path.basename(file, '.json')) };
-}
-
-function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try { return operation(db); }
-  finally { db.close(); }
-}
-
-function readRecord(root, recordKey) {
-  validKey(recordKey);
-
-  return withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
-
-    try {
-      const body = db.prepare('SELECT record_json FROM conversation_ownership WHERE record_id=?').get(recordKey)?.record_json ?? null;
-
-      db.exec('COMMIT');
-
-      return body;
-    } catch (error) { throw database.rollback(db, error); }
-  });
-}
-
-function writeRecord(root, recordKey, body) {
-  validKey(recordKey);
-  JSON.parse(body);
-  withDatabase(root, db => db.prepare('INSERT INTO conversation_ownership VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json').run(recordKey, body));
-}
-
-function forgetKey(db, recordKey) { db.prepare('DELETE FROM conversation_ownership WHERE record_id=?').run(recordKey); }
-
-function removeRecord(root, recordKey) {
-  validKey(recordKey);
-  withDatabase(root, db => forgetKey(db, recordKey));
-}
-
-function forget(db, sessionId) { forgetKey(db, key(sessionId)); }
-
-function read(file) {
-  const { root, key: recordKey } = location(file);
-
-  return readRecord(root, recordKey);
-}
-
-function required(file) {
-  const body = read(file);
-
-  if (body === null) throw new Error(`Conversation ownership is unavailable: ${file}`);
+function checked(body) {
+  if (!Check(recordSchema, JSON.parse(body))) throw new Error('Invalid conversation ownership record');
 
   return body;
 }
 
-function write(file, body) {
-  const { root, key: recordKey } = location(file);
+function readRecord(root, recordKey) {
+  validKey(recordKey);
+  const body = database.connection(root).prepare('SELECT record_json FROM conversation_ownership WHERE record_id=?').get(recordKey)?.record_json;
 
-  writeRecord(root, recordKey, body);
+  return body === undefined ? null : checked(body);
 }
 
-module.exports = { key, readRecord, writeRecord, removeRecord, forget, read, required, write };
+const writeRecord = onMainThread('conversation-storage.writeRecord', (root, recordKey, body) => {
+  validKey(recordKey);
+  database.connection(root).prepare('INSERT INTO conversation_ownership VALUES (?, ?) ON CONFLICT(record_id) DO UPDATE SET record_json=excluded.record_json').run(recordKey, checked(body));
+});
+
+function forgetKey(db, recordKey) { db.prepare('DELETE FROM conversation_ownership WHERE record_id=?').run(recordKey); }
+
+const removeRecord = onMainThread('conversation-storage.removeRecord', (root, recordKey) => {
+  validKey(recordKey);
+  forgetKey(database.connection(root), recordKey);
+});
+
+function forget(db, sessionId) { forgetKey(db, key(sessionId)); }
+
+// The ownership record of the conversation sessionId, or null.
+function read(root, sessionId) { return readRecord(root, key(sessionId)); }
+
+function write(root, sessionId, body) { writeRecord(root, key(sessionId), body); }
+
+module.exports = { key, readRecord, writeRecord, removeRecord, forget, read, write };

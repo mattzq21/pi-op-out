@@ -1,8 +1,10 @@
-import { CATALOG } from '../plugins/catalog';
-import type { BundledPlugin, CoreExtension } from '../plugins/types';
+import type { PluginManifest } from '../../protocol/plugins';
+import { catalog, type Plugin } from './plugin_catalog';
 
-export { CATALOG };
-export type { BundledPlugin, CoreExtension };
+export type CoreExtension = NonNullable<PluginManifest['extension']>['after'];
+
+// Each plugin's own settings, under its plugin ID. The core does not know what they contain.
+export type PluginSettings = Record<string, Record<string, unknown>>;
 
 let active: ReadonlySet<string> | null = null;
 
@@ -13,26 +15,32 @@ function loaded(): ReadonlySet<string> {
   return active;
 }
 
-export function enabled(): BundledPlugin[] {
-  const ids = loaded();
-  return CATALOG.filter(plugin => ids.has(plugin.id));
+const manifests = (): PluginManifest[] => catalog().plugins.map(plugin => plugin.manifest);
+
+export function find(id: string): Plugin | undefined {
+  return catalog().plugins.find(plugin => plugin.manifest.id === id);
+}
+
+// The enabled plugins, in the loading order that the user chose.
+export function enabled(): Plugin[] {
+  return [...loaded()].flatMap(id => find(id) ?? []);
 }
 
 export function agentTools(): string[] {
-  return [...new Set(enabled().flatMap(plugin => plugin.agentTools ?? []))];
+  return [...new Set(enabled().flatMap(plugin => plugin.manifest.agentTools ?? []))];
 }
 
 export function commandName(message: string): string | undefined {
   return /^\/(\S+)/.exec(message)?.[1];
 }
 
-function commandOwner(name: string): BundledPlugin | undefined {
-  return CATALOG.find(plugin => plugin.commands && Object.hasOwn(plugin.commands, name));
+function commandOwner(name: string): PluginManifest | undefined {
+  return manifests().find(plugin => plugin.commands && Object.hasOwn(plugin.commands, name));
 }
 
 const CORE_QUEUED = ['compact'];
 
-function disabledCommand(plugin: BundledPlugin, name: string): string {
+function disabledCommand(plugin: PluginManifest, name: string): string {
   return 'The ' + plugin.name + ' plugin is disabled. Enable it to use /' + name + '.';
 }
 
@@ -55,7 +63,7 @@ function hasPrompt(message: string): boolean {
 }
 
 export function pluginRequest(type: string): boolean {
-  const owner = CATALOG.find(plugin => plugin.requests && Object.hasOwn(plugin.requests, type));
+  const owner = manifests().find(plugin => plugin.requests && Object.hasOwn(plugin.requests, type));
   if (!owner) return false;
   if (!loaded().has(owner.id)) throw new Error('The ' + owner.name + ' plugin is disabled. Enable it to ' + owner.requests![type] + '.');
   return true;
@@ -67,7 +75,7 @@ export function commandPolicy(): { queued: string[]; queuedWithPrompt: string[];
   const queuedWithPrompt: string[] = [];
   const withImages: string[] = [];
   const disabled: Record<string, string> = {};
-  for (const plugin of CATALOG) for (const [name, delivery] of Object.entries(plugin.commands ?? {})) {
+  for (const plugin of manifests()) for (const [name, delivery] of Object.entries(plugin.commands ?? {})) {
     if (!ids.has(plugin.id)) disabled[name] = disabledCommand(plugin, name);
     else if (delivery === 'queued') queued.push(name);
     else if (delivery === 'queuedWithPrompt') queuedWithPrompt.push(name);
@@ -78,6 +86,46 @@ export function commandPolicy(): { queued: string[]; queuedWithPrompt: string[];
 
 export function agentCommands(core: string[], enabledIds: readonly string[]): string[] {
   const names = new Set(core);
-  for (const plugin of CATALOG) if (enabledIds.includes(plugin.id)) for (const name of Object.keys(plugin.commands ?? {})) names.add(name);
+  for (const plugin of manifests()) if (enabledIds.includes(plugin.id)) for (const name of Object.keys(plugin.commands ?? {})) names.add(name);
   return [...names].sort();
+}
+
+// How clients show the custom messages of the plugins, by custom type. It holds for the messages of each plugin that
+// this daemon has, also when the plugin is off.
+export function messageDisplay(customType: string): NonNullable<PluginManifest['messages']>[string] | undefined {
+  for (const plugin of manifests()) if (plugin.messages && Object.hasOwn(plugin.messages, customType)) return plugin.messages[customType];
+  return undefined;
+}
+
+// The custom entries of the plugins that keep only their last value.
+export function stateRecords(): string[] {
+  return [...new Set(manifests().flatMap(plugin => plugin.stateRecords ?? []))];
+}
+
+function isMap(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+const KINDS: Record<string, string> = { string: 'text', number: 'a number', boolean: 'true or false' };
+
+export function parsePluginSettings(value: unknown): PluginSettings {
+  if (value === undefined) return defaultPluginSettings();
+  if (!isMap(value)) throw new Error('The plugin settings must be an object');
+  const result: PluginSettings = {};
+  for (const plugin of manifests()) {
+    if (!plugin.settings) continue;
+    const own = value[plugin.id] ?? {};
+    if (!isMap(own)) throw new Error(`The settings of the plugin ${plugin.id} must be an object`);
+    result[plugin.id] = Object.fromEntries(Object.entries(plugin.settings).map(([field, fallback]) => {
+      const saved = own[field];
+      if (saved === undefined) return [field, fallback];
+      if (typeof saved !== typeof fallback) throw new Error(`The setting ${field} must be ${KINDS[typeof fallback]}`);
+      return [field, saved];
+    }));
+  }
+  return result;
+}
+
+export function defaultPluginSettings(): PluginSettings {
+  return Object.fromEntries(manifests().flatMap(plugin => plugin.settings ? [[plugin.id, { ...plugin.settings }]] : []));
 }

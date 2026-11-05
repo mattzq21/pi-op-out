@@ -1,4 +1,5 @@
-import { dlopen, read } from 'bun:ffi';
+import { read } from 'bun:ffi';
+import { libcName, loadLibc as loadC } from './libc';
 import { spawn } from 'node:child_process';
 import { getSystemErrorName } from 'node:util';
 import { closeSync, constants, fstatSync, openSync } from 'node:fs';
@@ -7,7 +8,7 @@ const LOCK_SH = 1, LOCK_EX = 2, LOCK_NB = 4;
 const EINTR = 4, EAGAIN = 11;
 
 function loadLibc() {
-  const library = dlopen('libc.so.6', {
+  const library = loadC({
     flock: { args: ['i32', 'i32'], returns: 'i32' },
     dup: { args: ['i32'], returns: 'i32' },
     __errno_location: { args: [], returns: 'ptr' },
@@ -23,9 +24,11 @@ function flockError(errno: number): Error {
   return new Error(`flock failed: ${getSystemErrorName(-errno)} (errno ${errno})`);
 }
 
-const WORKER_SOURCE = `
+// The source of the thread that waits for a lock.
+function workerSource(): string {
+  return `
 import { dlopen, read } from 'bun:ffi';
-const library = dlopen('libc.so.6', {
+const library = dlopen(${JSON.stringify(libcName())}, {
   flock: { args: ['i32', 'i32'], returns: 'i32' },
   __errno_location: { args: [], returns: 'ptr' },
 });
@@ -39,11 +42,14 @@ self.onmessage = ({ data: { fd, operation } }) => {
   self.postMessage(error);
 };
 `;
+}
 
-const CHILD_SOURCE = `
+// The source of the process that waits for a lock until it is stopped.
+function childSource(): string {
+  return `
 import { dlopen, read } from 'bun:ffi';
 import { getSystemErrorName } from 'node:util';
-const library = dlopen('libc.so.6', {
+const library = dlopen(${JSON.stringify(libcName())}, {
   flock: { args: ['i32', 'i32'], returns: 'i32' },
   __errno_location: { args: [], returns: 'ptr' },
 });
@@ -55,10 +61,11 @@ do {
 } while (error === ${EINTR});
 if (error) throw new Error('flock failed: ' + getSystemErrorName(-error) + ' (errno ' + error + ')');
 `;
+}
 
 function timedFlock(fd: number, shared: boolean, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['-e', CHILD_SOURCE, String(shared ? LOCK_SH : LOCK_EX)], {
+    const child = spawn(process.execPath, ['-e', childSource(), String(shared ? LOCK_SH : LOCK_EX)], {
       env: { ...process.env, BUN_BE_BUN: '1' },
       stdio: ['ignore', 'ignore', 'pipe', fd],
     });
@@ -137,7 +144,7 @@ export async function flockDescriptor(fd: number, blocking = true, shared = fals
       else resolve(true);
     };
     try {
-      url = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: 'application/javascript' }));
+      url = URL.createObjectURL(new Blob([workerSource()], { type: 'application/javascript' }));
       worker = new Worker(url);
       worker.onmessage = ({ data }) => {
         if (!Number.isInteger(data) || data < 0) finish(new Error('Invalid flock worker result'));

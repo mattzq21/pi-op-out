@@ -1,4 +1,4 @@
-import type { AppRequest } from "../../extensions/piop-define-agents/contracts.ts";
+import type { AppRequest } from "../../pi-extensions/piop-define-agents/contracts.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerConversationClient } from "./session-broker/client.ts";
@@ -11,7 +11,7 @@ import { registerContextInsertions } from "./session-broker/context-insertions.t
 import { registerToolInventory } from "./session-broker/tool-inventory.ts";
 import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
 import { existsSync } from "node:fs";
-import { initialize } from "./session-broker/session-child-index.cjs";
+import { call } from "./storage-channel.cjs";
 
 export { writeSessionFile, publicationRetainsDependencies, type PublicationOptions, type SessionPublication } from "./piop-storage/session-file.ts";
 
@@ -27,7 +27,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const file = ctx.sessionManager.getSessionFile();
 
-    if (file) await initialize(file, ctx.sessionManager.getSessionId(), !existsSync(file));
+    if (file) await call("records.initializeChildren", { path: file, sessionId: ctx.sessionManager.getSessionId(), fresh: !existsSync(file) });
   });
   registerInputHold(pi);
   registerQueueHold(pi);

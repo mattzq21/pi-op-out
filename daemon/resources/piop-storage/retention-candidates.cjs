@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const tables = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,7 +68,7 @@ function readRecord(root, file, body) {
   return { ...value, file };
 }
 
-function recordRetention(root, id, pending) {
+const recordRetention = onMainThread('retention-candidates.recordRetention', (root, id, pending) => {
   validateRetention(root, pending);
 
   if (!pending.directories.length && !pending.sessionIds.length) return;
@@ -77,10 +78,9 @@ function recordRetention(root, id, pending) {
   const file = path.join(directory, id + '.json');
   const origin = createHash('sha256').update(JSON.stringify(pending)).digest('hex');
 
-  const database = tables.open(root);
+  const database = tables.connection(root);
 
-  try {
-    database.exec('BEGIN IMMEDIATE');
+  tables.transaction(database, 'IMMEDIATE', () => {
     const previous = database.prepare('SELECT record_json FROM retention_candidates WHERE record_id=?').get(id);
 
     if (previous) {
@@ -89,30 +89,29 @@ function recordRetention(root, id, pending) {
       database.prepare('INSERT INTO retention_candidates VALUES (?, ?, ?)')
         .run(id, JSON.stringify({ version: 1, id, origin, pending }), Date.now());
     }
+  });
+});
 
-    database.exec('COMMIT');
-  } finally { database.close(); }
-}
+const retryLater = onMainThread('retention-candidates.retryLater', (root, id) => {
+  tables.connection(root).prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), id);
+});
 
 function pendingRetentions(root, limit = 8) {
   const directory = storage(root);
-  const database = tables.open(root);
+  const database = tables.connection(root);
   const records = [];
   const errors = [];
+  const selected = database.prepare('SELECT record_id, record_json FROM retention_candidates ORDER BY retry_at, record_id LIMIT ?').all(limit);
 
-  try {
-    const selected = database.prepare('SELECT record_id, record_json FROM retention_candidates ORDER BY retry_at, record_id LIMIT ?').all(limit);
+  for (const row of selected) {
+    const file = path.join(directory, row.record_id + '.json');
 
-    for (const row of selected) {
-      const file = path.join(directory, row.record_id + '.json');
-
-      try { records.push(readRecord(root, file, row.record_json)); }
-      catch (error) {
-        errors.push(`${row.record_id}: ${error.message}`);
-        database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), row.record_id);
-      }
+    try { records.push(readRecord(root, file, row.record_json)); }
+    catch (error) {
+      errors.push(`${row.record_id}: ${error.message}`);
+      retryLater(root, row.record_id);
     }
-  } finally { database.close(); }
+  }
 
   return { records, errors };
 }
@@ -176,15 +175,12 @@ function goalStorageProtected(record, candidate, file) {
     || publication.transcriptPaths.some(transcript => JSON.stringify(require('../transcript-references.cjs').read(root, transcript)).includes(JSON.stringify(candidate.path).slice(1, -1))));
 }
 
-function finishRecord(record, done) {
+const finishRecord = onMainThread('retention-candidates.finishRecord', (record, done) => {
   const root = path.dirname(path.dirname(record.file));
-  const database = tables.open(root);
+  const database = tables.connection(root);
 
-  try {
-
-    if (done) database.prepare('DELETE FROM retention_candidates WHERE record_id=?').run(record.id);
-    else database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), record.id);
-  } finally { database.close(); }
-}
+  if (done) database.prepare('DELETE FROM retention_candidates WHERE record_id=?').run(record.id);
+  else database.prepare('UPDATE retention_candidates SET retry_at=? WHERE record_id=?').run(Date.now(), record.id);
+});
 
 module.exports = { validateRetention, describeCandidates, recordRetention, pendingRetentions, cleanupStages, matches, removeCandidate, finishRecord };

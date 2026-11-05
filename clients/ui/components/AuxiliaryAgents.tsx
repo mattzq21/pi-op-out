@@ -4,10 +4,11 @@ import { ChevronDown } from "lucide-solid";
 import type { SidepaneTab } from "../lib/sidepaneTabs";
 import type { SubagentFacts } from "../lib/subagentFacts";
 import { AgentIcon } from "./AgentIcon";
+import { auxiliaryLook } from "../plugins";
 import "./auxiliary-agents.css";
 
-const KIND_ORDER = ["subagent", "review", "btw"];
-const KIND_NAMES: Record<string, string> = { subagent: "Subagents", review: "Review", btw: "Btw" };
+// Subagents come first; the side chats of plugins follow by name.
+const kindName = (kind: string) => kind === "subagent" ? "Subagents" : auxiliaryLook(kind).label;
 
 type Facts = Accessor<ReadonlyMap<string, SubagentFacts>>;
 
@@ -16,19 +17,13 @@ interface Props { agents: SidepaneTab[]; subagents: Facts; onOpen: (agent: Sidep
 interface Group { kind: string; agents: SidepaneTab[]; working: number }
 
 function groups(agents: SidepaneTab[]): Group[] {
-  const kinds = [...new Set(agents.map(agent => agent.kind))].sort((left, right) => rank(left) - rank(right) || left.localeCompare(right));
+  const kinds = [...new Set(agents.map(agent => agent.kind))].sort((left, right) => Number(right === "subagent") - Number(left === "subagent") || kindName(left).localeCompare(kindName(right)));
 
   return kinds.map(kind => {
     const members = agents.filter(agent => agent.kind === kind);
 
     return { kind, agents: [...members.filter(agent => agent.running), ...members.filter(agent => !agent.running)], working: members.filter(agent => agent.running).length };
   });
-}
-
-function rank(kind: string) {
-  const index = KIND_ORDER.indexOf(kind);
-
-  return index < 0 ? KIND_ORDER.length : index;
 }
 
 function Icon(props: { agent: SidepaneTab; subagents: Facts; size?: number }) {
@@ -46,8 +41,8 @@ function AgentsPopover(props: Props & { anchor: () => HTMLElement | undefined; o
   onCleanup(() => { document.removeEventListener("pointerdown", pointer, true); document.removeEventListener("keydown", key); });
 
   return <div class="agents-popover" role="dialog" aria-label="Side agents">
-    <For each={grouped()}>{group => <section class="agents-group" aria-label={KIND_NAMES[group.kind] ?? group.kind}>
-      <header><span>{KIND_NAMES[group.kind] ?? group.kind}</span><span>{group.working ? `${group.working} working` : "idle"}</span></header>
+    <For each={grouped()}>{group => <section class="agents-group" aria-label={kindName(group.kind)}>
+      <header><span>{kindName(group.kind)}</span><span>{group.working ? `${group.working} working` : "idle"}</span></header>
       <Key each={group.agents} by={agent => agent.key}>{agent => <button type="button" class="agents-row" classList={{ "agents-row-idle": !agent().running }} onClick={() => { props.onClose(); props.onOpen(agent()); }}>
         <Icon agent={agent()} subagents={props.subagents} />
         <span class="agents-row-name">{agent().label}</span>

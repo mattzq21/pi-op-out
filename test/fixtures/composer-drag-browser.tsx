@@ -30,7 +30,7 @@ render(() => <>
   <button onClick={() => rejectMove?.(new Error("queue changed"))}>Fail pending move</button>
   <output aria-label="Requested moves">{JSON.stringify(moves())}</output>
   <div style={{ width: '700px', margin: '80px 150px' }}>
-    <Composer controlsDisabled={disabled()} streaming={true} queued={messages().length} commands={[]} agents={[]} models={[]} model={null}
+    <Composer controlsDisabled={disabled()} streaming={true} queued={messages().length} commands={[]} queuedCommands={["compact", "review"]} agents={[]} models={[]} model={null}
       thinkingLevel="off" thinkingLevels={['off']} pendingMessages={messages()}
       onChangePending={async (...args) => { setMoves(values => [...values, args]); if (holdMoves()) await new Promise<void>((_resolve, reject) => { rejectMove = reject; }); }}
       onSend={async () => {}} onAbort={async () => {}}

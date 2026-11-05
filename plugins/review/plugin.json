@@ -1,0 +1,36 @@
+{
+  "id": "review",
+  "name": "Review",
+  "extension": {
+    "after": "session"
+  },
+  "commands": {
+    "review": "queuedWithPrompt"
+  },
+  "keybinds": [
+    {
+      "id": "open",
+      "label": "Start review",
+      "description": "Review the project files in a side pane",
+      "defaultShortcut": "Ctrl+Alt+R",
+      "command": "review"
+    }
+  ],
+  "settings": {
+    "reviewAgent": "reviewer"
+  },
+  "messages": {
+    "piop-review-link": {
+      "customRole": "system",
+      "contextInjection": false
+    }
+  },
+  "auxiliary": {
+    "label": "Review",
+    "letter": "R",
+    "color": "#c58d43"
+  },
+  "client": {
+    "scope": "host"
+  }
+}

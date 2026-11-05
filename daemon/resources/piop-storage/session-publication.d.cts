@@ -1,4 +1,6 @@
-export interface ReviewPublicationRecord {
+// Where an auxiliary chat of a plugin is saved, as its parent records it.
+export interface AuxiliaryLinkRecord {
+  kind: string;
   sessionId: string;
   sessionPath: string;
   cwd: string;
@@ -10,7 +12,8 @@ export interface ReviewPublicationRecord {
 export interface PublicationOptions {
   name?: string;
   goalSource?: string;
-  review?: { record: ReviewPublicationRecord; parentSessionPath: string };
+  // Publishes an auxiliary chat, then links it from its parent with a core record and the plugin's own message.
+  link?: { record: AuxiliaryLinkRecord; parentSessionPath: string; message: { customType: string; content: string } };
   dependencies?: {
     workspace?: { path: string; kind: "existing" | "created-directory" };
   };
@@ -40,7 +43,7 @@ export interface SessionPublication {
 
 export interface PublicationRecovery {
   recovered: string[];
-  pendingReviews: ReviewPublicationRecord[];
+  pendingLinks: AuxiliaryLinkRecord[];
   quarantined: { path: string; reason: string }[];
   active: string[];
   warnings: string[];
@@ -56,6 +59,6 @@ export function publish(target: string, body: string, withReferences: (operation
 export function recover(root: string): PublicationRecovery;
 export function retainedDependencies(root: string): DiagnosticPublication[];
 export function awaitRetainedDependencies(root: string): Promise<DiagnosticPublication[]>;
-export function pendingReviews(parentPath: string, parentId: string): Promise<{ publication: SessionPublication; record: ReviewPublicationRecord }[]>;
+export function pendingLinks(parentPath: string, parentId: string, kind: string): Promise<{ publication: SessionPublication; record: AuxiliaryLinkRecord }[]>;
 export function acknowledge(publication: SessionPublication): Promise<boolean>;
 export function release(publication: SessionPublication): void;

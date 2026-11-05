@@ -17,6 +17,8 @@ async function storagePanel(t, offline = false, archiveNames = [], options = {})
   let replyGate = Promise.resolve();
   if (options.pauseReplies) replyGate = new Promise(resolve => { releaseReply = resolve; });
   const heldReply = Promise.withResolvers();
+  // The held request may reach its wait after the test fails the reply; it still gets the failure then.
+  heldReply.promise.catch(() => {});
   let holdReply = options.holdReply;
   const temporary = [];
   const settle = async () => { do { await storage.settled(); await act(() => Promise.allSettled([...requests])); } while (requests.size); };

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { open, reserveId, bind } from '../../daemon/resources/session-database.cjs';
+import { connection, reserveId, bind, transaction } from '../../daemon/resources/session-database.cjs';
 import stateRecords from '../../daemon/resources/piop-storage/session-records.cjs';
 import sessionNames from '../../daemon/resources/session-broker/session-names.cjs';
 
@@ -9,11 +9,10 @@ const { home, count, cwd, contents } = JSON.parse(readFileSync(0, 'utf8'));
 const root = join(home, '.piop');
 const directory = join(root, 'sessions', 'batch');
 mkdirSync(directory, { recursive: true });
-const db = open(root);
+const db = connection(root);
 const chats = [];
 const records = [];
-try {
-  db.exec('BEGIN IMMEDIATE');
+transaction(db, 'IMMEDIATE', () => {
   for (let index = 0; index < count; index++) {
     const id = reserveId(db);
     const path = join(directory, `${id}.jsonl`);
@@ -29,11 +28,7 @@ try {
     if (captured.length || name) records.push({ path, id, captured, name });
     chats.push({ id, path, preview });
   }
-  db.exec('COMMIT');
-} catch (error) {
-  if (db.isTransaction) db.exec('ROLLBACK');
-  throw error;
-} finally { db.close(); }
+});
 for (const { path, id, captured, name } of records) {
   stateRecords.seed(path, id, captured);
   if (name) sessionNames.nameSession(path, id, name);

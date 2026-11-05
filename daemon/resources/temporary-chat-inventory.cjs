@@ -14,20 +14,13 @@ function ownsFolder(root, id, directory) {
 }
 
 function list(root) {
-  const db = database.open(root);
+  const rows = database.connection(root).prepare('SELECT session_id, original_path FROM temporary_chat_allocations ORDER BY session_id').all();
 
-  try {
-    db.exec('CREATE TABLE IF NOT EXISTS temporary_chat_allocations (session_id TEXT PRIMARY KEY, original_path TEXT NOT NULL UNIQUE); BEGIN IMMEDIATE');
-    const rows = db.prepare('SELECT session_id, original_path FROM temporary_chat_allocations ORDER BY session_id').all();
+  for (const row of rows) {
+    if (!ownsFolder(root, row.session_id, row.original_path)) throw new Error('Invalid saved temporary chat directory');
+  }
 
-    for (const row of rows) {
-      if (!ownsFolder(root, row.session_id, row.original_path)) throw new Error('Invalid saved temporary chat directory');
-    }
-
-    db.exec('COMMIT');
-
-    return rows;
-  } finally { db.close(); }
+  return rows;
 }
 
 module.exports = { list, folderNames, ownsFolder, uuid };

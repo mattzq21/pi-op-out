@@ -15,14 +15,12 @@ const STORAGE_LOCK = new Mutex();
 const DIRLESS_KEY = '__pi-desktop-dirless__';
 const RECENT_KEY = '__pi-desktop-ungrouped__';
 const FIXED_KEYS = new Set([RECENT_KEY, DIRLESS_KEY]);
-const ORDER_SCOPES = ['sidebar', 'sessions', 'children'] as const;
+import { ORDER_SCOPES, type GroupChange, type OrderScope, type SessionGroup, type SessionSeed, type SingleGroupChange } from '../../protocol/session-groups';
 
-export type OrderScope = typeof ORDER_SCOPES[number];
+export type { GroupChange, OrderScope, SessionGroup, SessionSeed };
 
 /** Sidebar orders. `sidebar` has one list (owner ''), `sessions` and `children` have one list per group. */
 export type SessionGroupOrders = Record<OrderScope, Map<string, string[]>>;
-
-export interface SessionGroup { id: string; name: string; cwd: string | null; hostId: string | null; hostName: string | null }
 
 export interface SessionGroups {
   groups: SessionGroup[];
@@ -31,20 +29,6 @@ export interface SessionGroups {
   removedProjects: Set<string>;
   orders: SessionGroupOrders;
 }
-
-export interface SessionSeed { sessionKey: string; project: SessionGroup; parentKey?: string }
-
-export type GroupChange =
-  | { type: 'create'; name: string }
-  | { type: 'project'; project: SessionGroup; key?: string | null }
-  | { type: 'relocate'; project: SessionGroup; key: string }
-  | { type: 'rename'; id: string; name: string }
-  | { type: 'edit'; id: string; name: string; cwd: string }
-  | { type: 'remove'; id: string }
-  | { type: 'assign'; key: string; group?: string | null }
-  | { type: 'move'; id: string; parent?: string | null }
-  | { type: 'order'; scope: OrderScope; owner: string; visible: string[]; token: string | null; before: string | null }
-  | { type: 'batch'; changes: GroupChange[] };
 
 function emptyOrders(): SessionGroupOrders { return { sidebar: new Map(), sessions: new Map(), children: new Map() }; }
 
@@ -56,83 +40,26 @@ export function serializeGroups(state: SessionGroups): any {
     orders: { sidebar: state.orders.sidebar.get('') ?? [], sessions: Object.fromEntries(state.orders.sessions), children: Object.fromEntries(state.orders.children) } };
 }
 
-function optionalText(value: any, field: string): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') throw new Error(`invalid type for ${field}: expected a string`);
-  return value;
-}
-
-export function parseGroup(value: any): SessionGroup {
-  if (!value || typeof value !== 'object') throw new Error('invalid type: expected struct SessionGroup');
-  if (typeof value.id !== 'string') throw new Error('missing field `id`');
-  if (typeof value.name !== 'string') throw new Error('missing field `name`');
-  return { id: value.id, name: value.name, cwd: optionalText(value.cwd, 'cwd'), hostId: optionalText(value.hostId, 'hostId'), hostName: optionalText(value.hostName, 'hostName') };
-}
-
-export function parseSeed(value: any): SessionSeed {
-  if (typeof value?.sessionKey !== 'string') throw new Error('missing field `sessionKey`');
-  const parentKey = optionalText(value.parentKey, 'parentKey');
-  if (parentKey === value.sessionKey) throw new Error('A chat cannot be branched from itself');
-  return { sessionKey: value.sessionKey, project: parseGroup(value.project), ...(parentKey ? { parentKey } : {}) };
-}
-
-function textList(value: any, field: string): string[] {
-  if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) throw new Error(`invalid type for ${field}: expected a list of strings`);
-  return value;
-}
-
-export function parseChange(value: any, nested = false): GroupChange {
-  const text = (key: string) => { if (typeof value?.[key] !== 'string') throw new Error(`missing field \`${key}\``); return value[key] as string; };
-  switch (value?.type) {
-    case 'create': return { type: 'create', name: text('name') };
-    case 'project': return { type: 'project', project: parseGroup(value.project), key: optionalText(value.key, 'key') };
-    case 'relocate': return { type: 'relocate', project: parseGroup(value.project), key: text('key') };
-    case 'rename': return { type: 'rename', id: text('id'), name: text('name') };
-    case 'edit': return { type: 'edit', id: text('id'), name: text('name'), cwd: text('cwd') };
-    case 'remove': return { type: 'remove', id: text('id') };
-    case 'assign': return { type: 'assign', key: text('key'), group: optionalText(value.group, 'group') };
-    case 'move': return { type: 'move', id: text('id'), parent: optionalText(value.parent, 'parent') };
-    case 'order': {
-      const scope = text('scope') as OrderScope;
-      if (!ORDER_SCOPES.includes(scope)) throw new Error(`unknown order scope \`${scope}\``);
-      return { type: 'order', scope, owner: text('owner'), visible: textList(value.visible, 'visible'), token: optionalText(value.token, 'token'), before: optionalText(value.before, 'before') };
-    }
-    case 'batch':
-      if (nested) throw new Error('A batch cannot contain another batch');
-      if (!Array.isArray(value.changes)) throw new Error('invalid type for changes: expected a list');
-      return { type: 'batch', changes: value.changes.map((change: any) => parseChange(change, true)) };
-    default: throw new Error(`unknown variant \`${value?.type}\``);
-  }
-}
-
 function storagePath(): string { return join(ensureDesktopSessionsDir(homeDir()), 'groups.json'); }
 
 function database(path: string): Database {
   const parent = join(path, '..');
   const root = parent.endsWith('/sessions') ? join(parent, '..') : parent;
-  const connection = Registry.open(root);
-  try {
-    connection.exec('CREATE TABLE IF NOT EXISTS session_group_parents (group_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL)');
-    connection.exec('INSERT INTO session_group_state VALUES (1, 0) ON CONFLICT DO NOTHING');
-  } catch (error) { connection.close(); throw error; }
-  return connection;
+  return Registry.connection(root);
 }
 
 function read(path: string): SessionGroups | undefined {
   const connection = database(path);
-  try { return transaction(connection, 'DEFERRED', () => readWith(connection)); }
-  finally { connection.close(); }
+  return transaction(connection, 'DEFERRED', () => readWith(connection));
 }
 
 function update<T>(path: string, change: (stored: SessionGroups | undefined) => { save?: SessionGroups; value: T }): T {
   const connection = database(path);
-  try {
-    return transaction(connection, 'IMMEDIATE', () => {
-      const { save, value } = change(readWith(connection));
-      if (save) writeWith(connection, save);
-      return value;
-    });
-  } finally { connection.close(); }
+  return transaction(connection, 'IMMEDIATE', () => {
+    const { save, value } = change(readWith(connection));
+    if (save) writeWith(connection, save);
+    return value;
+  });
 }
 
 function readWith(connection: Database): SessionGroups | undefined {
@@ -330,7 +257,11 @@ function loadAt(path: string, allSeeds: SessionSeed[]): { state: SessionGroups; 
 }
 
 async function resolveEditFolder(app: App, change: GroupChange): Promise<GroupChange> {
-  if (change.type === 'batch') return { type: 'batch', changes: await Promise.all(change.changes.map(item => resolveEditFolder(app, item))) };
+  if (change.type === 'batch') return { type: 'batch', changes: await Promise.all(change.changes.map(item => resolveEditFolderOf(app, item))) };
+  return resolveEditFolderOf(app, change);
+}
+
+async function resolveEditFolderOf(app: App, change: SingleGroupChange): Promise<SingleGroupChange> {
   if (change.type !== 'edit') return change;
   if (!change.cwd.trim()) throw new Error('Enter a project directory');
   const group = (await STORAGE_LOCK.run(() => read(storagePath())))?.groups.find(group => group.id === change.id);
@@ -349,9 +280,9 @@ export async function changeSessionGroups(app: App, requested: GroupChange): Pro
   });
 }
 
-export async function refreshDeletions(app: App, hostId: string): Promise<void> {
+export async function refreshDeletions(app: App): Promise<void> {
   const path = storagePath();
-  await refreshDeletionsAt(path, app, [], [`${hostId}:`]);
+  await refreshDeletionsAt(path, app, [], ['local:']);
   await STORAGE_LOCK.run(async () => {
     const state = read(path);
     if (state) app.emit('pi://groups-changed', serializeGroups(state));

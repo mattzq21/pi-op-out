@@ -1,6 +1,5 @@
 import { createContext, createResource, createSignal, Show, useContext, type Accessor } from "solid-js";
 import { render } from "solid-js/web";
-import { z } from "zod";
 import { nativeCall } from "../lib/nativeCall";
 import { fileReference, type FileProject } from "../lib/projectFiles";
 import { ImageGalleryContext, ImageLoading, ZoomableImage } from "./ZoomableImage";
@@ -21,7 +20,7 @@ function LinkedImage(props: { project: FileProject; path: string; label: string 
   const [image] = createResource(() => ({ ...props.project, path: props.path }), async args => {
     setFailed(false);
 
-    try { return await nativeCall("read_image_file", args, z.string().regex(/^data:image\/(png|jpeg|gif|webp);base64,/)); }
+    try { return await nativeCall("read_image_file", args); }
     catch { setFailed(true);
 
     return undefined; }

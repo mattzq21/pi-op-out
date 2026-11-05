@@ -11,7 +11,7 @@ export class SettingsPublication {
 
     return true; }
 
-    const key = JSON.stringify([host, change.source ?? "legacy"]);
+    const key = JSON.stringify([host, change.source]);
     const previous = this.latest.get(key);
 
     if (previous && change.revision < previous.revision) return false;

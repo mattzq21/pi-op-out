@@ -1,4 +1,5 @@
 import { text } from './json';
+import type { HostEvents } from './events';
 
 export interface MessagePin { entryId: string; role: 'prompt' | 'response'; text: string; timestamp: number }
 
@@ -6,9 +7,8 @@ export const PIN_LIMIT = 4;
 const TEXT_LIMIT = 300;
 
 export interface PinViews {
-  subscriptions: Map<string, { identity: string }>;
-  readonlyViews(identity: string): string[];
-  output(packet: any): void;
+  readonly views: { runtimesOf(identity: string): Set<string> };
+  readonly events: HostEvents;
 }
 
 export class MessagePins {
@@ -43,13 +43,9 @@ export class MessagePins {
 
   attached(runtime: string, identity: string): void { this.send(runtime, this.chats.get(identity) ?? []); }
 
-  private views(identity: string): Set<string> {
-    const runtimes = new Set(this.host.readonlyViews(identity));
-    for (const [runtime, session] of this.host.subscriptions) if (session.identity === identity) runtimes.add(runtime);
-    return runtimes;
-  }
+  private views(identity: string): Set<string> { return this.host.views.runtimesOf(identity); }
 
   private send(runtime: string, pins: MessagePin[]): void {
-    this.host.output({ type: 'event', runtimeId: runtime, event: { type: 'pinned_messages', pins: structuredClone(pins) } });
+    this.host.events.runtimeEvent(runtime, { type: 'pinned_messages', pins: structuredClone(pins) });
   }
 }

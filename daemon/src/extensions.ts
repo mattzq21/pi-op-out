@@ -1,23 +1,16 @@
-import { join } from 'node:path';
-import { DEVELOPMENT, STORAGE_DIRECTORY } from './config';
-import { directory as daemonDirectory } from './daemon_endpoint';
+import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import { atomicWritePrivate, ensurePrivateDir } from './private_fs';
+import { ensurePrivateDir } from './private_fs';
 import * as R from './resources';
 import * as Contributions from './plugin_contributions';
-import { publish } from './settings_records';
 import type { AppSettings } from './settings_types';
+import { errorText } from './util/sync';
 
-export function generatedExtensionRoot(): string {
-  return DEVELOPMENT ? join(daemonDirectory(), 'extensions') : join(homeDir(), STORAGE_DIRECTORY);
-}
-
-export function prepareMcpBridge(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'piop-mcp-bridge.ts');
-  atomicWritePrivate(path, R.mcpBridgeBundle);
-  return path;
+export function extensionBase(): string {
+  return join(homeDir(), STORAGE_DIRECTORY);
 }
 
 export function skillLists(settings: AppSettings): { userInvokedSkills: string[]; agentInvokedSkills: string[] } {
@@ -41,156 +34,135 @@ export function contextCapSettings(settings: AppSettings) {
   };
 }
 
-export function saveContextCapSettings(settings: AppSettings): void {
-  publish(join(generatedExtensionRoot(), 'context-cap-settings.json'), JSON.stringify(contextCapSettings(settings)));
-}
-
 export function agentResources(settings: AppSettings): any {
   return { skills: skillLists(settings), tools: toolLists(settings) };
 }
 
-export function prepareRuntimeBridge(): void {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, 'runtime-bridge.cjs'), R.runtimeBridge);
-  atomicWritePrivate(join(dir, 'queue-pull.cjs'), R.queuePull);
-  atomicWritePrivate(join(dir, 'runtime-availability.cjs'), R.runtimeAvailability);
-  atomicWritePrivate(join(dir, 'mcp-connections.cjs'), R.mcpConnections);
-  atomicWritePrivate(join(dir, 'runtime-configuration.cjs'), R.runtimeConfiguration);
-  atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
-  prepareSdkStorage(dir);
+const BRIDGE = 'runtime-bridge.cjs';
+const PROVIDER_SDK = 'provider-sdk.mjs';
+
+// Each core extension is one built file. Settings groups an extension's tools under its file name.
+const CORE: Record<keyof typeof R.CORE_EXTENSIONS, string> = {
+  ocx: 'piop-ocx-provider.mjs',
+  providersRefresh: 'piop-providers-refresh.mjs',
+  mcp: 'piop-mcp-bridge.mjs',
+  storage: 'piop-storage.mjs',
+  hooks: 'hooks-extended.mjs',
+  controls: 'piop-controls.mjs',
+  broker: 'session-broker.mjs',
+  compactionTiming: 'piop-compaction-timing.mjs',
+  contextWindowCap: 'piop-context-window-cap.mjs',
+  contextBar: 'piop-context-bar.mjs',
+  fastMode: 'piop-openai-fast-mode.mjs',
+  openaiCacheFork: 'piop-openai-cache-fork.mjs',
+  definedAgents: 'piop-define-agents.mjs',
+  skills: 'skills.mjs',
+};
+
+export interface GeneratedExtensions {
+  root: string;
+  bridge: string;
+  providerSdk: string;
+  core: Record<keyof typeof CORE, string>;
+  plugins: Array<{ after: Contributions.CoreExtension; path: string }>;
 }
 
-export const SESSION_BROKER_MODULES = R.SESSION_BROKER_MODULES;
+interface Sources { files: Map<string, string>; plugins: Array<{ after: Contributions.CoreExtension; path: string }> }
 
-export function prepareSessionExtensions(): { hooks: string; storage: string; controls: string; skills: string; broker: string } {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  prepareBrokerStorage(dir);
-  const modules = join(dir, 'session-broker');
-  ensurePrivateDir(modules);
-  for (const [name, content] of SESSION_BROKER_MODULES) atomicWritePrivate(join(modules, name), content);
-  for (const [extension, files] of R.SESSION_EXTENSIONS) {
-    ensurePrivateDir(join(dir, extension));
-    for (const [name, content] of files) atomicWritePrivate(join(dir, extension, name), content);
-  }
-  const broker = join(dir, 'session-broker.ts');
-  atomicWritePrivate(broker, R.sessionBroker);
-  return { hooks: join(dir, 'hooks-extended/index.ts'), storage: join(dir, 'piop-storage/index.ts'), controls: join(dir, 'piop-controls/index.ts'), skills: join(dir, 'piop-controls/skills.ts'), broker };
-}
-
-export function preparePluginExtensions(): Array<{ after: Contributions.CoreExtension; path: string }> {
-  const root = generatedExtensionRoot();
-  const entries: Array<{ after: Contributions.CoreExtension; path: string }> = [];
-  ensurePrivateDir(join(root, 'plugins'));
+function sources(): Sources {
+  const files = new Map<string, string>();
+  const add = (path: string, content: string) => {
+    if (files.has(path)) throw new Error('Two generated Pi files use the path ' + path);
+    files.set(path, content);
+  };
+  add(BRIDGE, R.runtimeBridge);
+  add(PROVIDER_SDK, R.providerSdk);
+  for (const [name, path] of Object.entries(CORE) as Array<[keyof typeof CORE, string]>) add(path, R.CORE_EXTENSIONS[name]);
+  const plugins: Sources['plugins'] = [];
   for (const plugin of Contributions.enabled()) {
-    if (!plugin.extension) continue;
-    const dir = join(root, 'plugins', plugin.id);
-    ensurePrivateDir(dir);
-    for (const [name, source] of plugin.extension.files) atomicWritePrivate(join(dir, name), source.replaceAll('"../../resources/', '"../../'));
-    entries.push({ after: plugin.extension.after, path: join(dir, 'index.ts') });
+    if (!plugin.manifest.extension || plugin.extension === undefined) continue;
+    const path = 'plugins/' + plugin.manifest.id + '.mjs';
+    add(path, plugin.extension);
+    plugins.push({ after: plugin.manifest.extension.after, path });
   }
-  return entries;
+  return { files, plugins };
 }
 
-function prepareSdkStorage(dir: string): void {
-  atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
-  atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
-  atomicWritePrivate(join(dir, 'storage-file.mjs'), R.storageFile);
-  atomicWritePrivate(join(dir, 'sdk-session-list.mjs'), R.sdkSessionList);
-  atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
-  atomicWritePrivate(join(dir, 'session-registry.cjs'), R.sessionRegistry);
+function contentName(files: Map<string, string>): string {
+  const hash = createHash('sha256');
+  for (const path of [...files.keys()].sort()) {
+    const body = Buffer.from(files.get(path)!);
+    hash.update(path).update('\0').update(String(body.length)).update('\0').update(body);
+  }
+  return hash.digest('hex');
 }
 
-function prepareBrokerStorage(dir: string): void {
-  atomicWritePrivate(join(dir, 'transcript-references.cjs'), R.transcriptReferences);
-  atomicWritePrivate(join(dir, 'session-database.cjs'), R.sessionDatabase);
-  atomicWritePrivate(join(dir, 'session-registry.cjs'), R.sessionRegistry);
-  atomicWritePrivate(join(dir, 'sdk-storage.mjs'), R.sdkStorage);
-  atomicWritePrivate(join(dir, 'storage-file.mjs'), R.storageFile);
+function syncPath(path: string): void {
+  const descriptor = openSync(path, constants.O_RDONLY);
+  try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
 
-export function prepareProvidersRefreshExtension(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'piop-providers-refresh.ts');
-  atomicWritePrivate(path, R.providersRefreshExtension);
-  return path;
+function writeFile(path: string, content: string): void {
+  const body = Buffer.from(content);
+  const descriptor = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    let offset = 0;
+    while (offset < body.length) offset += writeSync(descriptor, body, offset);
+    fsyncSync(descriptor);
+  } finally { closeSync(descriptor); }
 }
 
-export function prepareOcxProviderExtension(): string {
-  const dir = join(generatedExtensionRoot(), 'piop-ocx-provider');
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, 'ocx-provider.mjs'), R.ocxProviderModule);
-  const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.ocxProviderExtension);
-  return path;
+function writeFolder(root: string, files: Map<string, string>): void {
+  mkdirSync(root, { mode: 0o700 });
+  const folders = new Set([root]);
+  for (const [relative, content] of files) {
+    const path = join(root, relative);
+    for (let folder = dirname(path); !folders.has(folder); folder = dirname(folder)) {
+      mkdirSync(folder, { recursive: true, mode: 0o700 });
+      folders.add(folder);
+    }
+    writeFile(path, content);
+  }
+  for (const folder of [...folders].sort((left, right) => right.length - left.length)) syncPath(folder);
 }
 
-export function prepareOpenaiCacheForkExtension(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'piop-openai-cache-fork.ts');
-  atomicWritePrivate(path, R.openaiCacheForkExtension);
-  return path;
+let published: GeneratedExtensions | undefined;
+
+export function generatedExtensions(): GeneratedExtensions {
+  if (published) return published;
+  const { files, plugins } = sources();
+  const parent = join(extensionBase(), 'generated');
+  ensurePrivateDir(parent);
+  const root = join(parent, contentName(files));
+  if (!existsSync(root)) {
+    const temporary = join(parent, '.tmp-' + randomUUID());
+    try {
+      writeFolder(temporary, files);
+      renameSync(temporary, root);
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
+    syncPath(parent);
+  }
+  const path = (relative: string) => join(root, relative);
+  published = {
+    root,
+    bridge: path(BRIDGE),
+    providerSdk: path(PROVIDER_SDK),
+    core: Object.fromEntries(Object.entries(CORE).map(([name, relative]) => [name, path(relative)])) as GeneratedExtensions['core'],
+    plugins: plugins.map(plugin => ({ after: plugin.after, path: path(plugin.path) })),
+  };
+  return published;
 }
 
-export function prepareFastModeExtension(): string {
-  const dir = join(generatedExtensionRoot(), 'piop-openai-fast-mode');
-  ensurePrivateDir(dir);
-  const path = join(dir, 'index.ts');
-  atomicWritePrivate(path, R.fastModeBundle);
-  return path;
-}
-
-export function prepareContextBarExtension(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'piop-context-bar.ts');
-  atomicWritePrivate(path, R.contextBarExtension);
-  return path;
-}
-
-export function prepareCompactionTimingExtension(): string {
-  const dir = generatedExtensionRoot();
-  ensurePrivateDir(dir);
-  const path = join(dir, 'piop-compaction-timing.ts');
-  atomicWritePrivate(path, R.compactionTimingExtension);
-  return path;
-}
-
-export function prepareContextWindowCapExtension(settings: AppSettings): string {
-  saveContextCapSettings(settings);
-  const dir = join(generatedExtensionRoot(), 'piop-context-window-cap');
-  ensurePrivateDir(dir);
-  const extensionPath = join(dir, 'index.ts');
-  atomicWritePrivate(join(dir, 'interface.ts'), R.contextWindowCapInterface);
-  atomicWritePrivate(join(dir, 'app-settings.cjs'), R.appSettingsCjs);
-  atomicWritePrivate(join(dir, 'defaults.ts'), R.contextWindowCapDefaults.replace('../../daemon/resources/session-broker/app-settings.cjs', './app-settings.cjs'));
-  atomicWritePrivate(extensionPath, R.contextWindowCapExtension.replace('../../daemon/resources/hooks-extended/interface.ts', '../hooks-extended/interface.ts'));
-  return extensionPath;
-}
-
-function prepareAgentDirectories(dir: string): void {
-  ensurePrivateDir(dir);
-  atomicWritePrivate(join(dir, '../app-settings.cjs'), R.appSettingsCjs);
-}
-
-export function prepareDefinedAgentsExtension(): string {
-  const dir = join(generatedExtensionRoot(), 'piop-define-agents');
-  prepareAgentDirectories(dir);
-  const path = join(dir, 'index.ts');
-  for (const [name, source] of [
-    ['mcp-schema.ts', R.mcpSchemaBundle],
-    ['mcp-config.ts', R.agentMcpConfig],
-    ['extension-loader.ts', R.agentExtensionLoader],
-    ['state.ts', R.agentState],
-    ['resources.ts', R.agentResources],
-    ['prompts.ts', R.agentPrompts],
-    ['profiles.ts', R.agentProfiles],
-    ['fast-models.ts', R.agentFastModels],
-    ['../piop-context-window-cap/interface.ts', R.contextWindowCapInterface],
-    ['index.ts', R.definedAgentsExtension],
-  ] as const) atomicWritePrivate(join(dir, name), source);
-  return path;
+// Removes the folders of other builds and plugin setups. Call it only while this daemon holds
+// the claim of its folder and no Pi process of an earlier daemon is left: then nothing else uses them.
+export function removeUnusedGeneratedExtensions(): void {
+  const { root } = generatedExtensions();
+  const parent = dirname(root);
+  const failures: string[] = [];
+  for (const name of readdirSync(parent)) {
+    const path = join(parent, name);
+    if (path === root) continue;
+    try { rmSync(path, { recursive: true, force: true }); } catch (error) { failures.push(path + ': ' + errorText(error)); }
+  }
+  if (failures.length) throw new Error('Could not remove unused Pi extension folders: ' + failures.join('; '));
 }

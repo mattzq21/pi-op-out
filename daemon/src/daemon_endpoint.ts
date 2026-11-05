@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY, developmentEndpointKey } from './config';
+import { Type, type Static } from 'typebox';
+import { Check } from 'typebox/value';
+import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
-import * as records from './settings_records';
+import * as records from '../resources/application-records.cjs';
 import * as restartStorage from './restart_storage';
 import { tryLockFileSync, type FileLock } from './util/flock';
-import { generatedExtensionRoot } from './extensions';
+import { extensionBase } from './extensions';
 
 export const STARTUP_TIMEOUT = 90_000;
 
@@ -15,23 +17,21 @@ export const ALREADY_RUNNING_EXIT_CODE = 3;
 
 export class DaemonAlreadyRunningError extends Error {}
 
-export interface Endpoint { url: string; token: string; protocol: number }
+// How a client connects to the running daemon.
+const endpointSchema = Type.Object({ url: Type.String(), token: Type.String(), protocol: Type.Integer() });
+export type Endpoint = Static<typeof endpointSchema>;
 
 export function directory(): string {
-  const root = join(homeDir(), STORAGE_DIRECTORY);
-  if (!DEVELOPMENT) return root;
-  if (!PROJECT_DIR) throw new Error('Cannot locate project directory');
-  return join(root, 'daemons', developmentEndpointKey(PROJECT_DIR));
+  return join(homeDir(), STORAGE_DIRECTORY);
 }
 
-export function path(): string { return join(directory(), 'daemon.json'); }
 
 let runtime: any;
 
 export function debugRuntime(): any {
   if (runtime) return runtime;
   const executable = Bun.isStandaloneExecutable ? process.execPath : resolve(process.argv[1] ?? process.execPath);
-  const extensionRoot = generatedExtensionRoot();
+  const extensionRoot = extensionBase();
   runtime = {
     processId: process.pid,
     project: PROJECT_DIR || null,
@@ -46,24 +46,27 @@ export function debugRuntime(): any {
 }
 
 export function read(): Endpoint {
-  const body = records.read(path());
+  const body = records.read(directory(), 'daemon');
   if (!body) throw new Error('Daemon connection is not available');
-  return JSON.parse(body.toString('utf8'));
+  const endpoint = JSON.parse(body.toString('utf8'));
+  if (!Check(endpointSchema, endpoint)) throw new Error('The saved daemon connection is not valid');
+  return endpoint;
 }
 
-export function restartActive(): boolean {
+// When the restart that runs now must end at the latest, in ms since 1970; undefined when no restart runs.
+export function restartEnds(): number | undefined {
   try {
-    const status = restartStorage.read(join(directory(), 'restart-status.json'));
-    if (!status) return false;
-    const now = Math.floor(Date.now() / 1000);
-    return ['preparing', 'armed', 'restarting'].includes(status.phase) && Number(status.expiresAt ?? 0) > now;
-  } catch { return false; }
+    const status = restartStorage.read(directory(), 'status');
+    if (!status) return undefined;
+    const ends = Number(status.expiresAt ?? 0) * 1000;
+    return ['preparing', 'armed', 'restarting'].includes(status.phase) && ends > Date.now() ? ends : undefined;
+  } catch { return undefined; }
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function identity(): string {
-  const bytes = records.readOrCreate(join(directory(), 'daemon-id'), randomUUID());
+  const bytes = records.readOrCreate(directory(), 'daemon-id', randomUUID());
   const value = bytes.toString('utf8').trim();
   if (!UUID.test(value)) throw new Error('Invalid daemon identity');
   return value.toLowerCase();
@@ -89,9 +92,9 @@ function endpointRecord(address: string, port: number, token: string): string {
 }
 
 export function publish(address: string, port: number, token: string): void {
-  records.publish(path(), endpointRecord(address, port, token));
+  records.save(directory(), 'daemon', endpointRecord(address, port, token));
 }
 
 export function unpublish(address: string, port: number, token: string): void {
-  records.removeIfEqual(path(), endpointRecord(address, port, token));
+  records.removeIfEqual(directory(), 'daemon', endpointRecord(address, port, token));
 }

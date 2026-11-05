@@ -1,10 +1,9 @@
 import { z } from "zod";
 import { nativeCall as call } from "./nativeCall";
 import { listen } from "./platform";
+import type { CommandResult } from "../../../protocol/commands";
 
-const outcomeSchema = z.union([z.object({ accepted: z.literal(true) }), z.object({ accepted: z.literal(false), error: z.string() })]);
-
-export type SubmissionOutcome = z.infer<typeof outcomeSchema>;
+export type SubmissionOutcome = CommandResult<"submission_outcome">;
 
 const RETRY_MS = 15000;
 
@@ -20,7 +19,7 @@ function reconnected() {
 
 export async function confirmSubmission(hostId: string, submissionId: string, failed?: (reason: string) => void, open = () => true): Promise<SubmissionOutcome | undefined> {
   while (open()) {
-    try { return await call("submission_outcome", { hostId, submissionId }, outcomeSchema); }
+    try { return await call("submission_outcome", { hostId, submissionId }); }
     catch (reason) { failed?.(reason instanceof Error ? reason.message : String(reason)); await reconnected(); }
   }
 }

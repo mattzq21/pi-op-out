@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { startDaemon, type TestDaemon } from './harness';
 
-const appSettings = createRequire(import.meta.url)('../../daemon/resources/session-broker/app-settings.cjs');
+const records = createRequire(import.meta.url)('../../daemon/resources/application-records.cjs');
 let daemon: TestDaemon;
 beforeAll(async () => { daemon = await startDaemon(); }, 60000);
 afterAll(async () => { await daemon?.stop(); });
@@ -68,7 +68,7 @@ test('a new chat reads changed agent definitions only when it asks for a reload'
   const before = await auth({ action: 'draft_catalog' });
   expect(names(before)).toContain('general');
   const { isDefault: _isDefault, ...general } = before.config.agents.find((agent: any) => agent.name === 'general');
-  appSettings.write(join(daemon.home, '.piop', 'agent-definitions.json'), JSON.stringify({ agents: [...before.config.agents, { ...general, name: 'added-on-disk' }] }));
+  records.save(join(daemon.home, '.piop'), 'agent-definitions', JSON.stringify({ agents: [...before.config.agents, { ...general, name: 'added-on-disk' }] }));
   expect(names(await auth({ action: 'draft_catalog' }))).not.toContain('added-on-disk');
   expect(names(await auth({ action: 'draft_catalog', reload: true }))).toContain('added-on-disk');
 }, 60000);

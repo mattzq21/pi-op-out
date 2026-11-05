@@ -2,6 +2,7 @@ import { z, type JSONType } from "zod";
 import { jsonResultSchema, remotePacketSchema, type NativeArguments, type RemotePacket } from "./transportSchemas";
 import { isMobileDebugConnection, mobileDebugToken } from "./mobileDebug";
 import { busyRetryDelay, HOST_BUSY } from "./backpressure";
+import { MAX_REQUEST_BYTES, PROTOCOL_VERSION } from "../../../protocol/connection";
 
 export interface HostConnection { url: string }
 
@@ -27,7 +28,6 @@ export class RemoteClient {
   private sequence = 0;
   private ready = false;
   private pending = new Map<number, Pending>();
-  private terminals = new Set<string>();
   private listeners = new Map<string, Set<(event: RemoteEvent) => void>>();
   private logStatuses = new Map<string, RemoteEvent>();
   private heartbeat?: ReturnType<typeof setInterval>;
@@ -83,7 +83,7 @@ export class RemoteClient {
         }
 
         if (message.type === "ready" && !ready) {
-          if (message.protocol !== 1) {
+          if (message.protocol !== PROTOCOL_VERSION) {
             settleReject(new Error(`Incompatible Piop daemon protocol ${message.protocol ?? "unknown"} (build ${message.buildId || "unknown"}); this phone requires protocol 1. Update the app and daemon.`));
             socket.close();
 
@@ -152,9 +152,6 @@ export class RemoteClient {
         const payload = z.object({ hostId: z.string(), failure: z.string().nullable() }).parse(message.payload);
         this.logStatuses.set(payload.hostId, { event: message.event, payload });
       }
-      const event = z.object({ type: z.string().optional(), terminalId: z.string().optional() }).catch({}).parse(message.payload);
-
-      if (message.event === "pi://event" && event?.type === "terminal_exit" && event.terminalId) this.terminals.delete(event.terminalId);
       this.listeners.get(message.event)?.forEach((listener) => listener({ event: String(message.event), payload: message.payload }));
 
       return;
@@ -191,9 +188,7 @@ export class RemoteClient {
     const id = ++this.sequence;
     const packet = JSON.stringify({ id, command, args });
 
-    if (new TextEncoder().encode(packet).byteLength > 32 * 1024 * 1024) return Promise.reject(new Error("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message."));
-
-    if (command === "start_terminal" && args.terminalId !== undefined) this.terminals.add(args.terminalId);
+    if (new TextEncoder().encode(packet).byteLength > MAX_REQUEST_BYTES) return Promise.reject(new Error("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message."));
 
     return new Promise<JSONType | undefined>((resolve, reject) => {
       const request: Pending = { resolve, reject, retries: 0, retry: () => { if (this.pending.get(id) === request) this.sendRequest(socket, packet, id, request); } };
@@ -232,8 +227,6 @@ export class RemoteClient {
     clearInterval(this.heartbeat);
     this.heartbeatCleanup?.(); this.heartbeatCleanup = undefined;
 
-    for (const terminalId of this.terminals) this.receive({ event: "pi://event", payload: { type: "terminal_exit", terminalId } });
-    this.terminals.clear();
     this.pending.forEach(({ timer, retryTimer, reject }) => { clearTimeout(timer); clearTimeout(retryTimer); reject(new Error("Disconnected from host; the command may have completed.")); });
     this.pending.clear();
   }

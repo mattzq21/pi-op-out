@@ -10,8 +10,8 @@ const { home, cwd, folder } = JSON.parse(readFileSync(0, 'utf8'));
 process.env.HOME = home; delete process.env.PIOP_STORAGE_DIRECTORY;
 const directory = await mkdtemp(join(home, 'subagent-fixture-'));
 try {
-  const outfile = join(directory, 'session-file.mjs');
-  await build({ entryPoints: ['daemon/resources/piop-storage/session-file.ts'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
+  const outfile = join(directory, 'publication-writes.mjs');
+  await build({ entryPoints: ['daemon/resources/piop-storage/publication-writes.mjs'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { writeSessionFile } = await import(pathToFileURL(outfile));
   const { reserve } = await import("../../daemon/resources/session-database.cjs");
@@ -24,7 +24,7 @@ try {
     const entries = parent ? [
       { type: 'custom', id: 'parent', parentId: null, timestamp, customType: 'piop-auxiliary-parent', data: { kind: 'subagent', version: 1, sessionId: id, hostId: 'local', parentSessionId: parent.id, parentHostId: 'local', parentSessionPath: parent.path, toolCallId: randomUUID(), task: 'help' } },
     ] : [{ type: 'message', id: 'request', parentId: null, message: { role: 'user', content: 'Saved chat', timestamp: 1 } }];
-    await writeSessionFile(path, [{ type: 'session', version: 3, id, timestamp, cwd }, ...entries], { ...parent ? { name: 'Subagent: ' + name } : {}, dependencies: { workspace: { path: cwd, kind: 'existing' } } });
+    await writeSessionFile(join(home, '.piop'), path, [{ type: 'session', version: 3, id, timestamp, cwd }, ...entries], { ...parent ? { name: 'Subagent: ' + name } : {}, dependencies: { workspace: { path: cwd, kind: 'existing' } } });
     return { id, path };
   };
   const root = await publish();

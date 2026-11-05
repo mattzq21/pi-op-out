@@ -26,10 +26,13 @@ import { QueueGoal } from './goals/state';
 import { GOAL_COMMAND } from './goals/commands';
 import { goalPreparationView, restoreGoalAttachments, type GoalPlace } from './goals/files';
 import type { BrokerAnswer, BrokerCall } from '../broker';
+import type { HostEvents } from './events';
+import { PiStorage } from './pi_storage';
 
 export interface SessionHost {
+  storageRoot(): string;
   queueRoot(): string | null;
-  output(packet: any): void;
+  readonly events: HostEvents;
   configuration(): any | null;
   readonlyViews(identity: string): string[];
   readonly(runtime: string): boolean;
@@ -143,7 +146,7 @@ export class Session {
     session.spec.env.PIOP_QUEUE_HELD = held ? '1' : '0';
     await session.reconcileQueue();
     assertRunning();
-    session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home);
+    session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home, new PiStorage(host.storageRoot()));
     session.restoreGoalFiles();
     return session;
   }
@@ -162,7 +165,7 @@ export class Session {
   }
 
   private goalError(message: string): void {
-    this.host.output({ type: 'diagnostic', line: this.key + ': ' + message });
+    this.host.events.diagnostic(this.key + ': ' + message);
     const event = { type: 'extension_ui_request', id: randomUUID(), method: 'notify', notifyType: 'error', message };
     if (this.viewsList.length) this.publish(event, null); else this.unseenErrors.push(event);
   }
@@ -174,9 +177,9 @@ export class Session {
       response: (event, request) => this.inOrder(() => this.response(event, request), false),
       stderr: line => {
         if (this.stderrTail.push(line) > 20) this.stderrTail.shift();
-        for (const [runtime] of [...this.viewsList]) this.host.output({ type: 'stderr', runtimeId: runtime, line });
+        for (const [runtime] of [...this.viewsList]) this.host.events.stderr(runtime, line);
       },
-      diagnostic: line => this.host.output({ type: 'diagnostic', line }),
+      diagnostic: line => this.host.events.diagnostic(line),
       finished: () => this.finish(),
       disconnectError: status => this.disconnectError(status),
     };
@@ -186,7 +189,7 @@ export class Session {
     const base = this.state === null ? 'Pi stopped before it was ready' : 'Pi disconnected before responding';
     const tail = this.stderrTail.join('\n').trim();
     const message = base + (status ? ' (' + status + ')' : '') + (tail ? ':\n' + tail : '');
-    if (!this.viewsList.length && !this.isStopping && (this.state === null || status !== 'exit code 0')) this.host.output({ type: 'diagnostic', line: this.key + ': ' + message });
+    if (!this.viewsList.length && !this.isStopping && (this.state === null || status !== 'exit code 0')) this.host.events.diagnostic(this.key + ': ' + message);
     this.startupError = message;
     return message;
   }
@@ -196,7 +199,7 @@ export class Session {
     this.events = result.then(() => {}, error => {
       if (!report) return;
       console.error('Session event failed for ' + this.key + ': ' + errorText(error));
-      this.host.output({ type: 'diagnostic', line: 'Session event failed for ' + this.key + ': ' + errorText(error) });
+      this.host.events.diagnostic('Session event failed for ' + this.key + ': ' + errorText(error));
     });
     return result;
   }
@@ -218,7 +221,7 @@ export class Session {
 
   private async reconcileQueue(): Promise<void> {
     try { await this.queue.confirmConsumed(); } catch (error) {
-      this.host.output({ type: 'diagnostic', line: 'Queued input retained for review: ' + errorText(error) });
+      this.host.events.diagnostic('Queued input retained for review: ' + errorText(error));
     }
   }
 
@@ -276,12 +279,12 @@ export class Session {
           stopped.type = 'runtime_presence';
           stopped.isStreaming = false;
           stopped.viewers = this.visibleViewers();
-          this.host.output({ type: 'event', runtimeId: runtime, event: stopped });
+          this.host.events.runtimeEvent(runtime, stopped);
           continue;
         }
         if (name === 'extension_ui_request' && interactive(event)) continue;
       }
-      this.host.output({ type: 'event', runtimeId: runtime, event });
+      this.host.events.runtimeEvent(runtime, event);
     }
   }
 
@@ -289,6 +292,8 @@ export class Session {
     const previous = this.epoch + ':' + this.contentRevision;
     if (name === 'session_info_changed') this.toolPayloadRevision += 1;
     if (stateChange(name)) { this.stateRevision += 1; this.host.stateChanged(this.identity); }
+    // A queue change does not change the state, but a watcher that waits for the chat to be idle needs to know it.
+    else if (name === 'queue_update') this.host.stateChanged(this.identity);
     if (stateChange(name) || ['message_update', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'queue_update', 'settings_applied', 'extension_ui_request'].includes(name)) this.contentRevision += 1;
     if (this.isTransient) return undefined;
     this.sequence += 1;
@@ -309,7 +314,7 @@ export class Session {
   publishState(): void {
     const messageable = this.unused();
     if (this.isTransient) return;
-    this.host.output({ type: 'session_state', sessionKey: this.key, epoch: this.epoch, state: clone(this.state), working: this.isWorking, messageable, settingsPending: this.settings.pending() });
+    this.host.events.sessionState({ sessionKey: this.key, epoch: this.epoch, state: clone(this.state), working: this.isWorking, messageable, settingsPending: this.settings.pending() });
   }
 
   private publishPresence(): void {
@@ -458,7 +463,7 @@ export class Session {
       return undefined;
     }
     catch (error) {
-      this.host.output({ type: 'diagnostic', line: this.key + ': ' + event.name + ' failed: ' + errorText(error) });
+      this.host.events.diagnostic(this.key + ': ' + event.name + ' failed: ' + errorText(error));
       throw error;
     } finally { this.idleStop.schedule(); }
   }
@@ -485,7 +490,7 @@ export class Session {
     const file = this.state?.sessionFile;
     if (typeof file !== 'string' || file === this.listedFile) return;
     this.listedFile = file;
-    this.host.output({ type: 'sessions_changed' });
+    this.host.events.sessionsChanged();
   }
 
   private retainLive(event: any): void {
@@ -584,7 +589,7 @@ export class Session {
     const result = await this.raw(clone(command));
     this.settings.remember(command);
     if (['set_model', 'set_thinking_level', 'rewind_message'].includes(kind(command))) this.publish({ type: 'session_info_changed' }, null);
-    if (kind(command) === 'rewind_message') this.host.output({ type: 'sessions_changed' });
+    if (kind(command) === 'rewind_message') this.host.events.sessionsChanged();
     return result;
   }
 
@@ -694,6 +699,6 @@ export class Session {
 function queueStorage(host: SessionHost, spec: LaunchSpec, cwd: string | null, home: string, key: string): QueueStorage | null {
   const root = host.queueRoot();
   if (root === null) return null;
-  const directory = cwd ?? spec.cwd ?? spec.env.PIOP_SESSION_CWD ?? home;
+  const directory = cwd ?? spec.cwd ?? home;
   return new QueueStorage(root, specIdentity(spec, key)).withOrigin(directory, argument(spec, '--session'));
 }

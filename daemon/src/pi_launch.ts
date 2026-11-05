@@ -2,16 +2,15 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
-import { homeDir, nodeExecutable, pathWithNode, piExecutable } from './environment';
+import { homeDir, nodeExecutable, pathWithNode } from './environment';
+import { installedPi } from './pi_install';
 import * as Ext from './extensions';
 import * as Contributions from './plugin_contributions';
 import { ensureDesktopSessionsDir, shellQuote } from './process_io';
 import * as Registry from './session_registry';
 import { validateRemoteHost, type AppSettings } from './settings_types';
 import { transaction } from './util/db';
-import { sessionWorkerCommand } from './session_worker';
 import type { BrokerRuntime } from './broker';
-import { requireLocal } from './host_connection';
 import { QUEUE_TOOLS } from './host/goals/commands';
 
 export { validateRemoteHost };
@@ -40,8 +39,7 @@ export function remoteDirectoryPath(path: string | undefined | null): string {
   return shellQuote(trimmed);
 }
 
-export async function sessionIdentity(_settings: AppSettings, hostId: string, path: string): Promise<string> {
-  requireLocal(hostId);
+export async function sessionIdentity(path: string): Promise<string> {
   const registered = localRegisteredIdentity(path);
   if (registered) return registered;
   return transcriptSessionIdentity(path);
@@ -74,20 +72,18 @@ function startsWithPath(path: string, root: string): boolean { return path === r
 
 export function localRegisteredIdentity(path: string): string | undefined {
   const root = join(homeDir(), STORAGE_DIRECTORY);
-  const database = Registry.open(root);
-  try {
-    const row = database.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
-    const id = row?.session_id ?? undefined;
-    const canonicalRoot = realpathSync(root);
-    if (!id && [root, canonicalRoot].some(directory => ['sessions', 'archived'].some(area => startsWithPath(path, join(directory, area))))) {
-      throw new Error('Session path is not registered');
-    }
-    if (id) return id;
-    return localExternalIdentity(database, path);
-  } finally { database.close(); }
+  const database = Registry.connection(root);
+  const row = database.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(path) as { session_id: string | null } | undefined;
+  const id = row?.session_id ?? undefined;
+  const canonicalRoot = realpathSync(root);
+  if (!id && [root, canonicalRoot].some(directory => ['sessions', 'archived'].some(area => startsWithPath(path, join(directory, area))))) {
+    throw new Error('Session path is not registered');
+  }
+  if (id) return id;
+  return localExternalIdentity(database, path);
 }
 
-function localExternalIdentity(database: ReturnType<typeof Registry.open>, path: string): string | undefined {
+function localExternalIdentity(database: ReturnType<typeof Registry.connection>, path: string): string | undefined {
   return transaction(database, 'IMMEDIATE', () => {
     const key = createHash('sha256').update(path).digest('hex');
     const row = database.prepare("SELECT json_extract(record_json, '$.sessionId') AS id FROM external_transcripts WHERE record_id=? AND json_extract(record_json, '$.path')=?").get(key, path) as { id: string | null } | undefined;
@@ -110,27 +106,24 @@ function importExternalIdentity(path: string): string {
 
 export type PiLaunch = { kind: 'rpc'; cwd?: string | null; sessionPath?: string | null; sessionId?: string | null; forkPath?: string | null } | { kind: 'prompt-preview'; cwd: string };
 
-export function buildPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, _daemonPort?: number): LaunchCommand {
-  if (hostId !== 'local') throw new Error('Remote Pi must be launched by its owning daemon');
-  return localPiCommand(settings, hostId, launch, homeDir());
+export async function buildPiCommand(settings: AppSettings, launch: PiLaunch): Promise<LaunchCommand> {
+  return localPiCommand(settings, launch, homeDir(), (await installedPi()).cli);
 }
 
-function localWorkerCommand(piPath: string, launch: PiLaunch): LaunchCommand {
-  const command: LaunchCommand = launch.kind === 'prompt-preview'
-    ? { program: nodeExecutable(), args: [join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs'), piPath], env: { PIOP_PROMPT_PREVIEW: '1' } }
-    : sessionWorkerCommand(piPath);
+function localWorkerCommand(piPath: string, launch: PiLaunch, bridge: string): LaunchCommand {
+  const command: LaunchCommand = { program: nodeExecutable(), args: [bridge, piPath], env: launch.kind === 'prompt-preview' ? { PIOP_PROMPT_PREVIEW: '1' } : {} };
   command.env.PIOP_STORAGE_DIRECTORY = STORAGE_DIRECTORY;
   command.env.PI_CODING_AGENT_DIR = join(homeDir(), STORAGE_DIRECTORY);
   command.args.push('--mode', 'rpc');
   return command;
 }
 
-function localPiCommand(settings: AppSettings, hostId: string, launch: PiLaunch, desktopHome: string): LaunchCommand {
-  const piPath = piExecutable();
+function localPiCommand(settings: AppSettings, launch: PiLaunch, desktopHome: string, piPath: string): LaunchCommand {
+  const generated = Ext.generatedExtensions();
   const sessionDir = ensureDesktopSessionsDir(desktopHome);
-  const command = localWorkerCommand(piPath, launch);
-  configureLocalExtensions(command, settings, hostId, sessionDir);
-  command.env.PIOP_RPC_ENTRY = join(Ext.generatedExtensionRoot(), 'runtime-bridge.cjs');
+  const command = localWorkerCommand(piPath, launch, generated.bridge);
+  configureLocalExtensions(command, settings, sessionDir, generated);
+  command.env.PIOP_RPC_ENTRY = generated.bridge;
   command.env.JITI_NATIVE_MODULES = '["typebox"]';
   command.env.NODE_COMPILE_CACHE = join(homeDir(), STORAGE_DIRECTORY, 'node-compile-cache');
   const node = nodeExecutable();
@@ -154,34 +147,24 @@ function configureLocalLaunch(command: LaunchCommand, launch: PiLaunch, piPath: 
   else if (launch.sessionId) command.args.push('--session-id', launch.sessionId);
 }
 
-function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, hostId: string, sessionDir: string): void {
-  const root = Ext.generatedExtensionRoot();
-  Ext.prepareRuntimeBridge();
+function configureLocalExtensions(command: LaunchCommand, settings: AppSettings, sessionDir: string, generated: Ext.GeneratedExtensions): void {
+  const core = generated.core;
   command.env.PIOP_AGENT_RESOURCES = JSON.stringify({ ...Ext.agentResources(settings), pluginAgentTools: Contributions.agentTools() });
   command.env.PIOP_STORAGE_ROOT = join(homeDir(), STORAGE_DIRECTORY);
-  command.env.PIOP_CONTEXT_CAP_SETTINGS_PATH = join(root, 'context-cap-settings.json');
-  command.env.PIOP_GENERATED_EXTENSION_ROOT = root;
-  const mcpExtension = Ext.prepareMcpBridge();
-  const contextWindowCapExtension = Ext.prepareContextWindowCapExtension(settings);
-  const contextBarExtension = Ext.prepareContextBarExtension();
-  const openaiCacheForkExtension = Ext.prepareOpenaiCacheForkExtension();
-  const definedAgentsExtension = Ext.prepareDefinedAgentsExtension();
-  const session = Ext.prepareSessionExtensions();
-  const plugins = Ext.preparePluginExtensions();
-  const after = (core: Contributions.CoreExtension) => plugins.filter(plugin => plugin.after === core).flatMap(plugin => ['--extension', plugin.path]);
+  command.env.PIOP_CONTEXT_CAP_SETTINGS = JSON.stringify(Ext.contextCapSettings(settings));
+  const after = (position: Contributions.CoreExtension) => generated.plugins.filter(plugin => plugin.after === position).flatMap(plugin => ['--extension', plugin.path]);
   command.args.push('--extension', 'builtin:codemode', '--extension', 'builtin:tool-search');
   command.args.push('--session-dir', sessionDir, '--approve', '--no-skills',
-    '--extension', Ext.prepareOcxProviderExtension(), '--extension', Ext.prepareProvidersRefreshExtension(), '--extension', mcpExtension, '--extension', session.storage, '--extension', session.hooks, '--extension', session.controls, '--extension', session.broker, '--extension', Ext.prepareCompactionTimingExtension(), ...after('session'),
-    '--extension', contextWindowCapExtension, '--extension', contextBarExtension, ...after('context-bar'),
-    '--extension', Ext.prepareFastModeExtension(), '--extension', openaiCacheForkExtension,
-    '--extension', definedAgentsExtension, '--extension', session.skills);
+    '--extension', core.ocx, '--extension', core.providersRefresh, '--extension', core.mcp, '--extension', core.storage, '--extension', core.hooks, '--extension', core.controls, '--extension', core.broker, '--extension', core.compactionTiming, ...after('session'),
+    '--extension', core.contextWindowCap, '--extension', core.contextBar, ...after('context-bar'),
+    '--extension', core.fastMode, '--extension', core.openaiCacheFork,
+    '--extension', core.definedAgents, '--extension', core.skills);
   Object.assign(command.env, {
-    PI_DESKTOP_DEFINED_AGENTS_EXTENSION: definedAgentsExtension,
-    PIOP_MCP_EXTENSION: mcpExtension,
-    PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: contextWindowCapExtension,
+    PI_DESKTOP_DEFINED_AGENTS_EXTENSION: core.definedAgents,
+    PIOP_MCP_EXTENSION: core.mcp,
+    PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION: core.contextWindowCap,
     PIOP_COMMAND_POLICY: JSON.stringify(Contributions.commandPolicy()),
     PIOP_QUEUE_TOOLS: JSON.stringify(QUEUE_TOOLS),
-    PI_DESKTOP_HOST_ID: hostId,
   });
 }
 

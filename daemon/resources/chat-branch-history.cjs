@@ -10,6 +10,7 @@ const database = require('./session-database.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 const auxiliaryCopies = require('./piop-storage/auxiliary-copies.cjs');
 const names = require('./session-broker/session-names.cjs');
+const { onMainThread } = require('./main-thread.cjs');
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
@@ -131,9 +132,7 @@ function journals(root, sessionId) {
 }
 
 function registeredPath(root, sessionId) {
-  const db = database.open(root);
-  try { return db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId); }
-  finally { db.close(); }
+  return database.connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId);
 }
 
 function removeFile(file) {
@@ -158,12 +157,10 @@ function removeJournal(root, journal, target) {
   database.removePublication(root, journal.id);
 }
 
-function removeWriterLock(root, target) {
-  const file = io.lockPath(root, target);
-  if (!io.exists(file)) return;
-  const lease = io.claim(file);
-  if (lease === null) throw new Error('Another writer still owns this branch: ' + file);
-  try { removeFile(file); } finally { fs.closeSync(lease); }
+function checkNoWriter(root, target) {
+  const lease = io.claim(io.lockName(target));
+  if (lease === null) throw new Error('Another writer still owns this branch: ' + target);
+  lease();
 }
 
 function releaseClaims(root, sessionId) {
@@ -175,13 +172,15 @@ function releaseClaims(root, sessionId) {
   });
 }
 
+const releaseReservation = onMainThread('chat-branch-history.releaseReservation', (root, sessionId) => {
+  database.connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(sessionId);
+});
+
 function forget(root, sessionId, target) {
   const row = registeredPath(root, sessionId);
   if (!row) return;
   if (row.session_path === null) {
-    const db = database.open(root);
-    try { db.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(sessionId); }
-    finally { db.close(); }
+    releaseReservation(root, sessionId);
     return;
   }
   if (row.session_path !== target) throw new Error('This branch identity belongs to another conversation: ' + row.session_path);
@@ -206,7 +205,7 @@ async function discardBranchHistory(root, sessionId, sessionPath) {
       const step = operation => { try { operation(); } catch (error) { failures.push(message(error)); } };
       if (target !== null) step(() => { if (io.exists(target)) { ownedTranscript(target, sessionId); removeFile(target); } });
       for (const journal of pending) step(() => removeJournal(root, journal, target));
-      if (target !== null) step(() => removeWriterLock(root, target));
+      if (target !== null) step(() => checkNoWriter(root, target));
       step(() => releaseClaims(root, sessionId));
       if (!failures.length) step(() => forget(root, sessionId, target));
       if (failures.length) throw new Error('Branch cleanup is incomplete: ' + failures.join('; '));

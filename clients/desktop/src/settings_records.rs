@@ -1,5 +1,6 @@
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use std::{path::Path, time::Duration};
+use std::{fs, io::Write, path::Path};
+
+// The desktop app's own preference file. Only the desktop app writes it; the daemon's storage is not touched.
 
 #[derive(serde::Serialize)]
 pub(crate) struct Publication {
@@ -9,36 +10,36 @@ pub(crate) struct Publication {
     pub(crate) error: Option<String>,
 }
 
-pub(super) fn open(path: &Path) -> Result<Connection, String> {
-    let root = path.parent().ok_or("Settings have no storage directory")?;
-    crate::private_fs::ensure_private_dir(root)?;
-    let file = root.join("sessions.sqlite");
-    let database = Connection::open_with_flags(&file, rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW).map_err(|error| error.to_string())?;
-    crate::private_fs::set_private_file_permissions(&file)?;
-    database.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
-    database.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-        CREATE TABLE IF NOT EXISTS application_settings (name TEXT PRIMARY KEY, body BLOB);")
-        .map_err(|error| error.to_string())?;
-    Ok(database)
-}
-
-pub(super) fn name(path: &Path) -> Result<&str, String> {
-    path.file_name().and_then(|name| name.to_str()).ok_or_else(|| "Invalid settings record name".into())
-}
-
 pub(crate) fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let mut database = open(path)?;
-    let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-    let key = name(path)?;
-    let saved: Option<Option<Vec<u8>>> = transaction.query_row("SELECT body FROM application_settings WHERE name=?", [key], |row| row.get(0))
-        .optional().map_err(|error| error.to_string())?;
-    let body = saved.flatten();
-    transaction.commit().map_err(|error| error.to_string())?;
-    Ok(body)
+    match fs::read(path) {
+        Ok(body) => Ok(Some(body)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Could not read {}: {error}", path.display())),
+    }
 }
 
+// Replaces the file in one step: a crash leaves the old or the new contents.
 pub(crate) fn publish(path: &Path, body: &[u8]) -> Result<Publication, String> {
-    open(path)?.execute("INSERT INTO application_settings (name, body) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET body=excluded.body", params![name(path)?, body])
-        .map_err(|error| error.to_string())?;
+    let directory = path.parent().ok_or("Preferences have no folder")?;
+    crate::private_fs::ensure_private_dir(directory)?;
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    let written = (|| -> std::io::Result<()> {
+        let mut options = fs::OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(body)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        fs::File::open(directory)?.sync_all()
+    })();
+    if let Err(error) = written {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("Could not save {}: {error}", path.display()));
+    }
     Ok(Publication { committed: true, durable: true, error: None })
 }

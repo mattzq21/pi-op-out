@@ -1,14 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 export function storageSchemaImports() {
   return { name: "storage-schema-imports", setup(build) {
-    build.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => {
-      if (!args.importer.includes('/extensions/piop-define-agents/')) return;
-
-      return { path: fileURLToPath(new URL('../daemon/resources/session-broker/app-settings.cjs', import.meta.url)) };
-    });
     build.onResolve({ filter: /\.cjs\?storage-export=[\w,]+$/ }, args => ({ path: resolve(args.resolveDir, args.path), namespace: "storage-export" }));
     build.onLoad({ filter: /.*/, namespace: "storage-export" }, ({ path }) => {
       const [module, names] = path.split("?storage-export=");
@@ -17,12 +11,6 @@ export function storageSchemaImports() {
     });
     build.onLoad({ filter: /\.cjs$/ }, async ({ path }) => {
       const source = await readFile(path, "utf8");
-
-      if (basename(path) === 'app-settings.cjs') return { contents: source
-        .replace("const fs = require('node:fs');", "import fs from 'node:fs';")
-        .replace("const path = require('node:path');", "import path from 'node:path';")
-        .replace("const { DatabaseSync } = require('node:sqlite');", "import { DatabaseSync } from 'node:sqlite';")
-        .replace('module.exports = { read, readFile, readText, write };', 'export { read, readFile, readText, write };'), loader: 'js' };
 
       const values = /const \{ ([A-Z]\w*(?:, [A-Z]\w*)*) \} = require\(["']typebox\/value["']\);/g;
       const contents = lazyImports(canonicalImports(schemaImports(source), path), path).replace(values, (_declaration, names) => `import { ${names} } from "typebox/value";`);
@@ -35,14 +23,14 @@ export function storageSchemaImports() {
 }
 
 const canonicalModules = new Set([
-  "file-lock.cjs", "session-records.cjs",
+  "session-records.cjs",
   "external-transcripts.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
   "session-database.cjs", "temporary-chat.cjs", "transcript-references.cjs", "goal-dependencies.cjs", "goal-preparations.cjs", "goal-ownership.cjs",
 
   "archive-plan.cjs", "storage-transaction.cjs", "deletion-retention.cjs", "goal-asset-cleanup.cjs", "registry-deletion.cjs",
   "restore-receipts.cjs", "restore-plan.cjs", "retention-candidates.cjs", "retention-collection.cjs", "session-transactions.cjs", "reference-publication-lock.cjs",
-  "transcript-identity.cjs",
-  "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "session-names.cjs", "review-publication.cjs", "goal-assets.cjs",
+  "transcript-identity.cjs", "storage-channel.cjs", "main-thread.cjs", "application-records.cjs",
+  "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "session-names.cjs", "goal-assets.cjs",
 ]);
 
 function canonicalImports(source, path) {

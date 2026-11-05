@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { daemonImports } from './daemon-imports.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const debug = process.argv.includes('--debug');
@@ -25,22 +26,6 @@ function hostTriple() {
   const arch = { x64: 'x86_64', arm64: 'aarch64', ia32: 'i686' }[process.arch] ?? process.arch;
   return arch + '-unknown-linux-gnu';
 }
-
-const rawText = {
-  name: 'raw-text',
-  setup(context) {
-    context.onResolve({ filter: /\?raw$/ }, args => ({ path: resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw-text' }));
-    context.onLoad({ filter: /.*/, namespace: 'raw-text' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text', watchFiles: [args.path] }));
-  },
-};
-
-const agentLoader = {
-  name: 'agent-loader',
-  setup(context) {
-    context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
-    context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
-  },
-};
 
 const source = join(root, 'target', debug ? 'debug' : 'release', 'piopd');
 mkdirSync(dirname(source), { recursive: true });
@@ -68,7 +53,7 @@ try {
     sourcemap: debug ? 'inline' : false,
     legalComments: 'none',
     logLevel: 'warning',
-    plugins: [rawText, agentLoader],
+    plugins: [daemonImports()],
   });
   const bundle = readFileSync(temporaryBuild, 'utf8');
   if (!bundle.includes(buildIdPlaceholder)) throw new Error('Daemon build ID is missing from the bundle');

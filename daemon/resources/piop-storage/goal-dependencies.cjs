@@ -1,16 +1,29 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
+
+// The goal folders whose attachments a chat or a goal folder uses, each with the identity of the folder it used.
+const contractSchema = Type.Object({
+  version: Type.Literal(1), policy: Type.Literal('shared-profile'),
+  directories: Type.Array(Type.Object({ path: Type.String(), identity: Type.String({ pattern: '^\\d+:\\d+$' }) })),
+});
+
+function validContract(value) { return Check(contractSchema, value); }
+
+// The saved contract text as a contract.
+function parseContract(text) {
+  const contract = JSON.parse(text);
+
+  if (!validContract(contract)) throw new Error('Invalid goal asset dependency contract');
+
+  return contract;
+}
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try {
-    db.exec('CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity)); CREATE TABLE IF NOT EXISTS goal_text_contents (directory TEXT NOT NULL, identity TEXT NOT NULL, contents_json TEXT NOT NULL, PRIMARY KEY(directory, identity))');
-
-    return operation(db);
-  }
-  finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function identity(directory) {
@@ -21,7 +34,7 @@ function identity(directory) {
   return `${info.dev}:${info.ino}`;
 }
 
-function value(row) { return row && row.record_json !== null ? JSON.parse(row.record_json) : undefined; }
+function value(row) { return row && row.record_json !== null ? parseContract(row.record_json) : undefined; }
 
 function read(root, directory) {
   const expected = identity(directory);
@@ -36,21 +49,22 @@ function read(root, directory) {
   });
 }
 
-function save(root, directory, record) {
+const save = onMainThread('goal-dependencies.save', (root, directory, record) => {
+  if (!validContract(record)) throw new Error('Invalid goal asset dependency contract');
   const expected = identity(directory);
 
   withDatabase(root, db => db.prepare('INSERT INTO goal_asset_dependencies VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json')
     .run(directory, expected, JSON.stringify(record)));
-}
+});
 
 function retained(root, directory, expected) {
   return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_asset_dependencies WHERE directory=? AND identity=? AND record_json IS NOT NULL').get(directory, expected)));
 }
 
-function remove(root, directory, expected) {
+const remove = onMainThread('goal-dependencies.remove', (root, directory, expected) => {
   removeTextFiles(root, directory, expected);
   withDatabase(root, db => db.prepare('DELETE FROM goal_asset_dependencies WHERE directory=? AND identity=?').run(directory, expected));
-}
+});
 
 function validNames(names) {
   if (!Array.isArray(names) || names.some(name => !/^[^/\\]+\.(md|txt)$/.test(name) || path.basename(name) !== name)) throw new Error('Invalid goal text file list');
@@ -59,8 +73,6 @@ function validNames(names) {
 }
 
 function unpublished(db, directory, expected) {
-  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_ownership'").get()) return false;
-
   return Boolean(db.prepare("SELECT 1 FROM goal_ownership WHERE directory=? AND identity IN (?, '') AND record_json IS NULL").get(directory, expected));
 }
 
@@ -129,13 +141,15 @@ function publishText(root, directory, names, destination, preparation, ownership
   const contents = readContents(directory, names);
 
   if (identity(directory) !== expected) throw new Error('Goal text directory changed during publication');
-  withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
+  saveText(root, destination, expected, names, contents, preparation, ownership);
 
+  return expected;
+}
+
+const saveText = onMainThread('goal-dependencies.saveText', (root, destination, expected, names, contents, preparation, ownership) => {
+  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
     if (preparation !== undefined) {
-      db.exec('CREATE TABLE IF NOT EXISTS goal_ownership (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
       db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json').run(destination, expected, JSON.stringify(ownership));
-      db.exec('CREATE TABLE IF NOT EXISTS goal_preparations (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
       db.prepare('INSERT INTO goal_preparations VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json').run(destination, expected, preparation);
     }
 
@@ -143,44 +157,28 @@ function publishText(root, directory, names, destination, preparation, ownership
       .run(destination, expected, JSON.stringify(names));
     db.prepare('INSERT INTO goal_text_contents VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET contents_json=excluded.contents_json')
       .run(destination, expected, JSON.stringify(contents));
-    db.exec('COMMIT');
-  });
+  }));
+});
 
-  return expected;
-}
-
-function removeTextFiles(root, directory, expected) {
-  withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
+const removeTextFiles = onMainThread('goal-dependencies.removeTextFiles', (root, directory, expected) => {
+  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
     db.prepare('DELETE FROM goal_text_files WHERE directory=? AND identity=?').run(directory, expected);
     db.prepare('DELETE FROM goal_text_contents WHERE directory=? AND identity=?').run(directory, expected);
+    db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
+  }));
+});
 
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
-    db.exec('COMMIT');
-  });
-}
-
-function removePreparedText(root, directory, expected) {
-  withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
-
-    for (const table of ['goal_preparations', 'goal_text_files', 'goal_text_contents', 'goal_ownership']) {
-      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) db.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
-    }
-
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
-    db.exec('COMMIT');
-  });
-}
+const removePreparedText = onMainThread('goal-dependencies.removePreparedText', (root, directory, expected) => {
+  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
+    for (const table of ['goal_preparations', 'goal_text_files', 'goal_text_contents', 'goal_ownership']) db.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
+    db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
+  }));
+});
 
 function matchesDirectory(root, directory, previous, current) {
   if (previous === current) return true;
 
-  return withDatabase(root, db => {
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) return false;
-
-    return Boolean(db.prepare('SELECT 1 FROM goal_directory_history WHERE directory=? AND previous_identity=? AND current_identity=?').get(directory, previous, current));
-  });
+  return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_directory_history WHERE directory=? AND previous_identity=? AND current_identity=?').get(directory, previous, current)));
 }
 
-module.exports = { read, save, retained, remove, textFiles, textContents, saveTextFiles, savePreparedText, removeTextFiles, removePreparedText, matchesDirectory };
+module.exports = { contractSchema, validContract, parseContract, read, save, retained, remove, textFiles, textContents, saveTextFiles, savePreparedText, removeTextFiles, removePreparedText, matchesDirectory };

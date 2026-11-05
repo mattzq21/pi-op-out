@@ -35,7 +35,7 @@ render(() => <>
   <output aria-label="Uploaded files">{JSON.stringify(uploads().map(upload => upload.name))}</output>
   <div style={{ width: '600px', margin: '80px 150px' }}>
     <Show when={mounted()}>
-      <Composer controlsDisabled={disabled()} streaming={false} queued={0} commands={[]} agents={[]} models={[]}
+      <Composer controlsDisabled={disabled()} streaming={false} queued={0} commands={[]} queuedCommands={["compact"]} agents={[]} models={[]}
         model={vision() ? { id: 'vision', provider: 'test', input: ['text', 'image'] } : null}
         uploads={controlled() ? uploads() : undefined} onUploadsChange={controlled() ? setUploads : undefined}
         thinkingLevel="off" thinkingLevels={['off']}

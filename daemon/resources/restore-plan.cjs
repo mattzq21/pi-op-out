@@ -30,7 +30,7 @@ function referencedPaths(records) {
       if (entry.type !== 'custom') continue;
       const data = entry.data;
 
-      if (entry.customType === 'piop-review' && Check(Type.String(), data?.sessionPath)) paths.set(data.sessionId, data.sessionPath);
+      if (entry.customType === stateRecords.AUXILIARY_LINK && Check(Type.String(), data?.sessionPath)) paths.set(data.sessionId, data.sessionPath);
 
       if (stateRecords.isAuxiliaryParent(entry) && Check(Type.String(), data?.parentSessionPath)) paths.set(data.parentSessionId, data.parentSessionPath);
     }

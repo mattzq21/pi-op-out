@@ -3,10 +3,6 @@ import { homeDir, isFile } from './environment';
 import { shellQuote, type CommandSpec } from './process_io';
 import { validateRemoteHost, type AppSettings, type RemoteHost } from './settings_types';
 
-export function requireLocal(hostId: string): void {
-  if (hostId !== 'local') throw new Error('Requests for another host must go through the Piop daemon of that host');
-}
-
 export function remoteHost(settings: AppSettings, hostId: string): RemoteHost {
   const host = settings.hosts.find(host => host.id === hostId);
   if (!host) throw new Error(`Unknown host: ${hostId}`);

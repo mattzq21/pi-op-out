@@ -6,7 +6,7 @@ let agents: Awaited<ReturnType<typeof agentDaemon>>;
 beforeAll(async () => { agents = await agentDaemon(); }, 60_000);
 afterAll(async () => { await agents?.close(); });
 
-const ALL = ['cost', 'review', 'web-search', 'btw'];
+const ALL = ['cost', 'review', 'btw', 'web-search'];
 const REVIEW = '__pi_desktop_auxiliary__';
 let runtimes = 0;
 
@@ -76,7 +76,7 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   const disabled = await openChat(client, first);
   expect((await disabled.commands()).filter((name: string) => ['cost', 'review'].includes(name))).toEqual([]);
   expect(await disabled.failure({ type: 'prompt', message: '/cost 3' })).toBe('The Cost limit plugin is disabled. Enable it to use /cost.');
-  expect(await disabled.failure({ type: 'follow_up', message: '/review after.ts' })).toBe('The Code review plugin is disabled. Enable it to use /review.');
+  expect(await disabled.failure({ type: 'follow_up', message: '/review after.ts' })).toBe('The Review plugin is disabled. Enable it to use /review.');
   for (const words of ['/cost 3', '/review after.ts']) expect(modelSaw(words)).toBe(false);
   expect(disabled.costStatuses()).toEqual([]);
 
@@ -92,7 +92,7 @@ test('cost and review are plugins: enabled by default, gone with an explicit err
   const costOnly = await openChat(client, first);
   expect(await costOnly.owned()).toEqual(['cost']);
   await costOnly.costStatus(status => status.endsWith(' / $5.00'));
-  expect(await costOnly.failure({ type: 'follow_up', message: '/review only-cost.ts' })).toBe('The Code review plugin is disabled. Enable it to use /review.');
+  expect(await costOnly.failure({ type: 'follow_up', message: '/review only-cost.ts' })).toBe('The Review plugin is disabled. Enable it to use /review.');
   expect(modelSaw('/review only-cost.ts')).toBe(false);
 
   client = await restartWith(client, ALL);

@@ -1,5 +1,7 @@
 import { isMainThread, parentPort, workerData, type MessagePort } from 'node:worker_threads';
 import { BUILD_ID } from './config';
+import { connectWorker } from '../resources/main-thread.cjs';
+import { withinFlow } from '../resources/storage-locks.cjs';
 import { QUEUED, STARTED, type HostOperationName, type WorkerJob, type WorkerReply } from './host_operation_protocol';
 
 interface Context { begin(): boolean; storage?: WorkerJob['storage'] }
@@ -48,7 +50,7 @@ async function run(port: MessagePort, job: WorkerJob): Promise<void> {
   try {
     const handler = Object.hasOwn(handlers, job.name) ? handlers[job.name] : undefined;
     if (!handler) throw new Error('Unknown host operation: ' + job.name);
-    const result = await handler(job.input, { begin, storage: job.storage });
+    const result = await withinFlow(() => handler(job.input, { begin, storage: job.storage }));
     reply = result === CANCELLED_RESULT ? { id: job.id, ok: true, result: null, cancelled: true } : { id: job.id, ok: true, result: result ?? null };
   } catch (error) { reply = failure(job.id, error); }
   try { port.postMessage(reply); }
@@ -65,5 +67,6 @@ export function runHostOperationWorker(): void {
     port.postMessage({ fatal: 'The daemon executable changed after the daemon started; restart the daemon' } satisfies WorkerReply);
     return;
   }
+  connectWorker(workerData.mainThread.port, workerData.mainThread.signal);
   port.on('message', (job: WorkerJob) => { void run(port, job); });
 }

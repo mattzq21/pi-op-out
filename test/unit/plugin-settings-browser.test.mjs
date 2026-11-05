@@ -4,17 +4,19 @@ import { act, installDom, renderComponent, untilDom } from '../dom.mjs';
 import { clearMocks, mockIPC } from '../mock-ipc.mjs';
 import { PluginSettings } from '../../clients/ui/components/PluginSettings.tsx';
 
+const CATALOG = [{ id: 'cost', name: 'Cost limit' }, { id: 'review', name: 'Review' }, { id: 'web-search', name: 'Web search' }];
+
 let dom, view, restarts, status;
 
 beforeEach(() => {
   dom = installDom(); restarts = [];
-  status = { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'first', error: null };
+  status = { enabled: ['cost', 'review'], configured: ['cost', 'review'], revision: 'first', error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
   mockIPC((command, args) => {
     if (command === 'plugin_status') return status;
     if (command === 'restart_daemon') {
       restarts.push(args);
       if (!args.closeTerminals) return { confirmationRequired: 'terminals', terminalCount: 1 };
-      status = { enabled: args.enabled, configured: args.enabled, revision: 'second', error: null };
+      status = { enabled: args.enabled, configured: args.enabled, revision: 'second', error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
       return { restartId: 'restart-1' };
     }
     if (command === 'daemon_restart_status') return { phase: 'complete', error: null };
@@ -64,7 +66,7 @@ test('a plugin setup that cannot load shows the daemon message, and Reload tries
 });
 
 test('cost and review can be enabled independently in plugin settings', async () => {
-  status = { enabled: [], configured: [], revision: 'first', error: null };
+  status = { enabled: [], configured: [], revision: 'first', error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
   view = await renderComponent(PluginSettings, { hostId: 'local' });
   const cost = await untilDom(() => control('Enable Cost limit plugin'));
   const review = control('Enable Review plugin');

@@ -1,4 +1,5 @@
 import { flag, text, array } from './json';
+import { logFailure } from '../util/sync';
 
 const DISCOVERY_ERROR = 'Could not discover models. Check the API URL and connectivity from the selected host.';
 
@@ -55,7 +56,7 @@ async function catalogPage(url: URL, headers: Headers, signal: AbortSignal): Pro
   let response: Response;
   try { response = await fetch(url, { headers, redirect: 'manual', signal }); } catch { throw new Error(DISCOVERY_ERROR); }
   if (response.status < 200 || response.status > 299) {
-    try { await response.body?.cancel(); } catch {}
+    await response.body?.cancel().catch(logFailure('Could not close a failed model discovery response'));
     throw new Error('Model discovery returned HTTP ' + response.status + '. Check the API URL and key.');
   }
   const chunks: Buffer[] = [];

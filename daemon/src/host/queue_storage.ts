@@ -2,7 +2,6 @@ import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction, type Database } from '../util/db';
-import { lockPath, type FileLock } from '../util/flock';
 import * as Publication from './reference_publication';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
@@ -15,14 +14,6 @@ export function parseIdentity(id: string): string {
   const hex = value.replaceAll('-', '').toLowerCase();
   if (value.includes('-') && value.length !== 36) throw new Error('Invalid queued-input session identity');
   return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
-}
-
-export async function temporaryLock(root: string): Promise<FileLock> {
-  ensurePrivateDir(root);
-  const path = join(root, 'queued-input.lock');
-  const lock = await lockPath(path, { blocking: true, timeoutMs: 10_000, nofollow: true, regularFile: 'Invalid queued-input storage lock' });
-  if (!lock) throw new Error('Queued-input storage is locked by another process; try again');
-  return lock;
 }
 
 const saves = new Map<string, Promise<void>>();
@@ -59,24 +50,20 @@ export class QueueStorage {
   id(): string { return basename(this.path, '.json'); }
 
   reserveId(): string {
-    const db = Registry.open(this.root());
-    try {
-      const row: any = db.prepare('UPDATE queue_item_sequence SET last_id=last_id+1 WHERE id=1 AND last_id<9007199254740991 RETURNING last_id').get();
-      if (!row) throw new Error('Query returned no rows');
-      return String(row.last_id);
-    } finally { db.close(); }
+    const db = Registry.connection(this.root());
+    const row: any = db.prepare('UPDATE queue_item_sequence SET last_id=last_id+1 WHERE id=1 AND last_id<9007199254740991 RETURNING last_id').get();
+    if (!row) throw new Error('Query returned no rows');
+    return String(row.last_id);
   }
 
   record(): any | null {
-    const db = Registry.open(this.root());
-    try {
-      return transaction(db, 'DEFERRED', () => {
-        const row: any = db.prepare('SELECT cwd, session_path FROM queue_origins WHERE session_id=?').get(this.id());
-        if (!row) return null;
-        const origin = { cwd: row.cwd, sessionPath: row.session_path ?? null };
-        return { version: 1, origin, items: loadRows(db, this.id()) };
-      });
-    } finally { db.close(); }
+    const db = Registry.connection(this.root());
+    return transaction(db, 'DEFERRED', () => {
+      const row: any = db.prepare('SELECT cwd, session_path FROM queue_origins WHERE session_id=?').get(this.id());
+      if (!row) return null;
+      const origin = { cwd: row.cwd, sessionPath: row.session_path ?? null };
+      return { version: 1, origin, items: loadRows(db, this.id()) };
+    });
   }
 
   load(): any[] {
@@ -85,21 +72,16 @@ export class QueueStorage {
   }
 
   held(): boolean {
-    const db = Registry.open(this.root());
-    try { return db.prepare('SELECT 1 FROM session_queue_holds WHERE session_id=?').get(this.id()) !== undefined; } finally { db.close(); }
+    const db = Registry.connection(this.root());
+    return db.prepare('SELECT 1 FROM session_queue_holds WHERE session_id=?').get(this.id()) !== undefined;
   }
 
   async saveHeld(held: boolean): Promise<void> {
     const root = this.root();
     return inOrder(resolve(root), async () => {
-      const lock = await temporaryLock(root);
-      try {
-        const db = Registry.open(root);
-        try {
-          if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
-          else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
-        } finally { db.close(); }
-      } finally { lock.release(); }
+      const db = Registry.connection(root);
+      if (held) db.prepare('INSERT OR IGNORE INTO session_queue_holds VALUES (?)').run(this.id());
+      else db.prepare('DELETE FROM session_queue_holds WHERE session_id=?').run(this.id());
     });
   }
 
@@ -129,12 +111,9 @@ export class QueueStorage {
     const root = this.root();
     const publication = await Publication.lock(root);
     try {
-      const storage = await temporaryLock(root);
-      try {
-        await Publication.validateNewReferences(root, items, this.load());
-        const db = Registry.open(root);
-        try { transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin)); } finally { db.close(); }
-      } finally { storage.release(); }
+      await Publication.validateNewReferences(root, items, this.load());
+      const db = Registry.connection(root);
+      transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin));
     } finally { publication.release(); }
   }
 

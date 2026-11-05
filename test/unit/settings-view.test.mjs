@@ -5,13 +5,15 @@ import { SettingsView } from '../../clients/ui/components/SettingsView.tsx';
 import { mockIPC } from '../mock-ipc.mjs';
 import { refreshPlugins } from '../../clients/ui/plugins/index.ts';
 import { defaultKeybindings } from '../../clients/ui/lib/keybindings.ts';
+import { CATALOG, pluginClient } from '../plugin-clients.mjs';
 
 describe('settings editor', () => {
   let dom, view, props, saves, dirty, supportedModels, previews;
   beforeEach(() => {
     dom = installDom(); saves = []; dirty = []; supportedModels = ['model']; previews = [];
     mockIPC((command, args) => {
-      if (command === 'plugin_status') return { enabled: ['cost', 'review', 'web-search'], configured: ['cost', 'review', 'web-search'], revision: 'settings-1', error: null };
+      if (command === 'plugin_status') return { enabled: ['cost', 'review', 'web-search'], configured: ['cost', 'review', 'web-search'], revision: 'settings-1', error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
+      if (command === 'plugin_client') return pluginClient(args);
       if (command === 'provider_auth' && args.request.action === 'list') return { providers: [{ id: 'anthropic', name: 'Anthropic', configured: true, methods: [{ type: 'oauth', name: 'Claude', interactive: true }] }, { id: 'opencodex', name: 'OCX', configured: true, source: 'built in', methods: [] }, { id: 'openai', name: 'OpenAI', configured: false, methods: [{ type: 'api_key', name: 'API key', interactive: true }] }] };
       if (command === 'agent_prompt_preview') { previews.push(args); return { model: 'p/model', messages: [{ role: 'system', text: 'You are the local agent.' }], tools: [{ place: 'tools', json: '[{"name":"read"}]' }] }; }
       if (command === 'provider_auth' && args.request.action === 'fast_models') return { ready: true, providers: { p: { supportedModelIds: supportedModels } } };
@@ -30,7 +32,7 @@ describe('settings editor', () => {
   const click = async element => act(async () => element.click());
   const mcpJson = async () => { if (!control('MCP server configuration')) await click(control('Edit MCP servers as JSON')); return control('MCP server configuration'); };
   const save = () => document.querySelector('.settings-save > .primary-button');
-  const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
+  const section = async name => click(await untilDom(() => [...document.querySelectorAll('nav button')].find(item => item.textContent === name)));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
   const chooseModel = async value => { await click(control('Agent default model')); await click(document.querySelector(`.filter-select-menu [data-value="${value}"]`)); };
   const selectAgent = async name => click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === name));
@@ -148,7 +150,8 @@ describe('settings editor', () => {
   });
 
   test('the Review sub-tab of Plugins sets the review agent and marks one that no longer exists', async () => {
-    await render({ settings: { ...props.settings, reviewAgent: 'gone' }, agentConfig: { agents: [profile('general'), profile('reviewer')] } });
+    await render({ settings: { ...props.settings, plugins: { ...props.settings.plugins, review: { reviewAgent: 'gone' } } }, agentConfig: { agents: [profile('general'), profile('reviewer')] } });
+    await untilDom(() => [...document.querySelectorAll('nav button')].some(item => item.textContent === 'Review'));
     const tabs = [...document.querySelectorAll('nav button')].map(item => item.textContent);
     assert.equal(tabs.indexOf('Review'), tabs.indexOf('Plugins') + 1);
     await section('Review');
@@ -157,7 +160,7 @@ describe('settings editor', () => {
     assert.equal(agent.selectedOptions[0].textContent, 'Unavailable: gone');
     await act(async () => { agent.value = 'reviewer'; agent.dispatchEvent(new Event('change', { bubbles: true })); });
     await click(save());
-    assert.equal(saves[0][0].reviewAgent, 'reviewer');
+    assert.equal(saves[0][0].plugins.review.reviewAgent, 'reviewer');
   });
 
   test('the Web search sub-tab of Plugins offers the host OpenAI models, starts on gpt-6.1-sol and saves the choice', async () => {
@@ -168,16 +171,17 @@ describe('settings editor', () => {
     assert.deepEqual([...model.options].map(option => option.textContent), ['GPT-6.1 Sol', 'GPT-5.4']);
     await select('Search model', 'gpt-5.4');
     await click(save());
-    assert.equal(saves[0][0].webSearchModel, 'gpt-5.4');
+    assert.equal(saves[0][0].plugins['web-search'].webSearchModel, 'gpt-5.4');
   });
 
   test('the review agent choice follows the selected host plugin state without clearing saved choices', async () => {
     let enabled = ['cost', 'review'];
-    mockIPC(command => {
-      if (command === 'plugin_status') return { enabled, configured: enabled, revision: enabled.join(','), error: null };
+    mockIPC((command, args) => {
+      if (command === 'plugin_status') return { enabled, configured: enabled, revision: enabled.join(','), error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
+      if (command === 'plugin_client') return pluginClient(args);
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
-    await render({ scope: 'daemon', settings: { ...props.settings, reviewAgent: 'general' }, agentConfig: { agents: [profile('general')] } });
+    await render({ scope: 'daemon', settings: { ...props.settings, plugins: { ...props.settings.plugins, review: { reviewAgent: 'general' } } }, agentConfig: { agents: [profile('general')] } });
     await section('Review');
     await untilDom(() => control('Review agent'));
     enabled = ['cost'];

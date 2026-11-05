@@ -1,7 +1,6 @@
 import { createSignal, onCleanup, Show } from "solid-js";
 import { RefreshCw } from "lucide-solid";
 import { nativeCall } from "../lib/nativeCall";
-import { appSettingsSchema } from "../lib/responseSchemas";
 import type { AppSettings } from "../types";
 
 function RefreshResource(props: { hostId: string; resource: "skills" | "tools"; onRefresh: (settings: AppSettings) => void }) {
@@ -16,7 +15,7 @@ function RefreshResource(props: { hostId: string; resource: "skills" | "tools"; 
 
     try {
       const flag = props.resource === "skills" ? { refreshSkills: true } : { refreshTools: true };
-      const settings = await nativeCall(hostId === "local" ? "load_app_settings" : "load_host_settings", { hostId, ...flag }, appSettingsSchema);
+      const settings = await nativeCall("load_app_settings", { hostId, ...flag });
 
       if (disposed || hostId !== props.hostId) return;
       props.onRefresh(settings);

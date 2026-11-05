@@ -195,7 +195,7 @@ test('home and listing failures explain the problem and do not enable opening', 
   assert.equal(await open.isDisabled(), true);
   await page.goto(base + '?failure=listing');
   await error.waitFor();
-  assert.match(await error.textContent(), /Could not list this folder/);
+  assert.equal(await error.textContent(), 'listing unavailable');
   assert.equal(await open.isDisabled(), true);
   await page.getByRole('combobox', { name: 'Folder path relative to home' }).fill('alpha/');
   await error.waitFor();

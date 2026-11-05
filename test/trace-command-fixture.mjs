@@ -1,6 +1,6 @@
 import stateRecords from '../daemon/resources/piop-storage/session-records.cjs';
 import sessionNames from '../daemon/resources/session-broker/session-names.cjs';
-import { reserve, bind, open } from "../daemon/resources/session-database.cjs";
+import { reserve, bind, connection } from "../daemon/resources/session-database.cjs";
 import { createRequire } from 'node:module';
 import { openSync, closeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -12,9 +12,10 @@ import { randomUUID } from 'node:crypto';
 import { build } from 'esbuild';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
 import { installBroker } from './runtime-events-fixture.mjs';
+import { localStorageChannel } from './local-storage-channel.mjs';
 
 export async function buildTraceControls(outfile) {
-  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports()],
+  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [storageSchemaImports(), localStorageChannel()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
 }
@@ -29,8 +30,7 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   t.after(async () => {
     if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     if (previousStorage === undefined) delete process.env.PIOP_STORAGE_DIRECTORY; else process.env.PIOP_STORAGE_DIRECTORY = previousStorage;
-    const db = open(join(home, '.piop'));
-    try { db.prepare('DELETE FROM sessions WHERE session_path=?').run(source); } finally { db.close(); }
+    connection(join(home, '.piop')).prepare('DELETE FROM sessions WHERE session_path=?').run(source);
     if (existingHome) { await rm(buildDirectory, { recursive: true, force: true }); await rm(source, { force: true }); }
     else await rm(home, { recursive: true, force: true });
   });
@@ -39,8 +39,7 @@ export async function publishedTrace(t, traceReader, content, { folder = '', hom
   const header = { type: 'session', version: 3, id, cwd: cwd ?? home };
   const user = { type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Start' } };
   await writeFile(source, JSON.stringify(header) + '\n' + JSON.stringify(user) + '\n');
-  const sourceDb = open(join(home, '.piop'));
-  try { bind(sourceDb, id, source); } finally { sourceDb.close(); }
+  bind(connection(join(home, '.piop')), id, source);
   const outfile = controlsBundle ?? join(buildDirectory, 'operations.mjs');
   if (!controlsBundle) await buildTraceControls(outfile);
   installBroker(t, (path, { count }) => {

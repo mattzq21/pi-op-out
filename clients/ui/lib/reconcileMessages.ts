@@ -33,23 +33,23 @@ function reuseAssistantContent(previous: ChatMessage["content"], incoming: ChatM
   return content.length === previous.length && content.every((part, position) => part === previous[position]) ? previous : content;
 }
 
-export function upsertLiveMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
-  const index = messages.findIndex(item => item.id === message.id);
+// Places a new live message after the delivered messages and before the submitted ones that wait.
+export function insertLiveMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
+  const delivered = messages.filter(item => !item.submissionId);
+  const pending = messages.filter(item => item.submissionId && item.id !== message.id);
 
-  if (index === -1 || messages[index].submissionId) {
-    const delivered = messages.filter(item => !item.submissionId);
-    const pending = messages.filter(item => item.submissionId && item.id !== message.id);
+  return [...delivered, message, ...pending];
+}
 
-    return [...delivered, message, ...pending];
-  }
-  const previous = messages[index];
+// The next form of a live message that is already shown, or undefined when it does not change.
+export function mergeLiveMessage(previous: ChatMessage, message: ChatMessage): ChatMessage | undefined {
   const next = { ...message, entryId: message.entryId ?? previous.entryId, toolInput: message.toolInput ?? previous.toolInput, details: message.details ?? previous.details, promptContext: previous.promptContext };
 
   if (message.role === "assistant") next.content = reuseAssistantContent(previous.content, message.content);
 
-  if (message.role === "user" && JSON.stringify(previous) === JSON.stringify(next)) return messages;
+  if (message.role === "user" && JSON.stringify(previous) === JSON.stringify(next)) return undefined;
 
-  return messages.map((item, position) => position === index ? next : item);
+  return next;
 }
 
 export function reconcileMessages(previous: ChatMessage[], incoming: ChatMessage[], pending?: { id: string; goalSubmissionId?: string }[]): ChatMessage[] {

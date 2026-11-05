@@ -1,4 +1,3 @@
-import { piExecutable } from './environment';
 import { resolveProviderAuth } from './host/index';
 
 export interface UsageWindow { status: string; remainingPercent: number; resetAt?: number }
@@ -30,7 +29,7 @@ export function opencodeGoUsageValues(response: any): OpencodeGoUsage | undefine
 }
 
 export async function opencodeGoUsage(): Promise<OpencodeGoUsage | undefined> {
-  const auth = await resolveProviderAuth(piExecutable(), 'opencode-go');
+  const auth = await resolveProviderAuth('opencode-go');
   if (auth === null) return undefined;
   const apiKey = auth?.apiKey;
   if (typeof apiKey !== 'string' || !apiKey.trim()) throw new Error('OpenCode Go API key is not configured');

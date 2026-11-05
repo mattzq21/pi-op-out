@@ -1,14 +1,36 @@
 const fs = require('node:fs');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
+
+const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal('image/png'), Type.Literal('image/jpeg'), Type.Literal('image/gif'), Type.Literal('image/webp')]) });
+
+const attachmentSchema = Type.Object({ name: Type.String(), text: Type.Optional(Type.String()), image: Type.Optional(Type.Union([Type.Null(), imageSchema])) });
+
+// A goal as the user wrote it: the objective and its attachments.
+const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Array(attachmentSchema) });
+
+const savedFileSchema = Type.Object({ name: Type.String({ pattern: '^(?:goal-objective\\.md|attachment-[1-9][0-9]*\\.(?:txt|png|jpg|gif|webp))$' }), data: Type.String(), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }) });
+
+// What the daemon saved to make a goal folder again: the goal, its chat, and the input or the files of the folder.
+const preparationSchema = Type.Object({
+  version: Type.Literal(1), submissionId: Type.String(), digest: Type.String(), objective: Type.String(), sessionId: Type.String(),
+  sessionPath: Type.Optional(Type.String()), cwd: Type.String(), goalId: Type.Optional(Type.String()), expectedState: Type.Optional(Type.String()),
+  input: Type.Optional(draftSchema), files: Type.Optional(Type.Array(savedFileSchema)),
+});
+
+// The saved preparation text as a preparation.
+function parsePreparation(text) {
+  const preparation = JSON.parse(text);
+
+  if (!Check(preparationSchema, preparation)) throw new Error('Damaged goal preparation retained');
+
+  return preparation;
+}
 
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try {
-    db.exec('CREATE TABLE IF NOT EXISTS goal_preparations (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
-
-    return operation(db);
-  } finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function identity(directory) {
@@ -35,7 +57,7 @@ function read(root, directory) {
       return undefined;
     }
 
-    return row.record_json === null ? undefined : JSON.parse(row.record_json);
+    return row.record_json === null ? undefined : parsePreparation(row.record_json);
   });
 }
 
@@ -45,24 +67,25 @@ function missingDirectoryRecord(root, directory) {
 
     if (rows.length > 1) throw new Error('More than one saved goal preparation refers to the missing directory');
 
-    return rows.length ? JSON.parse(rows[0].record_json) : undefined;
+    return rows.length ? parsePreparation(rows[0].record_json) : undefined;
   });
 }
 
-function save(root, directory, record, destination = directory) {
+const save = onMainThread('goal-preparations.save', (root, directory, record, destination = directory) => {
+  if (!Check(preparationSchema, record)) throw new Error('Invalid goal preparation');
   const expected = identity(directory);
   withDatabase(root, db => db.prepare('INSERT INTO goal_preparations VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json')
     .run(destination, expected, JSON.stringify(record)));
 
   return expected;
-}
+});
 
 function retained(root, directory, expected) {
   return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_preparations WHERE directory=? AND identity=? AND record_json IS NOT NULL').get(directory, expected)));
 }
 
-function remove(root, directory, expected) {
+const remove = onMainThread('goal-preparations.remove', (root, directory, expected) => {
   withDatabase(root, db => db.prepare('DELETE FROM goal_preparations WHERE directory=? AND identity=?').run(directory, expected));
-}
+});
 
-module.exports = { read, save, retained, remove };
+module.exports = { draftSchema, parsePreparation, read, save, retained, remove };

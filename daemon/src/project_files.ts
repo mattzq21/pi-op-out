@@ -1,12 +1,9 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { requireLocal } from './host_connection';
-import type { App } from './app';
 
 const IMAGE_LIMIT = 25 * 1024 * 1024;
 
-export async function readImage(_app: App, cwd: string, path: string, hostId: string): Promise<string> {
-  requireLocal(hostId);
+export async function readImage(cwd: string, path: string): Promise<string> {
   const bytes = readLocalImage(cwd, path);
   if (bytes.length > IMAGE_LIMIT) throw new Error('Image is larger than 25 MB');
   return `data:${imageMime(bytes)};base64,${bytes.toString('base64')}`;

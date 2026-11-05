@@ -19,8 +19,8 @@ function ledger() {
 function session(root: string, id: string, transcript?: string) {
   const path = join(root, id + '.jsonl');
   if (transcript !== undefined) writeFileSync(path, transcript);
-  const db = Registry.open(root);
-  try { db.prepare('INSERT INTO sessions VALUES (?, ?)').run(id, path); } finally { db.close(); }
+  const db = Registry.connection(root);
+  db.prepare('INSERT INTO sessions VALUES (?, ?)').run(id, path);
 }
 
 const settled = () => Promise.resolve();
@@ -64,11 +64,9 @@ test('the outcome waits while the message is being sent, and a repeat does not r
 test('a message left without an outcome by a stopped daemon is accepted only when the saved queue holds it', async () => {
   const { root } = ledger();
   session(root, 's');
-  const db = Registry.open(root);
-  try {
-    for (const id of ['queued', 'dropped']) db.prepare("INSERT INTO submission_outcomes VALUES (?, 's', 'received', NULL, ?)").run(id, Date.now());
-    db.prepare("INSERT INTO queue_items VALUES (1, 's', 1, 'Hi', 'followUp', ?)").run(JSON.stringify({ goalSubmissionId: 'queued' }));
-  } finally { db.close(); }
+  const db = Registry.connection(root);
+  for (const id of ['queued', 'dropped']) db.prepare("INSERT INTO submission_outcomes VALUES (?, 's', 'received', NULL, ?)").run(id, Date.now());
+  db.prepare("INSERT INTO queue_items VALUES (1, 's', 1, 'Hi', 'followUp', ?)").run(JSON.stringify({ goalSubmissionId: 'queued' }));
   const next = new SubmissionLedger(root, () => {});
   next.recover();
   expect(await next.outcome('queued')).toEqual({ accepted: true });

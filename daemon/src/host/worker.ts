@@ -1,6 +1,7 @@
-import { shellLock } from '../../resources/file-lock.cjs';
+import { reserve } from '../session_registry';
 import { readLines } from '../../resources/lf-lines.cjs';
 import { spawn, type ChildProcess } from 'node:child_process';
+import type { Duplex } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
@@ -9,6 +10,8 @@ import { CommandRefusedError } from '../pi_rejection';
 import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEvent } from './runtime_events';
+import type { PiStorage } from './pi_storage';
+import { observedElsewhere } from '../util/sync';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
 
@@ -37,15 +40,11 @@ process.on('exit', () => {
   }
 });
 
-function launchCommand(spec: LaunchSpec, identity: string, home: string): { program: string; args: string[] } {
-  const claims = spec.env.PIOP_REMOTE_SESSION_CLAIMS;
-  if (claims !== undefined) {
-    const directory = join(join(home, claims), 'session-claims');
-    ensurePrivateDir(directory);
-    const hash = createHash('sha256').update(identity.toLowerCase()).digest('hex');
-    return { program: 'sh', args: ['-c', 'exec 9<>"$1" || exit 1; shift; ' + shellLock(9, true) + '; code=$?; [ "$code" = 75 ] && exit 1; [ "$code" = 0 ] || exit "$code"; exec "$@"', 'piop-claim', join(directory, 'id-' + hash.slice(0, 40) + '.lock'), spec.program, ...spec.args] };
-  }
-  return { program: spec.program, args: [...spec.args] };
+// A Pi that names no chat starts a new one. Its identity is reserved here, when the Pi starts.
+function launchCommand(spec: LaunchSpec, storage: PiStorage): { program: string; args: string[] } {
+  const args = [...spec.args];
+  if (!['--session', '--session-id', '--fork', '--no-session'].some(flag => args.includes(flag))) args.push('--session-id', reserve(storage.root));
+  return { program: spec.program, args };
 }
 
 export class RuntimeWorker {
@@ -62,13 +61,14 @@ export class RuntimeWorker {
 
   private constructor(private child: ChildProcess, private tag: string, private observer: WorkerObserver, private timeout: number) {}
 
-  static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string): RuntimeWorker {
-    const command = launchCommand(spec, identity, home);
+  // storage: answers the storage changes that this Pi asks for on its storage channel.
+  static spawn(spec: LaunchSpec, identity: string, timeout: number, observer: WorkerObserver, home: string, storage: PiStorage): RuntimeWorker {
+    const command = launchCommand(spec, storage);
     const tag = newProcessTag();
     const child = spawn(command.program, command.args, {
       cwd: spec.cwd ? spec.cwd : undefined,
-      env: { ...process.env, ...spec.env, PIOP_BUN: process.execPath, [PROCESS_TAG]: tag },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, ...spec.env, PIOP_STORAGE_CHANNEL: '3', [PROCESS_TAG]: tag },
+      stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
       detached: true,
     });
     if (child.pid === undefined) {
@@ -89,6 +89,7 @@ export class RuntimeWorker {
     const errors = createInterface({ input: child.stderr!, crlfDelay: Infinity });
     errors.on('line', line => observer.stderr(line));
     errors.on('close', done);
+    storage.serve(child.stdio[3] as Duplex, message => observer.diagnostic(message));
     child.on('exit', (code, signal) => {
       worker.exitStatus = signal !== null ? 'signal ' + signal : 'exit code ' + code;
       worker.signal(false);
@@ -200,7 +201,7 @@ export class RuntimeWorker {
     const stopOnTimeout = abort || ['queue_prompt', 'prompt', 'compact'].includes(requestType);
     let entry!: Pending;
     const reply = new Promise<any>((resolve, reject) => { entry = { command, requestType, snapshotState, resolve, reject }; });
-    reply.catch(() => {});
+    observedElsewhere(reply);
     this.pending.set(id, entry);
     try { return await this.withDeadline(written => this.write(wire).then(() => { written(); return reply; }), timeout, stopOnTimeout); }
     finally { this.pending.delete(id); }

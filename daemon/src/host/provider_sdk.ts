@@ -3,24 +3,19 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir, nodeExecutable, pathWithNode } from '../environment';
-import { fastModelDiscovery, ocxProviderModule, providerSdk, sdkStorageBundle } from '../resources';
+import { generatedExtensions } from '../extensions';
 import { readLines } from '../../resources/lf-lines.cjs';
+import { installedPi } from '../pi_install';
 import { Mutex } from '../util/sync';
+import type { Duplex } from 'node:stream';
+import { PiStorage } from './pi_storage';
 
-const SOURCE_ARGUMENT_BYTES = 64 * 1024;
-const SOURCE_LOADER = "await import('data:text/javascript;base64,' + process.argv.splice(2).join(''));";
 const REQUEST_TIMEOUT_MS = 630_000;
 const PROBE_TIMEOUT_MS = 10_000;
 
 export interface Events { event(packet: any): void; stopped?(error: Error): void }
 
 const quiet: Events = { event() {} };
-
-function sourceArguments(encoded: string): string[] {
-  const parts: string[] = [];
-  for (let start = 0; start < encoded.length; start += SOURCE_ARGUMENT_BYTES) parts.push(encoded.slice(start, start + SOURCE_ARGUMENT_BYTES));
-  return parts;
-}
 
 interface Pending { resolve(value: any): void; reject(error: Error): void }
 
@@ -51,8 +46,8 @@ class Connection {
   }
 }
 
-export async function resolveProviderAuth(executable: string, providerId: string): Promise<any> {
-  const sdk = new Sdk(executable, quiet);
+export async function resolveProviderAuth(providerId: string): Promise<any> {
+  const sdk = new Sdk(quiet);
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -70,11 +65,14 @@ export class Sdk {
   private gate = new Mutex();
   private stopped = false;
 
-  constructor(private executable: string, private events: Events) {}
+  constructor(private events: Events) {}
 
-  private spawnProcess(node: string, encoded: string): ChildProcess {
-    const env = { ...process.env, PATH: pathWithNode(node), PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: join(homeDir(), STORAGE_DIRECTORY) };
-    const child = spawn(node, ['--input-type=module', '-e', SOURCE_LOADER, '--', this.executable, ...sourceArguments(encoded)], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  private spawnProcess(node: string, root: string): ChildProcess {
+    const storage = join(homeDir(), STORAGE_DIRECTORY);
+    const env = { ...process.env, PATH: pathWithNode(node), PIOP_STORAGE_DIRECTORY: STORAGE_DIRECTORY, PI_CODING_AGENT_DIR: storage, PIOP_STORAGE_CHANNEL: '3' };
+    const child = spawn(node, [generatedExtensions().providerSdk, root], { env, stdio: ['pipe', 'pipe', 'inherit', 'pipe'] });
+    // Sign-ins and model settings that the SDK saves go through its storage channel, like Pi's.
+    if (child.stdio[3]) new PiStorage(storage, ['settings']).serve(child.stdio[3] as Duplex, message => console.error('Pi provider SDK: ' + message));
     return child;
   }
 
@@ -82,10 +80,10 @@ export class Sdk {
     return this.gate.run(async () => {
       if (this.stopped) throw new Error('Provider SDK stopped');
       if (this.connection && !this.connection.closed) return this.connection;
-      const storage = "const { installRuntimeStorage, storedModelText, saveStoredModelProvider, removeStoredModelProvider } = await import('data:text/javascript;base64," + Buffer.from(sdkStorageBundle).toString('base64') + "');";
-      const source = [storage, fastModelDiscovery, ocxProviderModule, providerSdk].join('\n');
+      const { root } = await installedPi();
+      if (this.stopped) throw new Error('Provider SDK stopped');
       const node = nodeExecutable();
-      const child = this.spawnProcess(node, Buffer.from(source).toString('base64'));
+      const child = this.spawnProcess(node, root);
       const connection = new Connection(child, error => {
         if (this.stopped) return;
         try { this.events.stopped?.(error); } catch (failure) { console.error('Pi provider SDK stop handler failed:', failure); }

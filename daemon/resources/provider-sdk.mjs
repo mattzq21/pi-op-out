@@ -1,9 +1,17 @@
-import { realpath, readFile } from 'node:fs/promises';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { installRuntimeStorage, removeStoredModelProvider, saveStoredModelProvider, storedModelText } from './sdk-storage.mjs';
+import { claim } from './storage-channel.cjs';
+import { createFastModelDiscovery } from './fast-model-discovery.mjs';
+import { OCX_PROVIDER_ID, ocxProviderConfig } from '../../pi-extensions/piop-ocx-provider/ocx-provider.mjs';
+
+// The SDK takes its storage channel before it starts any program, so those programs do not get it.
+claim();
+
+const reason = (error) => error instanceof Error ? error.message : String(error);
 
 const emit = (packet) => process.stdout.write(JSON.stringify(packet) + '\n');
 
@@ -17,52 +25,23 @@ let initializing;
 
 let fastModelDiscovery;
 
-async function resolveExecutable() {
-  const executable = process.argv[1] || 'pi';
-  const expanded = executable.startsWith('~/') ? join(homedir(), executable.slice(2)) : executable;
-  const candidates = /[/\\]/.test(expanded) ? [resolve(expanded)] : (process.env.PATH || '').split(delimiter).map((directory) => join(directory, expanded));
-  let entry;
-
-  for (const candidate of candidates) {
-    try { entry = await realpath(candidate); break; } catch {}
-  }
-
-  if (!entry) throw new Error('Pi is unavailable on this host. Check its Pi executable setting.');
-
-  return entry;
-}
-
 async function loadRuntime() {
-  const entry = await resolveExecutable();
-  let directory = dirname(entry);
+  const directory = process.argv[2];
 
-  while (directory !== dirname(directory)) {
-    let metadata;
+  if (!directory) throw new Error('The daemon did not give the Pi installation folder');
+  const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href);
+  await installRuntimeStorage(directory);
+  const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
+  const { stripJsonComments } = await import(pathToFileURL(join(directory, 'dist/utils/json.js')).href);
+  const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
+  const resolver = await import(pathToFileURL(join(directory, 'dist/core/model-resolver.js')).href);
+  const { loadSkills } = await import(pathToFileURL(join(directory, 'dist/core/skills.js')).href);
+  const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
+  const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+  const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch((error) => { throw new Error(`Could not load provider configuration on this host: ${reason(error)}. Check Pi configuration and file permissions.`); });
+  await refreshOcx(runtime);
 
-    try { metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')); } catch {}
-
-    if (['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'].includes(metadata?.name)) {
-      const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
-
-      if (!sdk?.ModelRuntime?.create) break;
-      await installRuntimeStorage(directory);
-      const config = await import(pathToFileURL(join(directory, 'dist/config.js')).href);
-      const { stripJsonComments } = await import(pathToFileURL(join(directory, 'dist/utils/json.js')).href);
-      const { SettingsManager } = await import(pathToFileURL(join(directory, 'dist/core/settings-manager.js')).href);
-      const resolver = await import(pathToFileURL(join(directory, 'dist/core/model-resolver.js')).href);
-      const { loadSkills } = await import(pathToFileURL(join(directory, 'dist/core/skills.js')).href);
-      const settings = SettingsManager.create(process.cwd(), config.getAgentDir());
-      const builtin = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
-      const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
-      await refreshOcx(runtime);
-
-      return { runtime, settings, resolver, loadSkills, agentDir: config.getAgentDir(), authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
-    }
-
-    directory = dirname(directory);
-  }
-
-  throw new Error('Provider login requires a Pi Node installation with ModelRuntime support on this host. Update Pi and try again.');
+  return { runtime, settings, resolver, loadSkills, agentDir: config.getAgentDir(), authPath: config.getAuthPath(), modelsPath: join(config.getAgentDir(), 'models.json'), parseModels: body => JSON.parse(stripJsonComments(body.replace(/^\uFEFF/, ''))), builtinIds: builtin.getProviders().map((provider) => provider.id) };
 }
 
 function runtime() {
@@ -178,12 +157,14 @@ function providerModels(loaded, providers) {
   const { previous, ids } = providerModelPrevious(loaded.runtime, providers);
   let entries;
 
-  try { entries = loaded.runtime.getModels(); } catch {}
+  let failure;
+
+  try { entries = loaded.runtime.getModels(); } catch (error) { failure = error instanceof Error ? error.message : String(error); }
 
   if (!Array.isArray(entries)) {
     const models = [...previous.values()].flat();
 
-    return { models, modelDiagnostics: [{ message: 'The SDK model catalog is unavailable or is not an array.', usingLastUsableCatalog: models.length > 0 }] };
+    return { models, modelDiagnostics: [{ message: failure === undefined ? 'The SDK model catalog is not an array.' : `The SDK model catalog is unavailable: ${failure}`, usingLastUsableCatalog: models.length > 0 }] };
   }
 
   return providerModelMerge(previous, ids, entries);
@@ -368,7 +349,7 @@ async function handleProviderRequest(loaded, packet) {
 
   if (packet.method === 'draft_catalog') {
     await refreshOcx(loaded.runtime);
-    await loaded.runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
+    await loaded.runtime.refresh({ allowNetwork: false }).catch((error) => { throw new Error(`Could not refresh providers on this host: ${reason(error)}. Check Pi configuration.`); });
 
     const initial = await initialSelection(loaded);
 
@@ -377,7 +358,7 @@ async function handleProviderRequest(loaded, packet) {
 
   if (packet.method === 'inspect') {
     const refreshDiagnostics = await refreshProviders(loaded.runtime);
-    const credentials = await loaded.runtime.listCredentials().catch(() => { throw new Error('Could not read saved provider status on this host.'); });
+    const credentials = await loaded.runtime.listCredentials().catch((error) => { throw new Error(`Could not read saved provider status on this host: ${reason(error)}`); });
 
     const providers = loaded.runtime.getProviders();
     const { models, modelDiagnostics } = providerModels(loaded, providers);
@@ -428,7 +409,7 @@ async function initialSelection(loaded) {
 
 async function refreshProviders(runtime) {
   const ocx = await refreshOcx(runtime);
-  const result = await runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
+  const result = await runtime.refresh({ allowNetwork: false }).catch((error) => { throw new Error(`Could not refresh providers on this host: ${reason(error)}. Check Pi configuration.`); });
   const diagnostics = [];
   const seen = new Set();
   const add = (providerId, error) => {

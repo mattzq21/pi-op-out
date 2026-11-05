@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { daemonImports } from '../../scripts/daemon-imports.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -7,6 +8,8 @@ import { afterAll } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { developmentEndpointKey } from '../../daemon/src/config';
+import { linkTestPi } from '../pi-install.mjs';
+export { fakePi } from '../pi-install.mjs';
 
 const root = resolve(import.meta.dir, '../..');
 const bundles = new Map<string, Promise<string>>();
@@ -43,16 +46,10 @@ export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
       banner: { js: "#!/usr/bin/env bun\nimport { createRequire as __piopCreateRequire } from 'node:module';\nconst require = __piopCreateRequire(import.meta.url);\nif (process.argv[2] === '--build-id') { process.stdout.write(" + JSON.stringify(placeholder) + " + '\\n'); process.exit(0); }" },
       define: { __PIOP_BUILD_ID__: JSON.stringify(placeholder), __PIOP_DEVELOPMENT__: JSON.stringify(development), __PIOP_PROJECT_DIR__: JSON.stringify(project), __PIOP_UNUSED_STOP_MS__: JSON.stringify(unusedStopMs) },
       keepNames: true, legalComments: 'none', logLevel: 'error', sourcemap: development ? 'inline' : false,
-      plugins: [{
-        name: 'raw-text',
-        setup(context) {
-          if (options.fakeTailscale) context.onResolve({ filter: /^\.\/tailscale_system$/ }, () => ({ path: join(root, 'test/daemon/tailscale-system-fake.ts') }));
-          context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
-          context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
-          context.onResolve({ filter: /\?raw$/ }, args => ({ path: resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw-text' }));
-          context.onLoad({ filter: /.*/, namespace: 'raw-text' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
-        },
-      }],
+      plugins: [...options.fakeTailscale ? [{
+        name: 'fake-tailscale',
+        setup(context) { context.onResolve({ filter: /^\.\/tailscale_system$/ }, () => ({ path: join(root, 'test/daemon/tailscale-system-fake.ts') })); },
+      }] : [], daemonImports()],
     });
     const bundle = readFileSync(outfile, 'utf8');
     const buildId = 'piop-build-' + createHash('sha256').update(bundle.replaceAll(placeholder, '')).digest('hex');
@@ -104,6 +101,7 @@ export async function remoteMachine(daemon: TestDaemon, id: string, name = id, t
   const executable = await daemonExecutable();
   const home = join(daemon.home, '.test-remotes', target);
   mkdirSync(join(home, '.bun/bin'), { recursive: true });
+  await linkTestPi(home);
   symlinkSync(executable, join(home, '.bun/bin/piopd'));
   const env = { ...process.env, HOME: home, PIOP_MOBILE_BIND: '127.0.0.1:0' };
   const stop = () => control(executable, 'stop', env).then(() => {});
@@ -155,7 +153,7 @@ export interface Client {
   events: DaemonEvent[];
   invoke(command: string, args?: any): Promise<any>;
   failure(command: string, args?: any): Promise<string>;
-  waitEvent(name: string, match?: (payload: any) => boolean, timeout?: number): Promise<any>;
+  waitEvent(name: string | string[], match?: (payload: any) => boolean, timeout?: number): Promise<any>;
   close(): void;
 }
 
@@ -207,17 +205,18 @@ async function openClient(url: string, token: string, scope = 'client'): Promise
     pending.set(id, { resolve: done, reject: fail });
     socket.send(JSON.stringify({ id, command, args }));
   });
-  const waitEvent = (name: string, match: (payload: any) => boolean = () => true, timeout = 10_000) => new Promise<any>((done, fail) => {
+  const waitEvent = (name: string | string[], match: (payload: any) => boolean = () => true, timeout = 10_000) => new Promise<any>((done, fail) => {
+    const names = Array.isArray(name) ? name : [name];
     let seen = 0;
     const stop = (error?: Error, payload?: any) => { waiters.delete(check); clearTimeout(timer); if (error) fail(error); else done(payload); };
     const check = () => {
       for (; seen < events.length; seen++) {
         const event = events[seen]!;
-        if (event.event === name && match(event.payload)) { stop(undefined, event.payload); return; }
+        if (names.includes(event.event) && match(event.payload)) { stop(undefined, event.payload); return; }
       }
       if (closedError) stop(closedError);
     };
-    const timer = setTimeout(() => stop(new Error('Timed out waiting for event ' + name)), timeout);
+    const timer = setTimeout(() => stop(new Error('Timed out waiting for event ' + names.join(' or '))), timeout);
     waiters.add(check);
     check();
   });
@@ -231,7 +230,8 @@ async function openClient(url: string, token: string, scope = 'client'): Promise
   };
 }
 
-function control(executable: string, action: 'start' | 'stop', env: Record<string, string | undefined>): Promise<string> {
+async function control(executable: string, action: 'start' | 'stop', env: Record<string, string | undefined>): Promise<string> {
+  if (action === 'start' && env.HOME) await linkTestPi(env.HOME);
   return new Promise((done, fail) => {
     execFile(executable, [action], { env, timeout: 120_000 }, (error, stdout, stderr) => {
       if (error) fail(new Error('piopd ' + action + ' failed: ' + (stderr || error.message).slice(0, 2000)));
@@ -261,7 +261,7 @@ export async function startDaemon(options: BuildOptions & { home?: string; env?:
     await control(executable, 'start', env);
     const readEndpoint = () => {
       const database = new Database(join(directory, 'sessions.sqlite'), { readonly: true });
-      try { return JSON.parse(Buffer.from((database.query("SELECT body FROM application_settings WHERE name='daemon.json'").get() as any).body).toString('utf8')); }
+      try { return JSON.parse(Buffer.from((database.query("SELECT body FROM application_settings WHERE name='daemon'").get() as any).body).toString('utf8')); }
       finally { database.close(); }
     };
     const endpoint = readEndpoint();
@@ -287,6 +287,7 @@ export async function waitForSessions(daemon: TestDaemon, match: (rows: any[]) =
     const seen = new Set(daemon.events.map(event => event.payload));
     const rows = await daemon.invoke('list_sessions');
     if (match(rows)) return rows;
-    await daemon.waitEvent('pi://sessions-changed', payload => !seen.has(payload), Math.max(1, deadline - Date.now()));
+    // A chat that starts or stops working is told by its own event; other list changes by sessions-changed.
+    await daemon.waitEvent(['pi://sessions-changed', 'pi://session-running'], payload => !seen.has(payload), Math.max(1, deadline - Date.now()));
   }
 }

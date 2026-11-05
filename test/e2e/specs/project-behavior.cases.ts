@@ -5,8 +5,8 @@ import { setBridgeValue, mockBackend, backendCalls, updateBackendResponse, reset
 
 async function chooseRemote(host: { id: string; name: string; target: string; piPath: string }) {
   const settings = { ...defaultSettings, hosts: [host] };
-  await updateBackendResponse("load_host_settings", settings);
-  await updateBackendResponse("load_host_settings_change", { settings });
+  await updateBackendResponse("load_app_settings@" + host.id, settings);
+  await updateBackendResponse("load_settings_change@" + host.id, { settings });
   await browser.execute(async settings => {
     await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://settings-changed", payload: { settings } });
   }, settings);

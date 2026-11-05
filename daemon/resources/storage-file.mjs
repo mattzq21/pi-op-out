@@ -49,8 +49,4 @@ function storagePublish(path, temporary, body, exclusive) {
   } finally { storageFs.rmSync(temporary, { force: true }); }
 }
 
-function requireStorageMethods(prototype, names) {
-  if (names.some(name => !(prototype[name] instanceof Function))) throw new Error("This Pi SDK does not support Piop's storage protection. Update Piop before using this SDK.");
-}
-
-export { storagePublish, storageTarget, requireStorageMethods };
+export { storagePublish, storageTarget };

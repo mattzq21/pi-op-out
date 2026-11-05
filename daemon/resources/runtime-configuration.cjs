@@ -1,10 +1,11 @@
+const { patchMethod } = require("./pi-patch.cjs");
+
 const reloadOperations = new WeakMap();
 
 const configurationOperations = new WeakMap();
 
 function installReloadLifecycle(AgentSession) {
-  const reload = AgentSession.prototype.reload;
-  AgentSession.prototype.reload = function (...args) {
+  patchMethod(AgentSession.prototype, "reload", reload => function (...args) {
     const previous = reloadOperations.get(this) ?? Promise.resolve();
     const operation = previous.then(() => reload.apply(this, args));
     const settled = operation.then(() => undefined, () => undefined);
@@ -12,7 +13,7 @@ function installReloadLifecycle(AgentSession) {
     settled.then(() => { if (reloadOperations.get(this) === settled) reloadOperations.delete(this); });
 
     return operation;
-  };
+  });
 }
 
 async function afterReload(session, work) {

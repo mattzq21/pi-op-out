@@ -39,7 +39,7 @@ export class MutationGuards {
     guard.release(host.ownership(), removed);
     if (deletedId !== undefined) {
       await clearSaved(host.storageRoot(), deletedId);
-      host.pending.delete(deletedId);
+      host.dropQueuedInput(deletedId);
     }
     if (removed) announceRemoved(host, guard.id);
     return null;

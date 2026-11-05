@@ -7,14 +7,12 @@ export const QUEUED = 0;
 export const STARTED = 1;
 export const CANCELLED = 2;
 
-export interface StorageLocks { restore: number; transactions: number }
-
 export interface WorkerJob {
   id: number;
   name: HostOperationName;
   input: unknown;
   progress: SharedArrayBuffer;
-  storage?: { root: string; locks: StorageLocks };
+  storage?: { root: string };
 }
 
 export type WorkerReply =

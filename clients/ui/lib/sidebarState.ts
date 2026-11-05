@@ -5,6 +5,7 @@ import { DIRLESS_KEY,isTemporaryChatCwd,useSessionGroups, type OrderChange, type
 import { useSessionProjects } from "./sessionProjects";
 import { createDependencyEffect } from "./solid";
 import { createSidebarPersistence } from "./sidebarPersistence";
+import { reportBackgroundError } from "./backgroundErrors";
 
 export interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 
@@ -79,6 +80,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const groupChildOrders = () => storedGroups.state?.orders.children ?? {};
   const setCollapsedProjects = (update: (current: Set<string>) => Set<string>) => persistence.change("collapsed", current => [...update(new Set(current))]);
   const placeOrderToken = (scope: OrderChange["scope"], owner: string, visible: string[], token: string | null, before: string | null) => storedGroups.change({ type: "order", scope, owner, visible, token, before });
+  const orderFailed = (reason: unknown) => reportBackgroundError("Could not save the sidebar order", reason);
 
   const projectParent = (id: string) => {
     const parent = projectGroups()[id];
@@ -122,7 +124,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (!canMoveProject(id, parent)) return;
     void storedGroups.change({ type: "move", id, parent: parent ?? null }).then(() => {
       if (parent) expandProject(parent);
-    }).catch(() => undefined);
+    }).catch(reason => reportBackgroundError("Could not move the project", reason));
   };
 
   const groupNameTaken = (name: string, excludedId?: string) => name.trim().toLowerCase() === "dirless" || sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
@@ -192,7 +194,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if ([RECENT_KEY, DIRLESS_KEY].some(key => token === groupLayoutToken(key))) return;
 
     if (beforeToken === token) return;
-    void placeOrderToken("sidebar", "", sidebarEntries(), token, beforeToken ?? groupLayoutToken(RECENT_KEY)).catch(() => undefined);
+    void placeOrderToken("sidebar", "", sidebarEntries(), token, beforeToken ?? groupLayoutToken(RECENT_KEY)).catch(orderFailed);
   };
 
   const groupDestination = (id: string) => savedGroupsById().get(id);
@@ -243,7 +245,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     const visible = recentKeys().split("\n").filter(Boolean);
 
     if (visible.every(key => known.has(key))) return;
-    void placeOrderToken("sessions", RECENT_KEY, visible, null, null).catch(() => undefined);
+    void placeOrderToken("sessions", RECENT_KEY, visible, null, null).catch(orderFailed);
   }, () => [recentKeys(), normalizedQuery()]);
   const physicalGroups = createMemo(() => (savedGroups().filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group): SidebarGroup => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())])));
   const customVisualGroups = createMemo(() => (customGroups().map((group): SidebarGroup => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())])));
@@ -286,7 +288,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const placeGroupEntry = (id: string, token: string, before: string | null) => {
     if (token === before) return Promise.resolve();
 
-    return placeOrderToken("children", id, groupEntries(id), token, before).catch(() => undefined);
+    return placeOrderToken("children", id, groupEntries(id), token, before).catch(orderFailed);
   };
 
   const saveGroup = (name: string, id?: string, project?: Pick<SessionGroup, "cwd" | "hostId" | "hostName">) => {

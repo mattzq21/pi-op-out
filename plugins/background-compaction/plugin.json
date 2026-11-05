@@ -1,0 +1,8 @@
+{
+  "id": "background-compaction",
+  "name": "Background compaction",
+  "enabledByDefault": false,
+  "extension": {
+    "after": "context-bar"
+  }
+}

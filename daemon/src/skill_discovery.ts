@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, realpathSync, statSync, watch, type Dirent, 
 import { basename, dirname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import { skillInventory } from './settings_records';
+import { connection, transaction } from './util/db';
 import type { AppSettings } from './settings_types';
 
 export function frontmatterValue(content: string, key: string): string | undefined {
@@ -140,10 +140,17 @@ const skillListeners = new Set<() => void>();
 
 export function onSkillsChanged(listener: () => void): void { skillListeners.add(listener); }
 
+// The skills found in the skills folder, saved in the storage root. refresh finds them again.
 function savedSkills(home: string, refresh: boolean): any[] {
   const root = join(home, '.agents/skills');
-  const path = join(home, STORAGE_DIRECTORY, 'settings.json');
-  return skillInventory(path, root, refresh, () => discoverInventory(root));
+  const database = connection(join(home, STORAGE_DIRECTORY));
+  return transaction(database, 'IMMEDIATE', () => {
+    const row = database.prepare('SELECT entries_json FROM skill_inventory WHERE root=?').get(root) as { entries_json: string } | undefined;
+    if (row && !refresh) return JSON.parse(row.entries_json);
+    const skills = discoverInventory(root);
+    database.prepare('INSERT INTO skill_inventory VALUES (?, ?) ON CONFLICT(root) DO UPDATE SET entries_json=excluded.entries_json').run(root, JSON.stringify(skills));
+    return skills;
+  });
 }
 
 export function mergeDiscoveredSkills(settings: AppSettings): void {

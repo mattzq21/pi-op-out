@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { storageSchemaImports } from '../scripts/storage-schema-plugin.mjs';
+import { localStorageChannel } from './local-storage-channel.mjs';
 
-const root = new URL('../extensions/piop-define-agents/', import.meta.url);
+const root = new URL('../pi-extensions/piop-define-agents/', import.meta.url);
 const entries = ['index', 'prompts', 'extension-loader', 'daemon-loader'];
 const outputs = new Map();
 
@@ -14,7 +15,8 @@ async function bundled(filesystemAdapter = false) {
   const result = build({
     entryPoints: Object.fromEntries(entries.map(name => [name, fileURLToPath(new URL(`${name}.ts`, root))])),
     bundle: true, platform: 'node', format: 'esm', target: 'node22', write: false, outdir: '/agent-fixture',
-    plugins: [storageSchemaImports(), ...(filesystemAdapter ? [{
+    banner: { js: "import { createRequire as __fixtureRequire } from 'node:module'; const require = __fixtureRequire(import.meta.url);" },
+    plugins: [storageSchemaImports(), localStorageChannel(), ...(filesystemAdapter ? [{
       name: 'external-filesystem-fixture',
       setup(context) {
         context.onResolve({ filter: /^node:fs\/promises$/ }, () => ({ path: './fs.mjs', external: true }));

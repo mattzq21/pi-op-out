@@ -1,9 +1,19 @@
 import { isObject, kind } from './json';
+import { showsSubagents } from '../../../protocol/subagents';
+import { messageDisplay } from '../plugin_contributions';
 
 function utf16Length(value: string): number { return value.length; }
 
+// Adds to a custom message of a plugin how clients show it, from the plugin's manifest.
+function withPluginMessage(value: any): void {
+  if (typeof value.customType !== 'string' || (value.role !== 'custom' && value.type !== 'custom_message')) return;
+  const display = messageDisplay(value.customType);
+  if (display) value.pluginMessage = display;
+}
+
 export function clientPayload(value: any): any {
   if (Array.isArray(value?.entries) && isObject(value) && Object.hasOwn(value, 'leafId')) return clientHistory(value);
+  if (isObject(value)) withPluginMessage(value);
   if (value?.role === 'toolResult') {
     if (hasImage(value.content)) value.toolImage = true;
     value.content = '';
@@ -18,11 +28,10 @@ export function clientPayload(value: any): any {
   return value;
 }
 
-const SUBAGENT_TOOLS = new Set(['spawn_subagents', 'await_subagents', 'message_subagent', 'list_subagents', 'stop_subagent']);
 const SUBAGENT_FIELDS = ['name', 'sessionId', 'sessionPath', 'hostId', 'toolCallId', 'look'];
 
 function keepSubagents(value: any, details: any): void {
-  if (!SUBAGENT_TOOLS.has(value.toolName) || !Array.isArray(details?.runs)) return;
+  if (!showsSubagents(value.toolName) || !Array.isArray(details?.runs)) return;
   value.subagents = details.runs.filter(isObject).map((run: any) => {
     const icon: any = Object.fromEntries(SUBAGENT_FIELDS.filter(field => run[field] !== undefined).map(field => [field, run[field]]));
     if (typeof run.task === 'string') icon.task = run.task.length > 200 ? run.task.slice(0, 199) + '…' : run.task;

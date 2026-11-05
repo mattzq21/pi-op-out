@@ -1,9 +1,9 @@
 import { build } from 'esbuild';
+import { daemonImports } from '../../scripts/daemon-imports.mjs';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { daemonExecutable, startDaemon, temporaryDirectory } from './harness';
+import { startDaemon, temporaryDirectory } from './harness';
 
 let bundle: Promise<string> | undefined;
 function hostExecutable(): Promise<string> {
@@ -12,31 +12,31 @@ function hostExecutable(): Promise<string> {
     const outfile = join(temporaryDirectory('piop-host-build-'), 'host.mjs');
     await build({
       stdin: { contents: `
-import { start } from './daemon/src/host/index';
+import { startHost } from './daemon/src/host/index';
 import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operation_worker';
 import { createInterface } from 'node:readline';
 if (isHostOperationWorker()) { runHostOperationWorker(); } else {
 const output = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
-const host = await start(process.env.HOME, '.piop', process.argv[2], output, async () => ({ error: 'This host has no broker', transient: false }));
+const events = new Proxy({}, { get: (_, name) => name === 'then' ? undefined : (...args) => output({ type: 'event', name, args }) });
+const host = await startHost(process.env.HOME, '.piop', events, async () => ({ error: 'This host has no broker', transient: false }));
+const stop = () => host.shutdown().then(() => process.exit(0));
 const input = createInterface({ input: process.stdin });
-input.on('line', line => host.input(JSON.parse(line)));
-input.on('close', () => host.input({ type: 'shutdown' }));
-process.on('SIGTERM', () => host.input({ type: 'shutdown' }));
+input.on('line', line => {
+  const { id, method, args } = JSON.parse(line);
+  Promise.resolve().then(() => host[method](...args)).then(
+    data => output({ type: 'response', id, data: data ?? null }),
+    error => output({ type: 'response', id, error: error?.message ?? String(error) }));
+});
+input.on('close', stop);
+process.on('SIGTERM', stop);
 output({ type: 'fixture_ready' });
-await host.finished;
-process.exit(0);
 }
 `, resolveDir: root, sourcefile: 'host-fixture-entry.ts', loader: 'ts' },
       outfile, bundle: true, platform: 'node', format: 'esm', target: 'esnext', external: ['bun', 'bun:*'],
       banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
       define: { __PIOP_BUILD_ID__: '"host-fixture"', __PIOP_DEVELOPMENT__: 'false', __PIOP_PROJECT_DIR__: '""' },
       keepNames: true, legalComments: 'none', logLevel: 'error',
-      plugins: [{ name: 'raw-text', setup(context) {
-        context.onResolve({ filter: /^piop-agent-loader$/ }, () => ({ path: join(root, 'extensions/piop-define-agents/daemon-loader.ts') }));
-        context.onResolve({ filter: /^\.\.\/app-settings\.cjs$/ }, args => args.importer.includes('/extensions/piop-define-agents/') ? { path: join(root, 'daemon/resources/session-broker/app-settings.cjs') } : undefined);
-        context.onResolve({ filter: /\?raw$/ }, args => ({ path: resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw-text' }));
-        context.onLoad({ filter: /.*/, namespace: 'raw-text' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
-      } }],
+      plugins: [daemonImports()],
     });
     return outfile;
   })();
@@ -45,7 +45,8 @@ process.exit(0);
 export interface TestHost {
   home: string;
   events: any[];
-  request(packet: any, timeout?: number): Promise<any>;
+  // Calls a public method of the Host in the fixture process.
+  call(method: string, ...args: unknown[]): Promise<any>;
   waitEvent(match: (packet: any) => boolean, timeout?: number): Promise<any>;
   stop(): Promise<void>;
   finished: Promise<void>;
@@ -57,7 +58,7 @@ export async function startHost(options: { home?: string; env?: Record<string, s
     const bootstrap = await startDaemon({ home, env: options.env });
     await bootstrap.stop();
   }
-  const child = spawn(process.execPath, [await hostExecutable(), await daemonExecutable()], {
+  const child = spawn(process.execPath, [await hostExecutable()], {
     env: { ...process.env, ...options.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const events: any[] = [];
@@ -98,22 +99,22 @@ export async function startHost(options: { home?: string; env?: Record<string, s
     const timer = setTimeout(() => done(new Error('Host event timed out: ' + diagnostics)), timeout);
     listeners.add(check); check();
   });
-  const request = (packet: any, timeout = 10_000) => new Promise<any>((resolve, reject) => {
+  const call = (method: string, ...args: unknown[]) => new Promise<any>((resolve, reject) => {
     if (ended) { reject(ended); return; }
     const id = ++next;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('Host request timed out: ' + packet.type + ': ' + diagnostics)); }, timeout);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error('Host call timed out: ' + method + ': ' + diagnostics)); }, 30_000);
     pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
-    child.stdin.write(JSON.stringify({ ...packet, id }) + '\n', error => {
+    child.stdin.write(JSON.stringify({ id, method, args }) + '\n', error => {
       if (error) { pending.get(id)?.reject(error); pending.delete(id); }
     });
   });
   let stopped: Promise<void> | undefined;
   const stop = () => stopped ??= (async () => {
-    if (!ended) child.stdin.end(JSON.stringify({ type: 'shutdown' }) + '\n');
+    if (!ended) child.stdin.end();
     const timer = setTimeout(() => child.kill('SIGKILL'), 15_000);
     try { await finished; } finally { clearTimeout(timer); }
   })();
   try { await waitEvent(packet => packet.type === 'fixture_ready', 30_000); }
   catch (error) { await stop(); throw error; }
-  return { home, events, request, waitEvent, stop, finished };
+  return { home, events, call, waitEvent, stop, finished };
 }

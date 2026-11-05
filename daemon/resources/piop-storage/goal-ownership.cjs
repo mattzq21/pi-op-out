@@ -1,16 +1,28 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { Type } = require('typebox');
+const { Check } = require('typebox/value');
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 const { randomBytes } = require('node:crypto');
 
+// The chats that use the attachments of a goal folder, and the deleted chats that used them.
+const recordSchema = Type.Object({
+  version: Type.Literal(1), kind: Type.Literal('goal-assets'),
+  owners: Type.Array(Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.Optional(Type.String()) })),
+  retiredOwners: Type.Optional(Type.Array(Type.String())),
+});
+
+function parsed(directory, text) {
+  const record = JSON.parse(text);
+
+  if (!Check(recordSchema, record)) throw new Error(`Damaged goal ownership retained: ${directory}`);
+
+  return record;
+}
+
 function withDatabase(root, operation) {
-  const db = database.open(root);
-
-  try {
-    db.exec('CREATE TABLE IF NOT EXISTS goal_ownership (directory TEXT NOT NULL, identity TEXT NOT NULL, record_json TEXT, PRIMARY KEY(directory, identity))');
-
-    return operation(db);
-  } finally { db.close(); }
+  return operation(database.connection(root));
 }
 
 function identity(directory) {
@@ -37,7 +49,7 @@ function read(root, directory) {
       return undefined;
     }
 
-    return row.record_json === null ? undefined : JSON.parse(row.record_json);
+    return row.record_json === null ? undefined : parsed(directory, row.record_json);
   });
 }
 
@@ -48,7 +60,7 @@ function assertSavedIdentity(db, directory, expected) {
 function missingDirectoryRecord(root, directory) {
   const row = missingDirectoryRow(root, directory);
 
-  return row ? JSON.parse(row.record_json) : undefined;
+  return row ? parsed(directory, row.record_json) : undefined;
 }
 
 function savedIdentity(root, directory) { return missingDirectoryRow(root, directory)?.identity; }
@@ -63,26 +75,29 @@ function missingDirectoryRow(root, directory) {
   });
 }
 
-function save(root, directory, record, destination = directory) {
+const save = onMainThread('goal-ownership.save', (root, directory, record, destination = directory) => {
+  if (record !== undefined && !Check(recordSchema, record)) throw new Error('Invalid goal ownership record');
   const expected = identity(directory);
   withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json')
     .run(destination, expected, record === undefined ? null : JSON.stringify(record)));
 
   return expected;
-}
+});
 
 function retained(root, directory, expected) {
   return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_ownership WHERE directory=? AND identity=? AND record_json IS NOT NULL').get(directory, expected)));
 }
 
-function remove(root, directory, expected) {
+const remove = onMainThread('goal-ownership.remove', (root, directory, expected) => {
   withDatabase(root, db => db.prepare('DELETE FROM goal_ownership WHERE directory=? AND identity=?').run(directory, expected));
-}
+});
+
+const reserveDirectory = onMainThread('goal-ownership.reserveDirectory', (root, directory) => Number(withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL) ON CONFLICT DO NOTHING').run(directory, '').changes)));
 
 function allocate(root, parent) {
   for (let attempt = 0; attempt < 16; attempt++) {
     const directory = path.join(parent, `goal-${randomBytes(3).toString('hex')}`);
-    const reserved = withDatabase(root, db => db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL) ON CONFLICT DO NOTHING').run(directory, '').changes);
+    const reserved = reserveDirectory(root, directory);
 
     if (!reserved) continue;
 
@@ -102,37 +117,27 @@ function allocate(root, parent) {
   throw new Error('Could not allocate goal attachment storage');
 }
 
-function publishAllocation(root, directory) {
+const publishAllocation = onMainThread('goal-ownership.publishAllocation', (root, directory) => {
   const expected = identity(directory);
-  withDatabase(root, db => {
-    db.exec(`CREATE TABLE IF NOT EXISTS goal_text_files (directory TEXT NOT NULL, identity TEXT NOT NULL, names_json TEXT NOT NULL, PRIMARY KEY(directory, identity));
-      CREATE TABLE IF NOT EXISTS goal_text_contents (directory TEXT NOT NULL, identity TEXT NOT NULL, contents_json TEXT NOT NULL, PRIMARY KEY(directory, identity)); BEGIN IMMEDIATE;`);
+  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
     db.prepare('INSERT INTO goal_ownership VALUES (?, ?, NULL)').run(directory, expected);
     db.prepare("INSERT INTO goal_text_files VALUES (?, ?, '[]')").run(directory, expected);
     db.prepare("INSERT INTO goal_text_contents VALUES (?, ?, '[]')").run(directory, expected);
     db.prepare("DELETE FROM goal_ownership WHERE directory=? AND identity=''").run(directory);
-    db.exec('COMMIT');
-  });
+  }));
 
   return expected;
-}
+});
 
 function directories(root, sessionId) {
   return withDatabase(root, db => {
-    db.exec('BEGIN IMMEDIATE');
+    const rows = sessionId === undefined
+      ? db.prepare('SELECT DISTINCT directory FROM goal_ownership').all()
+      : db.prepare(`SELECT DISTINCT directory FROM goal_ownership
+        WHERE EXISTS (SELECT 1 FROM json_each(record_json, '$.owners') AS owner
+          WHERE json_extract(owner.value, '$.sessionId')=?)`).all(sessionId);
 
-    try {
-      const rows = sessionId === undefined
-        ? db.prepare('SELECT DISTINCT directory FROM goal_ownership').all()
-        : db.prepare(`SELECT DISTINCT directory FROM goal_ownership
-          WHERE EXISTS (SELECT 1 FROM json_each(record_json, '$.owners') AS owner
-            WHERE json_extract(owner.value, '$.sessionId')=?)`).all(sessionId);
-
-      const result = rows.map(row => row.directory);
-      db.exec('COMMIT');
-
-      return result;
-    } catch (error) { throw database.rollback(db, error); }
+    return rows.map(row => row.directory);
   });
 }
 

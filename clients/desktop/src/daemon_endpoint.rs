@@ -11,10 +11,17 @@ pub(crate) fn directory() -> Result<PathBuf, String> {
     Ok(root.join("daemons").join(piop_protocol::development_endpoint_key(project)))
 }
 
-pub(crate) fn path() -> Result<PathBuf, String> { Ok(directory()?.join("daemon.json")) }
 
+// The daemon's connection record. The daemon is the only writer of its database, so the app opens it read-only.
 pub(crate) fn read() -> Result<Endpoint, String> {
-    let body = crate::client_settings::records::read(&path()?)?.ok_or("Daemon connection is not available")?;
+    use rusqlite::OptionalExtension;
+    let file = directory()?.join("sessions.sqlite");
+    if !file.exists() { return Err("Daemon connection is not available".into()); }
+    let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| error.to_string())?;
+    db.busy_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
+    let body: Option<Option<Vec<u8>>> = db.query_row("SELECT body FROM application_settings WHERE name='daemon'", [], |row| row.get(0))
+        .optional().map_err(|error| error.to_string())?;
+    let body = body.flatten().ok_or("Daemon connection is not available")?;
     serde_json::from_slice(&body).map_err(|error| error.to_string())
 }
 
@@ -28,10 +35,10 @@ pub(crate) fn restart_active() -> bool {
 fn restart_status(directory: &Path) -> Result<Value, String> {
     use rusqlite::OptionalExtension;
     let directory = directory.canonicalize().map_err(|error| error.to_string())?;
-    let file = home_dir()?.join(STORAGE_DIRECTORY).join("sessions.sqlite");
+    let file = directory.join("sessions.sqlite");
     let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| error.to_string())?;
     db.busy_timeout(Duration::from_secs(2)).map_err(|error| error.to_string())?;
-    let body: Option<String> = db.query_row("SELECT record_json FROM daemon_restart_records WHERE directory=? AND name='restart-status.json'",
-        [directory.to_string_lossy()], |row| row.get(0)).optional().map_err(|error| error.to_string())?;
+    let body: Option<String> = db.query_row("SELECT record_json FROM restart_records WHERE name='status'", [], |row| row.get(0))
+        .optional().map_err(|error| error.to_string())?;
     serde_json::from_str(&body.ok_or("Restart status is missing")?).map_err(|error| error.to_string())
 }

@@ -7,7 +7,7 @@ const absolute = value => Check(Type.String(), value) && path.isAbsolute(value);
 
 const ownerSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sessionPath: Type.String() });
 
-const recoverySchema = Type.Object({ version: Type.Literal(1), managedBy: Type.Literal('piop'), kind: Type.Literal('missing-directory-recovery'), id: Type.String({ pattern: '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), state: Type.Union(['allocated', 'ready', 'published'].map(value => Type.Literal(value))), mode: Type.Union(['empty', 'legacy-copy'].map(value => Type.Literal(value))), directory: Type.String(), originalCwd: Type.String(), owners: Type.Array(ownerSchema, { minItems: 1 }) });
+const recoverySchema = Type.Object({ version: Type.Literal(1), managedBy: Type.Literal('piop'), kind: Type.Literal('missing-directory-recovery'), id: Type.String({ pattern: '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' }), state: Type.Union(['allocated', 'ready', 'published'].map(value => Type.Literal(value))), mode: Type.Literal('empty'), directory: Type.String(), originalCwd: Type.String(), owners: Type.Array(ownerSchema, { minItems: 1 }) });
 
 const nullableString = Type.Union([Type.String(), Type.Null()]);
 
@@ -32,13 +32,12 @@ function addRoot(roots, target, provenance, ownership = 'referenced', owners = [
 
 async function readRegistry(profile, discovery) {
   const database = path.join(profile, 'sessions.sqlite');
-  let db;
 
   try {
     await fs.lstat(database);
-    const { DatabaseSync } = require('node:sqlite');
-    db = new DatabaseSync(database, { readOnly: true });
-    const rows = db.prepare(require('./session-database.cjs').directoryQuery(db, ['session_id', 'session_path', 'cwd'])).all();
+    const tables = require('./session-database.cjs');
+    const db = tables.connection(profile);
+    const rows = db.prepare(tables.directoryQuery(db, ['session_id', 'session_path', 'cwd'])).all();
 
     for (const row of rows) {
       if (!Check(registrySchema, row)) { discovery.warnings.push(`${database}: invalid registry row; owner provenance is unresolved`); continue; }
@@ -50,7 +49,7 @@ async function readRegistry(profile, discovery) {
     }
   } catch (error) {
     if (error.code !== 'ENOENT') discovery.warnings.push(`${database}: registry provenance unavailable: ${error.message}`);
-  } finally { db?.close(); }
+  }
 }
 
 function validRecovery(record, container) {
@@ -101,20 +100,14 @@ function recordRecoverySource(record, discovery, owners) {
   const provenance = `Retained recovery migration source: ${record.id}`;
   addRoot(discovery.cwds, source, provenance, 'referenced', owners);
 
-  if (legacyRecovery(source)) addRoot(discovery.legacy, path.basename(source) === 'workdir' ? path.dirname(source) : source, provenance, 'unattributed', owners);
-}
-
-function legacyRecovery(cwd) {
-  return /^\/tmp\/piop-session-[a-zA-Z0-9]{6}$/.test(cwd)
-    || /^\/tmp\/piop-recovery-[a-zA-Z0-9]{6}\/workdir$/.test(cwd);
 }
 
 async function discoverRoots(profile) {
-  const discovery = { cwds: new Map(), recovery: new Map(), legacy: new Map(), retainedArtifacts: new Map(), sessionPaths: new Set(), warnings: [] };
+  const discovery = { cwds: new Map(), recovery: new Map(), retainedArtifacts: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
 
   return discovery;
 }
 
-module.exports = { absolute, addRoot, discoverRoots, legacyRecovery };
+module.exports = { absolute, addRoot, discoverRoots };

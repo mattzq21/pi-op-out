@@ -1,55 +1,40 @@
 import { z } from 'zod';
-import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as SessionTables from '../resources/session-database.cjs';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from './host_operations';
-import { claimPath } from './session_worker';
-import { tryLockFileSync } from './util/flock';
-import { openDatabase, type Database } from './util/db';
+import type { Database } from './util/db';
 
 type RecordRequest = { root: string; sessionId: string; sessionPath: string | null; cwd: string; checkedAt: number };
 
-const recordOperation = hostOperation<RecordRequest, null>('record-session-directory', 'general', DEFAULT_TIMEOUT, value => z.null().parse(value));
+const recordOperation = hostOperation<RecordRequest, null>('record-session-directory', 'general', DEFAULT_TIMEOUT, z.null());
 
 export function ids(root: string): string[] {
-  const database = open(root);
-  try { return (database.prepare('SELECT session_id FROM sessions').all() as Array<{ session_id: string }>).map(row => row.session_id); }
-  finally { database.close(); }
+  return (connection(root).prepare('SELECT session_id FROM sessions').all() as Array<{ session_id: string }>).map(row => row.session_id);
 }
 
 export function reserve(root: string): string {
-  const database = open(root);
-  try { return SessionTables.reserveId(database); } finally { database.close(); }
+  return SessionTables.reserveId(connection(root));
 }
 
+// Gives back an identity that was reserved and not used for a saved chat.
 export function releaseReservation(root: string, id: string): void {
-  const claim = tryLockFileSync(claimPath(id));
-  if (!claim) return;
-  try {
-    const database = open(root);
-    try { database.prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id); } finally { database.close(); }
-  } finally { claim.release(); }
+  connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
 export function pending(root: string, work: 'transaction' | 'recovery' | 'retention'): boolean {
-  const database = open(root);
-  try { return SessionTables.pending(database, work); } finally { database.close(); }
+  return SessionTables.pending(connection(root), work);
 }
 
 export function setTaskRunning(root: string, id: string, running: boolean): void {
-  const database = open(root);
-  try {
-    if (running) database.prepare('INSERT OR IGNORE INTO running_tasks SELECT session_id FROM sessions WHERE session_id=?').run(id);
-    else database.prepare('DELETE FROM running_tasks WHERE session_id=?').run(id);
-  } finally { database.close(); }
+  const database = connection(root);
+  if (running) database.prepare('INSERT OR IGNORE INTO running_tasks SELECT session_id FROM sessions WHERE session_id=?').run(id);
+  else database.prepare('DELETE FROM running_tasks WHERE session_id=?').run(id);
 }
 
 export function runningTasks(root: string): string[] {
-  const database = open(root);
-  try { return (database.prepare('SELECT session_id FROM running_tasks').all() as Array<{ session_id: string }>).map(row => row.session_id); }
-  finally { database.close(); }
+  return (connection(root).prepare('SELECT session_id FROM running_tasks').all() as Array<{ session_id: string }>).map(row => row.session_id);
 }
 
 export function requestCleanup(root: string, kind: 'goal'): void {
@@ -80,19 +65,6 @@ async function writeRecords(): Promise<void> {
   } finally { recording = false; }
 }
 
-const ready = new Set<string>();
-
-export function open(root: string): Database {
-  const file = join(root, 'sessions.sqlite');
-  if (!ready.has(root)) mkdirSync(root, { recursive: true, mode: 0o700 });
-  const database = openDatabase(file, { nofollow: false, timeout: 10_000 });
-  try {
-    if (!ready.has(root)) {
-      chmodSync(file, 0o600);
-      SessionTables.initialize(database);
-      ready.add(root);
-    }
-    database.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
-  } catch (error) { database.close(); throw error; }
-  return database;
+export function connection(root: string): Database {
+  return SessionTables.connection(root);
 }

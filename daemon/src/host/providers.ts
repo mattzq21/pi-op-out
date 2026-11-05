@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Mutex, errorText } from '../util/sync';
+import { Mutex, errorText, logFailure, observedElsewhere } from '../util/sync';
 import { array, flag, text, jsonEqual } from './json';
 import * as Catalogs from './catalogs';
 import { authText, authUrl } from './catalogs';
@@ -59,17 +59,17 @@ export class ProviderService {
   private fastModels: FastModelStore;
   private revision = 0;
 
-  constructor(executable: string) {
-    this.sdk = new Sdk(executable, { event: packet => this.receive(packet) });
+  constructor() {
+    this.sdk = new Sdk({ event: packet => this.receive(packet) });
     this.fastModels = new FastModelStore(
       { scan: provider => this.sdk.request({ method: 'fast_model_scan', provider: provider ?? null }) as Promise<FastModelScanResult[]> },
-      () => { this.host?.output({ type: 'fast_models_changed' }); this.host?.refreshAgentAvailability(); },
+      () => { this.host?.events.fastModelsChanged(); this.host?.refreshAgentAvailability(); },
     );
   }
 
   bind(host: Host): void {
     this.host = host;
-    this.refreshCatalogs(true).catch(error => host.output({ type: 'diagnostic', line: 'Provider model scan failed at startup: ' + errorText(error) }));
+    this.refreshCatalogs(true).catch(error => host.events.diagnostic('Provider model scan failed at startup: ' + errorText(error)));
   }
 
   fastModelSnapshot(): FastModelSnapshot { return this.fastModels.snapshot(); }
@@ -80,8 +80,8 @@ export class ProviderService {
     this.revision += 1;
     const host = this.host;
     if (!host) return;
-    for (const session of [...host.sessions.values()]) session.publish({ type: 'session_info_changed' }, null);
-    host.output({ type: 'provider_auth_changed', flow });
+    for (const session of host.allSessions()) session.publish({ type: 'session_info_changed' }, null);
+    host.events.providerAuthChanged(flow);
     host.refreshAgentAvailability();
   }
 
@@ -104,7 +104,7 @@ export class ProviderService {
     if (!owner) throw new Error('Login owner is missing');
     switch (request?.action) {
       case 'fast_models': return this.fastModels.snapshot();
-      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog', skillPaths: this.skillPaths() }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage, 'settings.json')) };
+      case 'draft_catalog': return { ...await this.sdk.request({ method: 'draft_catalog', skillPaths: this.skillPaths() }), commandDetails: savedCommands(join(this.host!.home, this.host!.storage)) };
       case 'list': return this.listing(flag(request, 'refreshModels'));
       case 'begin': return this.begin(owner, request);
       case 'logout': return this.logout(text(request, 'providerId'));
@@ -172,7 +172,7 @@ export class ProviderService {
     if (!running || this.flows.get(running.flowId)?.owner !== owner) return;
     await this.cancel(running.flowId);
     let timer: NodeJS.Timeout | undefined;
-    await Promise.race([running.done.catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, 10_000); })]);
+    await Promise.race([running.done, new Promise(resolve => { timer = setTimeout(resolve, 10_000); })]);
     clearTimeout(timer);
   }
 
@@ -196,7 +196,7 @@ export class ProviderService {
       let result: { ok: true; value: any } | { ok: false; error: string };
       let timer: NodeJS.Timeout | undefined;
       const login = this.sdk.request({ method: 'login', flowId: id, providerId, authType });
-      login.catch(() => {});
+      observedElsewhere(login);
       const expired = Symbol('expired');
       try {
         const value = await Promise.race([login, new Promise(resolve => { timer = setTimeout(() => resolve(expired), 600_000); })]);
@@ -223,7 +223,7 @@ export class ProviderService {
         current.notices = [];
       }
       let snapshot: any = null;
-      try { snapshot = this.snapshot(id); } catch {}
+      if (this.flows.has(id)) snapshot = this.snapshot(id);
       this.flowChanged(snapshot);
     })();
     this.logins.set(providerId, { flowId: id, done });
@@ -329,7 +329,7 @@ export class ProviderService {
   private listingWarnings(): string { return JSON.stringify([this.catalogWarning, fastModelWarning(this.fastModels.snapshot())]); }
 
   private announceWarnings(before: string): void {
-    if (this.listingWarnings() !== before) this.host?.output({ type: 'provider_auth_changed', flow: null });
+    if (this.listingWarnings() !== before) this.host?.events.providerAuthChanged(null);
   }
 
   private refreshCatalogsInBackground(): void {
@@ -337,7 +337,7 @@ export class ProviderService {
     const before = this.listingWarnings();
     this.refreshCatalogs(false, false).then(
       () => this.announceWarnings(before),
-      error => this.host?.output({ type: 'diagnostic', line: 'Provider model scan failed: ' + errorText(error) }),
+      error => this.host?.events.diagnostic('Provider model scan failed: ' + errorText(error)),
     );
   }
 
@@ -375,7 +375,7 @@ export class ProviderService {
       case 'prompt_resolved': if (flow.prompt && jsonEqual(flow.prompt.id, packet.promptId)) flow.prompt = null; break;
       case 'notice': flow.receiveNotice(packet.notice); break;
     }
-    if (cancel) this.sdk.request({ method: 'cancel', flowId: id }).catch(() => {});
+    if (cancel) this.sdk.request({ method: 'cancel', flowId: id }).catch(logFailure('Could not cancel sign-in flow ' + id));
   }
 
   async shutdown(): Promise<void> {

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { fakeProgram, startDaemon, type TestDaemon } from './harness';
+import { fakePi, fakeProgram, startDaemon, type TestDaemon } from './harness';
 import { startHost, type TestHost } from './host-fixture';
 
 function publicSession(home: string, folder = 'host'): { id: string; path: string } {
@@ -17,7 +17,7 @@ let daemon: TestDaemon;
 beforeAll(async () => {
   daemon = await startDaemon();
   const bin = join(daemon.home, '.local/bin');
-  fakeProgram(bin, 'pi', '#!/bin/sh\nexit 1\n');
+  fakePi(daemon.home);
   fakeProgram(bin, 'node', `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
@@ -302,8 +302,8 @@ test('abort stops an external Pi that never answers the stop request', async () 
 
 async function attachHostSession(host: TestHost, path: string, sessionId: string, clientId: string) {
   const runtimeId = randomUUID();
-  const result = await host.request({ type: 'attach', runtimeId, sessionKey: sessionId, clientId,
-    cwd: host.home, timeout: 10_000,
+  const result = await host.call('attach', { runtimeId, sessionKey: sessionId, clientId,
+    cwd: host.home, timeout: 10_000, presence: {},
     spec: { program: join(daemon.home, '.local/bin/node'), args: ['--session', path], env: {}, cwd: host.home },
   });
   expect(result).toMatchObject({ owned: true });
@@ -318,18 +318,18 @@ test('a replacement host rejects the previous host’s released ownership until 
   let second: TestHost | undefined;
   try {
     const clientId = 'replacement-client';
-    const owner = { type: 'conversation_owner', sessionId: session.id, clientId, allowReleased: true };
+    const owner = (host: TestHost, allowReleased = true) => host.call('conversationOwner', session.id, clientId, allowReleased);
     const runtimeId = await attachHostSession(first, session.path, session.id, clientId);
-    await first.request({ type: 'detach', runtimeId });
-    expect(await first.request(owner)).toBe(true);
-    expect(await first.request({ ...owner, allowReleased: false })).toBe(false);
+    await first.call('detachRuntime', runtimeId, false, false);
+    expect(await owner(first)).toBe(true);
+    expect(await owner(first, false)).toBe(false);
     await first.stop();
     second = await startHost({ home: first.home });
-    expect(await second.request(owner)).toBe(false);
+    expect(await owner(second)).toBe(false);
     const replacement = await attachHostSession(second, session.path, session.id, clientId);
-    expect(await second.request({ ...owner, allowReleased: false })).toBe(true);
-    await second.request({ type: 'detach', runtimeId: replacement });
-    expect(await second.request(owner)).toBe(true);
+    expect(await owner(second, false)).toBe(true);
+    await second.call('detachRuntime', replacement, false, false);
+    expect(await owner(second)).toBe(true);
   } finally { await second?.stop(); await first.stop(); }
 });
 

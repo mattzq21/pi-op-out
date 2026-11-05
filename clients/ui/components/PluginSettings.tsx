@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { ArrowDown, ArrowUp, Check } from "lucide-solid";
-import { pluginError, plugins, refreshPlugins, restartPlugins, type PluginStatus } from "../plugins";
+import { pluginError, refreshPlugins, restartPlugins, type PluginStatus } from "../plugins";
 import { Toggle } from "./Toggle";
 
 export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: boolean) => void }) {
@@ -29,7 +29,11 @@ export function PluginSettings(props: { hostId: string; onBusyChange?: (busy: bo
   onCleanup(() => { disposed = true; clearTimeout(successTimer); props.onBusyChange?.(false); });
   const change = (id: string, checked: boolean) => { setMessage(undefined); setEnabled(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); };
 
-  const orderedPlugins = () => [...enabled().flatMap(id => plugins.filter(plugin => plugin.id === id)), ...plugins.filter(plugin => !enabled().includes(plugin.id))];
+  const orderedPlugins = () => {
+    const available = status()?.plugins ?? [];
+
+    return [...enabled().flatMap(id => available.filter(plugin => plugin.id === id)), ...available.filter(plugin => !enabled().includes(plugin.id))];
+  };
 
   const move = (id: string, offset: number) => {
     setEnabled(previous => {

@@ -43,28 +43,24 @@ export function save(connection: Database, cache: Map<string, CachedSession>): v
   });
 }
 
-export interface SidebarDatabase { root: string; connection: Database }
+// The storage root whose saved sidebar was loaded.
+export interface SidebarDatabase { root: string }
 
 export function prepare(holder: { database?: SidebarDatabase }, root: string, cache: Map<string, CachedSession>): boolean {
   if (holder.database?.root === root) return false;
-  try { holder.database?.connection.close(); } catch {}
   holder.database = undefined;
   try {
-    const connection = Registry.open(root);
-    try {
-      for (const [path, entry] of load(connection)) if (!cache.has(path)) cache.set(path, entry);
-    } catch (error) { connection.close(); throw error; }
-    holder.database = { root, connection };
+    for (const [path, entry] of load(Registry.connection(root))) if (!cache.has(path)) cache.set(path, entry);
+    holder.database = { root };
   } catch (error: any) { console.error(`Could not load saved sidebar: ${error.message ?? error}`); }
   return true;
 }
 
 export function persist(holder: { database?: SidebarDatabase }, cache: Map<string, CachedSession>): void {
   if (!holder.database) return;
-  try { save(holder.database.connection, cache); }
+  try { save(Registry.connection(holder.database.root), cache); }
   catch (error: any) {
     console.error(`Could not save sidebar: ${error.message ?? error}`);
-    try { holder.database.connection.close(); } catch {}
     holder.database = undefined;
   }
 }

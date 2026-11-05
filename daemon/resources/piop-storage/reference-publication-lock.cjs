@@ -1,42 +1,15 @@
-const { lockSync, lock } = require('../file-lock.cjs');
-const fs = require('node:fs');
-const path = require('node:path');
+const storageLocks = require('../storage-locks.cjs');
 
-function openReference(root) {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const descriptor = fs.openSync(path.join(root, 'reference-publication.lock'), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
-
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid reference publication lock');
-
-    return descriptor;
-  } catch (error) { fs.closeSync(descriptor); throw error; }
-}
-
-function finish(descriptor, status, stderr, nonblocking) {
-  if (nonblocking && status === 75) { fs.closeSync(descriptor);
-
-    return; }
-
-  if (status !== 0) throw new Error(stderr.trim() || 'Could not lock reference publication');
-
-  return () => fs.closeSync(descriptor);
-}
+// The reference publication lock of a storage folder. Chats that save goal attachments and references take it shared;
+// archive, restore and delete take it exclusive while they move chats.
+function name(root) { return 'reference-publication:' + root; }
 
 function acquireReferencePublicationLock(root, shared = false, nonblocking = false) {
-  const descriptor = openReference(root);
-
-  try {
-    return finish(descriptor, lockSync(descriptor, shared, nonblocking) ? 0 : 75, '', nonblocking);
-  } catch (error) { fs.closeSync(descriptor); throw error; }
+  return storageLocks.lockSync(name(root), { shared, wait: !nonblocking, busy: 'Chat storage is busy with another change. Try again.' });
 }
 
 async function acquireReferencePublicationLockAsync(root) {
-  const descriptor = openReference(root);
-
-  try {
-    return finish(descriptor, await lock(descriptor, true) ? 0 : 75, '', false);
-  } catch (error) { fs.closeSync(descriptor); throw error; }
+  return storageLocks.lock(name(root), { shared: true });
 }
 
 module.exports = { acquireReferencePublicationLock, acquireReferencePublicationLockAsync };

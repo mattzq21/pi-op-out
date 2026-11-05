@@ -51,6 +51,8 @@ interface Props {
   compacting?: boolean;
   queued: number;
   commands: SlashCommand[];
+  queuedCommands: readonly string[];
+  queuedWithPrompt?: readonly string[];
   agents: AgentProfile[];
   activeAgent?: string;
   agentSaved?: boolean;
@@ -133,8 +135,8 @@ function skillMatches(commands: SlashCommand[], query: string) {
   return matches;
 }
 
-function composerDefaults({ streaming, compacting = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
-  return { streaming, compacting, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
+function composerDefaults({ streaming, compacting = false, queued, pendingMessages = [], onChangePending, commands, queuedCommands, queuedWithPrompt = [], agents, activeAgent, agentSaved = false, agentUnavailable = false, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+  return { streaming, compacting, queued, pendingMessages, onChangePending, commands, queuedCommands, queuedWithPrompt, agents, activeAgent, agentSaved, agentUnavailable, models, modelAliases, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, focusRequest, onSend, onStageSubmission, onAbort, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
 }
 
 function composerControlState(controlsDisabled: boolean, stopping: boolean) {
@@ -178,8 +180,8 @@ function canPickCommand(event: KeyboardEvent) {
   return (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey;
 }
 
-function reviewBehavior(message: string, behavior: "steer" | "followUp") {
-  return queuedCommand(message) ? "followUp" : behavior;
+function reviewBehavior(message: string, behavior: "steer" | "followUp", queuedCommands: readonly string[], queuedWithPrompt: readonly string[]) {
+  return queuedCommand(message, queuedCommands, queuedWithPrompt) ? "followUp" : behavior;
 }
 
 export function Composer(props: Props) {
@@ -579,7 +581,7 @@ export function Composer(props: Props) {
       const submission = capturedComposer.onStageSubmission ? await stageComposerDraft(capturedComposer.onStageSubmission, { rawText: submittedValue, uploads: submittedUploads, consume: true }, changeDraft, changeUploads) : undefined;
 
       if (submission) setSending(false);
-      const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? reviewBehavior(message, behavior) : undefined, images, submission);
+      const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? reviewBehavior(message, behavior, capturedComposer.queuedCommands, capturedComposer.queuedWithPrompt) : undefined, images, submission);
 
       if (accepted === false) throw new Error("Message was not submitted");
 
@@ -784,7 +786,7 @@ export function Composer(props: Props) {
             <button type="button" class="pending-icon-button" disabled={disabled() || position() <= 0} aria-label={`Move queued message up: ${label()}`} data-tooltip="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
             <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${label()}`} data-tooltip="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
-          <Show when={!message().goal && (message().retry || !queuedCommand(text()))}><button type="button" disabled={disabled()} data-tooltip={message().retry ? (props.queueHeld ? "Keep it in the held queue. It is sent when you resume." : "Send it again") : message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
+          <Show when={!message().goal && (message().retry || !queuedCommand(text(), props.queuedCommands, props.queuedWithPrompt))}><button type="button" disabled={disabled()} data-tooltip={message().retry ? (props.queueHeld ? "Keep it in the held queue. It is sent when you resume." : "Send it again") : message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button></Show>
           <Show when={message().goal && props.goal?.goal()}><GoalActions controls={required(props.goal)} /></Show>
           <Show when={!message().goal}><button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${label()}`} data-tooltip="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button></Show>
         </div>);

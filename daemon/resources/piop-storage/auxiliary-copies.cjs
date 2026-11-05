@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const io = require('./session-publication-io.cjs');
 const stateRecords = require('./session-records.cjs');
 const database = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 const childIndex = require('../session-broker/session-child-index.cjs');
 const names = require('../session-broker/session-names.cjs');
 
@@ -139,14 +140,12 @@ function deliveredResults(entries) {
   }));
 }
 
-function copySubagentRuns(root, plan, parents) {
+const copySubagentRuns = onMainThread('auxiliary-copies.copySubagentRuns', (root, plan, parents) => {
   root = fs.realpathSync(root);
   const copiedChildren = new Map(plan.copies.filter(copy => copy.kind === 'subagent').map(copy => [copy.sourceId, copy]));
-  const db = database.open(root);
+  const db = database.connection(root);
 
-  try {
-    db.exec('BEGIN IMMEDIATE');
-
+  database.transaction(db, 'IMMEDIATE', () => {
     for (const parent of parents) {
       const rows = db.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=? ORDER BY started_at, run_id').all(parent.sourceId);
       const runs = rows.map(row => JSON.parse(row.run_json)).filter(run => copiedChildren.has(run.sessionId));
@@ -173,11 +172,8 @@ function copySubagentRuns(root, plan, parents) {
           .run(parent.sessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
       }
     }
-
-    db.exec('COMMIT');
-  } catch (error) { throw database.rollback(db, error); }
-  finally { db.close(); }
-}
+  });
+});
 
 function retryRecord(plan) {
   if (!plan.retries.length) return undefined;

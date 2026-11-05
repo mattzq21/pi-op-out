@@ -1,4 +1,5 @@
-const { lockSync } = require('../file-lock.cjs');
+const storageLocks = require('../storage-locks.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -6,12 +7,7 @@ const goalDependencies = require('./goal-dependencies.cjs');
 const goalOwnership = require('./goal-ownership.cjs');
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const strings = value => Array.isArray(value) && value.every(item => typeof item === 'string');
-const validOwnership = value => object(value) && value.version === 1 && value.kind === 'goal-assets'
-  && Array.isArray(value.owners) && value.owners.every(owner => object(owner) && typeof owner.sessionId === 'string' && owner.sessionId.length > 0 && (owner.sessionPath === undefined || typeof owner.sessionPath === 'string'))
-  && (value.retiredOwners === undefined || strings(value.retiredOwners));
-const validContract = value => object(value) && value.version === 1 && value.policy === 'shared-profile'
-  && Array.isArray(value.directories) && value.directories.every(item => object(item) && typeof item.path === 'string' && typeof item.identity === 'string');
+
 
 const inside = (root, file) => path.isAbsolute(file) && path.resolve(file) === file && file.startsWith(root + path.sep);
 
@@ -39,20 +35,26 @@ function rootForDirectory(directory) {
   return canonical;
 }
 
+const GOAL_ASSETS_BUSY = 'Goal assets are in use by another storage operation. Retry after it finishes.';
+
+// The goal asset lock of root. A worker thread waits up to 5 seconds for it; the main thread does not wait.
 function acquire(root) {
   if (fs.realpathSync(root) !== root) throw new Error('Goal asset storage has ambiguous ancestry');
-  const file = path.join(root, 'goal-assets.lock');
-  const descriptor = fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
+  const release = storageLocks.lockSync('goal-assets:' + root, { timeoutMs: 5000, busy: GOAL_ASSETS_BUSY });
 
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error('Invalid goal asset lock');
-    for (const deadline = Date.now() + 5000; !lockSync(descriptor, false, true, 5000);) {
-      if (Date.now() >= deadline) throw new Error('Goal assets are in use by another storage operation. Retry after it finishes.');
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-    }
+  if (!release) throw new Error(GOAL_ASSETS_BUSY);
 
-    return () => fs.closeSync(descriptor);
-  } catch (error) { fs.closeSync(descriptor); throw error; }
+  return release;
+}
+
+// The goal asset lock of root for code that can wait without blocking the main thread: it waits up to 5 seconds, as a
+// worker thread does. Code of the same flow then gets the lock again at once.
+async function acquireAsync(root) {
+  const release = await storageLocks.lock('goal-assets:' + root, { timeoutMs: 5000 });
+
+  if (!release) throw new Error(GOAL_ASSETS_BUSY);
+
+  return release;
 }
 
 function locked(root, operation) {
@@ -79,8 +81,6 @@ function readOwners(root, directory) {
   const record = goalOwnership.read(root, directory);
 
   if (record === undefined) return { version: 1, kind: 'goal-assets', owners: [] };
-
-  if (!validOwnership(record)) throw new Error(`Damaged goal ownership retained: ${directory}`);
 
   return record;
 }
@@ -283,7 +283,7 @@ function ownedDirectories(root, sessionId) {
 function verifyContract(root, contract) {
   if (contract === undefined) return;
 
-  if (!validContract(contract)) throw new Error('Invalid goal asset dependency contract');
+  if (!goalDependencies.validContract(contract)) throw new Error('Invalid goal asset dependency contract');
 
   for (const dependency of contract.directories) {
     if (!validPath(root, dependency.path) || !goalDependencies.matchesDirectory(root, dependency.path, dependency.identity, identity(dependency.path))) throw new Error(`Archived goal assets changed or are missing: ${dependency.path}`);
@@ -317,14 +317,10 @@ function discardPreparation(root, directory, sessionId) {
 function reclamationKey(directory) { return createHash('sha256').update(directory).digest('hex'); }
 
 function reclamationPending(root, directory) {
-  const database = require('../session-database.cjs').open(root);
-
-  try { return Boolean(database.prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(reclamationKey(directory))); }
-  finally { database.close(); }
+  return Boolean(require('../session-database.cjs').connection(root).prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(reclamationKey(directory)));
 }
 
 function removeRecoveryRecords(database, directory, expected) {
-  if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_recoveries'").get()) return;
   const rows = database.prepare("SELECT directory, record_json FROM goal_directory_recoveries WHERE json_extract(record_json, '$.staging')=? AND json_extract(record_json, '$.current')=?").all(directory, expected);
 
   for (const row of rows) {
@@ -337,20 +333,19 @@ function removeDirectoryRecords(database, directory, expected) {
   if (exists(directory)) return;
 
   for (const table of ['goal_asset_dependencies', 'goal_text_files', 'goal_text_contents', 'goal_preparations', 'goal_ownership']) {
-    if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
     database.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
   }
 
-  if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_directory_history'").get()) database.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
+  database.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
   removeRecoveryRecords(database, directory, expected);
 }
 
-function updateReclamation(root, directory, expected, removing) {
-  const database = require('../session-database.cjs').open(root);
+const updateReclamation = onMainThread('goal-assets.updateReclamation', (root, directory, expected, removing) => {
+  const tables = require('../session-database.cjs');
+  const database = tables.connection(root);
   const key = reclamationKey(directory);
-  database.exec('BEGIN IMMEDIATE');
 
-  try {
+  tables.transaction(database, 'IMMEDIATE', () => {
     const row = database.prepare('SELECT record_json FROM goal_asset_reclamations WHERE record_id=?').get(key);
 
     if (row) {
@@ -364,10 +359,8 @@ function updateReclamation(root, directory, expected, removing) {
       database.prepare('DELETE FROM goal_asset_reclamations WHERE record_id=?').run(key);
     }
     else if (!row) database.prepare('INSERT INTO goal_asset_reclamations VALUES (?, ?)').run(key, JSON.stringify({ path: directory, identity: expected }));
-    database.exec('COMMIT');
-  } catch (error) { throw require('../session-database.cjs').rollback(database, error); }
-  finally { database.close(); }
-}
+  });
+});
 
 function beginReclamation(root, directory, expected) { updateReclamation(root, directory, expected, false); }
 
@@ -375,4 +368,4 @@ function endReclamation(root, directory, expected) {
   updateReclamation(root, directory, expected, true);
 }
 
-module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, historyContract, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
+module.exports = { rootForDirectory, acquire, acquireAsync, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, historyContract, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };

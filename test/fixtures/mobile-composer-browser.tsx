@@ -8,7 +8,7 @@ document.documentElement.dataset.mobile = 'true';
 const [sent, setSent] = createSignal<unknown[]>([]);
 render(() => <main style={{ width: '100%' }}>
   <output aria-label="Sent messages">{JSON.stringify(sent())}</output>
-  <Composer streaming queued={0} commands={[]} agents={[]} models={[]} model={null}
+  <Composer streaming queued={0} commands={[]} queuedCommands={["compact"]} agents={[]} models={[]} model={null}
     thinkingLevel="off" thinkingLevels={['off']}
     onSend={async (message, behavior, images) => { setSent(values => [...values, { message, behavior, images }]); }}
     onAbort={() => {}}

@@ -30,7 +30,7 @@ async function run(app: App): Promise<void> {
   const runtimeId = 'pi-discovery-' + randomUUID();
   const report = nextReports();
   try {
-    await startPiForOwner(app, 'pi-discovery', app.pi, app.broker, { runtimeId, clientId: runtimeId, hostId: 'local', cwd: homeDir() });
+    await startPiForOwner(app, 'pi-discovery', app.pi, app.broker, { runtimeId, clientId: runtimeId, cwd: homeDir() });
     await report.reported;
   } finally {
     report.cancel();

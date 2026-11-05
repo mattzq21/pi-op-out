@@ -1,0 +1,16 @@
+{
+  "id": "web-search",
+  "name": "Web search",
+  "extension": {
+    "after": "context-bar"
+  },
+  "agentTools": [
+    "web_search"
+  ],
+  "settings": {
+    "webSearchModel": "openai/gpt-6.1-sol"
+  },
+  "client": {
+    "scope": "host"
+  }
+}

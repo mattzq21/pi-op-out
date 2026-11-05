@@ -1,5 +1,5 @@
 import { createComputed, createSignal, onCleanup, untrack } from "solid-js";
-import { parseCap } from "../../../extensions/piop-context-window-cap/interface";
+import { parseCap } from "../../../pi-extensions/piop-context-window-cap/interface";
 
 type Props = { label: string; placeholder: string; value: number | null | undefined; onChange: (value: number | null | undefined) => void; onError: (error: string | undefined) => void };
 

@@ -1,4 +1,4 @@
-import * as records from './settings_records';
+import { connection } from './util/db';
 import { reported } from './pi_discovery';
 
 export interface CommandOption { value: string; label: string; description?: string }
@@ -28,12 +28,14 @@ export function parseCommands(value: unknown): CommandInfo[] {
   return value.map(command);
 }
 
-export function savedCommands(settingsFile: string): CommandInfo[] | null {
-  const saved = records.commandInventory(settingsFile);
-  return saved === null ? null : parseCommands(saved);
+// The commands that Pi last reported in the storage root, or null before the first report.
+export function savedCommands(root: string): CommandInfo[] | null {
+  const row = connection(root).prepare('SELECT entries_json FROM command_inventory WHERE id=1').get() as { entries_json: string } | undefined;
+  return row ? parseCommands(JSON.parse(row.entries_json)) : null;
 }
 
-export function recordCommands(value: unknown, settingsFile: string): void {
-  records.saveCommandInventory(settingsFile, parseCommands(value));
+export function recordCommands(value: unknown, root: string): void {
+  const entries = JSON.stringify(parseCommands(value));
+  connection(root).prepare('INSERT INTO command_inventory VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET entries_json=excluded.entries_json').run(entries);
   reported('commands');
 }

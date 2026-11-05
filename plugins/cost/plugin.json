@@ -1,0 +1,13 @@
+{
+  "id": "cost",
+  "name": "Cost limit",
+  "extension": {
+    "after": "context-bar"
+  },
+  "commands": {
+    "cost": "immediate"
+  },
+  "stateRecords": [
+    "piop-session-cost-limit"
+  ]
+}

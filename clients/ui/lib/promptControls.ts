@@ -34,7 +34,8 @@ export class PromptControls {
     return selected !== this.applied && (Boolean(selected.model) || selected.thinkingLevel !== undefined || selected.fastMode !== undefined);
   }
   reset() { this.selection[1]({}); this.applied = undefined; }
-  untouched() { const selected = this.selection[0](); return selected.model === undefined && selected.thinkingLevel === undefined && selected.fastMode === undefined; }
+  // True when the user chose no model, effort or fast mode. A null model only marks that the host has no model.
+  untouched() { const selected = this.selection[0](); return !selected.model && selected.thinkingLevel === undefined && selected.fastMode === undefined; }
   clearModel() { this.effectiveModel[1](null); this.selection[1](current => ({ ...current, model: null })); }
   useEffectiveModel(model: Model | null) { this.effectiveModel[1](model); if (model && this.selection[0]().model === null) this.selection[1](current => ({ ...current, model: undefined })); }
   missingModel() { const selected = this.selection[0]().model; return (selected === undefined ? this.effectiveModel[0]() : selected) == null; }

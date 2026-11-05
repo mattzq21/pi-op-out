@@ -1,12 +1,10 @@
 import type { Subprocess } from 'bun';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { descendantProcesses, killVerified, signalProcessGroup, sleep } from './process_cleanup';
+import { descendantProcesses, killVerified, signalProcessGroup } from './process_cleanup';
+import { processesEnded } from './util/process_exit';
 import { MAX_TERMINALS } from './config';
 import { isDirectory } from './environment';
-import { loadAppSettings } from './settings';
-import { remoteHost, userSshConfig } from './pi_launch';
-import { shellQuote } from './process_io';
 import * as terminalSessions from './terminal_sessions';
 import type { App } from './app';
 
@@ -19,7 +17,6 @@ export interface TerminalProcess {
   generation: string;
   sessionKey: string;
   cwd: string;
-  hostId: string;
   windowLabel: string;
   child: Subprocess;
   processSessionId: number;
@@ -44,10 +41,10 @@ export class TerminalRuntime {
     return label === undefined || label === owner || label.startsWith('shared:' + owner + ':');
   }
   containsProcess(id: string): boolean { return this.processes.has(id); }
-  workingDirectories(hostId: string): string[] { return [...this.processes.values()].filter(terminal => terminal.hostId === hostId).map(terminal => terminal.cwd); }
+  workingDirectories(): string[] { return [...this.processes.values()].map(terminal => terminal.cwd); }
 }
 
-export interface StartTerminalOptions { terminalId: string; sessionKey: string; cwd: string; cols: number; rows: number; hostId?: string | null }
+export interface StartTerminalOptions { terminalId: string; sessionKey: string; cwd: string; cols: number; rows: number }
 
 interface ShellCommand { program: string; args: string[]; cwd?: string }
 
@@ -63,22 +60,10 @@ export function startTerminalForOwner(app: App, owner: string, runtime: Terminal
 
 export async function launchTerminalForOwner(app: App, owner: string, runtime: TerminalRuntime, options: StartTerminalOptions): Promise<void> {
   if (typeof options?.terminalId !== 'string' || typeof options.sessionKey !== 'string' || typeof options.cwd !== 'string') throw new Error('Invalid terminal options');
-  const hostId = options.hostId ?? 'local';
   const cwd = options.cwd;
-  let command: ShellCommand;
-  if (hostId === 'local') {
-    if (!isDirectory(cwd)) throw new Error('Terminal working directory does not exist: ' + cwd);
-    command = { program: '/bin/bash', args: [], cwd };
-  } else {
-    const settings = await loadAppSettings(app);
-    const host = remoteHost(settings, hostId);
-    const args: string[] = [];
-    const config = userSshConfig();
-    if (config) args.push('-F', config);
-    args.push('-tt', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=5', host.target, 'cd ' + shellQuote(cwd) + ' && exec "$' + '{SHELL:-/bin/bash}" -l');
-    command = { program: 'ssh', args };
-  }
-  startTerminalWith(runtime, { terminalId: options.terminalId, sessionKey: options.sessionKey, cwd, cols: dimensionValue(options.cols), rows: dimensionValue(options.rows), hostId, windowLabel: owner },
+  if (!isDirectory(cwd)) throw new Error('Terminal working directory does not exist: ' + cwd);
+  const command: ShellCommand = { program: '/bin/bash', args: [], cwd };
+  startTerminalWith(runtime, { terminalId: options.terminalId, sessionKey: options.sessionKey, cwd, cols: dimensionValue(options.cols), rows: dimensionValue(options.rows), windowLabel: owner },
     command, packet => app.emit('pi://event', packet));
 }
 
@@ -92,10 +77,10 @@ function terminalAlreadyRunning(runtime: TerminalRuntime, terminalId: string, ow
   return true;
 }
 
-interface TerminalLaunch { terminalId: string; sessionKey: string; cwd: string; cols: number; rows: number; hostId: string; windowLabel: string }
+interface TerminalLaunch { terminalId: string; sessionKey: string; cwd: string; cols: number; rows: number; windowLabel: string }
 
 function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, command: ShellCommand, emit: (packet: any) => void): void {
-  const { terminalId, sessionKey, cwd, cols, rows, hostId, windowLabel } = launch;
+  const { terminalId, sessionKey, cwd, cols, rows, windowLabel } = launch;
   if (terminalAlreadyRunning(runtime, terminalId, windowLabel)) return;
   if ([...runtime.processes.values()].filter(process => process.sessionKey === sessionKey).length >= MAX_TERMINALS) throw new Error('At most ' + MAX_TERMINALS + ' terminals may run for one conversation');
   const generation = randomUUID();
@@ -134,9 +119,9 @@ function startTerminalWith(runtime: TerminalRuntime, launch: TerminalLaunch, com
       },
     });
   } catch (error: any) { throw new Error('Could not start terminal shell: ' + (error?.message ?? error)); }
-  const started: TerminalProcess = { generation, sessionKey, cwd, hostId, windowLabel, child, processSessionId: child.pid, rows, cols, pendingInput: 0, exited: false };
+  const started: TerminalProcess = { generation, sessionKey, cwd, windowLabel, child, processSessionId: child.pid, rows, cols, pendingInput: 0, exited: false };
   terminal = started;
-  terminalSessions.start(runtime, terminalId, sessionKey, cwd, hostId, windowLabel, generation);
+  terminalSessions.start(runtime, terminalId, sessionKey, cwd, windowLabel, generation);
   const size = '\u001b[8;' + rows + ';' + cols + 't';
   terminalSessions.record(runtime.history, terminalId, size);
   emit(terminalSessions.event(runtime.history, terminalId, { type: 'terminal_output', terminalId, data: size }));
@@ -223,7 +208,21 @@ async function stopShell(process: TerminalProcess): Promise<void> {
     }
   };
   const settled = () => (child.exitCode !== null || child.signalCode !== null) && !descendants.some(alive) && descendantProcesses(child.pid, child.pid, process.processSessionId).length === 0;
-  const settle = async (ms: number) => { const deadline = Date.now() + ms; while (Date.now() < deadline) { if (settled()) return true; await sleep(25); } return settled(); };
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  // Waits until the shell and its children end, or ms pass. A child that starts meanwhile is waited for too.
+  const settle = async (ms: number) => {
+    const deadline = Date.now() + ms;
+    while (!settled()) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      const children = [...descendants, ...descendantProcesses(child.pid, child.pid, process.processSessionId)].filter(alive);
+      if (exited() && !children.length) return settled();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const shell = exited() ? undefined : Promise.race([child.exited, new Promise(resolve => { timer = setTimeout(resolve, left); })]).finally(() => clearTimeout(timer));
+      await Promise.all([shell, processesEnded(children, left)]);
+    }
+    return true;
+  };
   signal('SIGHUP');
   if (!await settle(1000)) { signal('SIGTERM'); if (!await settle(500)) { signal('SIGKILL'); if (!await settle(2000)) console.error('Terminal shell ' + child.pid + ' did not exit after SIGKILL'); } }
   const remaining = new Set(descendants.filter(alive).map(({ pid }) => pid));

@@ -6,7 +6,7 @@ import { homeDir } from './environment';
 import { ensurePrivateDir, setPrivateFilePermissions } from './private_fs';
 import * as endpoint from './daemon_endpoint';
 import * as restartStorage from './restart_storage';
-import { daemonScript } from './session_worker';
+import { daemonScript } from './daemon_executable';
 import { lockPath, lockPathSync, type FileLock } from './util/flock';
 
 const SERVE_MODES = ['--serve', '--restart-candidate', '--restart-coordinator'];
@@ -119,7 +119,7 @@ export class Backup {
     chmodSync(this.path, 0o700);
     const fd = openSync(this.path, 'r');
     try { fsyncSync(fd); } finally { closeSync(fd); }
-    restartStorage.saveBackup(root, this.id, { id: this.id, digest: hash(this.path) });
+    restartStorage.saveBackup(root, this.id, hash(this.path));
   }
 
   handOff(): void { this.handedOff = true; this.releaseLeases(); }
@@ -144,7 +144,7 @@ function reserve(root: string, id: string): Promise<[string, FileLock]> {
     const target = join(root, name(id));
     try {
       closeSync(openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o700));
-      try { restartStorage.saveBackup(root, id, { id, digest: null }); }
+      try { restartStorage.saveBackup(root, id, null); }
       catch (error) { try { unlinkSync(target); } catch (failure) { console.error(failure); } throw error; }
     } catch (error) { lease.release(); throw error; }
     return [target, lease];
@@ -171,7 +171,7 @@ function tryExclusive(root: string, id: string): FileLock | undefined {
 export function activePlan(owner?: number): Promise<boolean> {
   const root = directory();
   return withGate(root, () => {
-    const plan = restartStorage.read(join(root, 'restart-plan.json'));
+    const plan = restartStorage.read(root, 'plan');
     if (!plan || (owner !== undefined && plan.owner !== owner)) return false;
     return activePlanAt(root, plan);
   });
@@ -189,7 +189,7 @@ function activePlanAt(root: string, plan: any): boolean {
 }
 
 function planStatus(root: string, id: string): any {
-  const status = restartStorage.read(join(root, 'restart-status.json'));
+  const status = restartStorage.read(root, 'status');
   return status?.restartId === id ? status : null;
 }
 
@@ -231,7 +231,7 @@ function operationPlan(root: string): any {
   const argument = process.argv[3];
   if (argument === undefined) throw new Error('Missing restart identity');
   const id = identity(argument);
-  const plan = restartStorage.read(join(root, 'restart-plan.json'));
+  const plan = restartStorage.read(root, 'plan');
   if (!plan) throw new Error('Restart plan is missing');
   if (plan.id !== id) throw new Error('The restart plan has changed');
   return plan;
@@ -280,7 +280,8 @@ async function initializeOnce(): Promise<void> {
   }
   if (!needsLease()) return;
   if (!leases) leases = await currentLeases(directory());
-  if (!SERVE_MODES.includes(mode() ?? '')) return;
+  // Only a daemon that holds the daemon lock changes the restart records.
+  if (!['--serve', '--restart-candidate'].includes(mode() ?? '')) return;
   if (started) return;
   started = true;
   const cleanup = async () => {
@@ -309,11 +310,9 @@ function cleanupFailed(id: string): Promise<void> {
 }
 
 function removePlan(root: string, id: string): void {
-  const planPath = join(root, 'restart-plan.json');
-  if (restartStorage.read(planPath)?.id === id) restartStorage.remove(planPath);
-  const statusPath = join(root, 'restart-status.json');
-  const status = restartStorage.read(statusPath);
-  if (status && status.restartId === id && activePhase(status)) restartStorage.remove(statusPath);
+  if (restartStorage.read(root, 'plan')?.id === id) restartStorage.remove(root, 'plan');
+  const status = restartStorage.read(root, 'status');
+  if (status && status.restartId === id && activePhase(status)) restartStorage.remove(root, 'status');
 }
 
 function removeBackup(root: string, id: string): void {
@@ -330,8 +329,8 @@ export function reconcile(): Promise<void> {
   const current = reconciliations.get(root);
   if (current) return current;
   const pending = withGate(root, () => {
-    const plan = restartStorage.read(join(root, 'restart-plan.json'));
-    const status = restartStorage.read(join(root, 'restart-status.json'));
+    const plan = restartStorage.read(root, 'plan');
+    const status = restartStorage.read(root, 'status');
     const recorded = restartStorage.backups(root);
     for (const id of recorded) {
       identity(id);
@@ -395,8 +394,7 @@ function referencedByActivePlan(root: string, path: string, id: string, plan: an
 function recordMatches(path: string, id: string): boolean | undefined {
   const record = restartStorage.readBackup(dirname(path), id);
   if (!record) return undefined;
-  if (record.id !== id) return false;
-  if (record.digest === null || record.digest === undefined) return true;
+  if (record.digest === null) return true;
   try { return hash(path) === record.digest; } catch { return false; }
 }
 

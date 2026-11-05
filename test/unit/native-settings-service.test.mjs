@@ -58,14 +58,14 @@ test('settings can be saved again without reconnecting an unavailable remote con
 test('saving client preferences preserves newer daemon review settings', async t => {
   const { client, daemon } = await settingsClient(t);
   const initial = await daemon.invoke('load_app_settings');
-  await daemon.invoke('save_host_settings', { hostId: 'local', settings: { ...initial, reviewAgent: 'new/model' } });
+  await daemon.invoke('save_host_settings', { hostId: 'local', settings: { ...initial, plugins: { ...initial.plugins, review: { reviewAgent: 'new/model' } } } });
   const current = (await client.loadSettingsChange()).settings;
-  const result = await client.saveSettings({ ...current, reviewAgent: 'old/model', debugMode: true }, false, 'client', current);
-  assert.equal(result.settings.reviewAgent, 'new/model');
+  const result = await client.saveSettings({ ...current, plugins: { ...current.plugins, review: { reviewAgent: 'old/model' } }, debugMode: true }, false, 'client', current);
+  assert.equal(result.settings.plugins.review.reviewAgent, 'new/model');
   assert.equal(result.settings.debugMode, true);
-  assert.equal((await daemon.invoke('load_app_settings')).reviewAgent, 'new/model');
+  assert.equal((await daemon.invoke('load_app_settings')).plugins.review.reviewAgent, 'new/model');
   const reloaded = (await client.loadSettingsChange()).settings;
-  assert.equal(reloaded.reviewAgent, 'new/model');
+  assert.equal(reloaded.plugins.review.reviewAgent, 'new/model');
   assert.equal(reloaded.debugMode, true);
 });
 

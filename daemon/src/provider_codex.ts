@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { codexExecutable, homeDir, piExecutable } from './environment';
+import { codexExecutable, homeDir } from './environment';
 import { resolveProviderAuth } from './host/index';
 
 const VERSION = '0.1.0';
@@ -24,7 +24,7 @@ export function codexUsageValues(response: any): CodexUsage | undefined {
 }
 
 export async function codexUsage(): Promise<CodexUsage | undefined> {
-  if (await resolveProviderAuth(piExecutable(), 'openai-codex') === null) return undefined;
+  if (await resolveProviderAuth('openai-codex') === null) return undefined;
   return codexAppUsage();
 }
 

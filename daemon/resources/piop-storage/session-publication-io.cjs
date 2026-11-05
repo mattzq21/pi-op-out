@@ -1,17 +1,14 @@
-const { lockSync } = require('../file-lock.cjs');
+const storageLocks = require('../storage-locks.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createHash } = require('node:crypto');
-const { setTimeout: delay } = require('node:timers/promises');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 
 const uuid = Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' });
 
 const headerSchema = Type.Object({ type: Type.Literal('session'), id: uuid, cwd: Type.String(), version: Type.Integer({ minimum: 1 }), piopPublicationId: Type.Optional(uuid) });
-
-const writerSchema = Type.Object({ pid: Type.Integer({ minimum: 1 }), boot: Type.Optional(Type.String()), start: Type.Optional(Type.String()) });
 
 function exists(file) {
   try { return fs.lstatSync(file); }
@@ -157,135 +154,41 @@ function rootForTarget(target) {
   throw new Error('Session publication target is outside Piop-controlled session storage');
 }
 
-function lockDescriptor(descriptor) {
-  return lockSync(descriptor, false, true, 5000);
-}
+// The publication lock of one chat, or the parent locks of a link: the exclusive lock name when it is free. Returns its
+// release, or null.
+function claim(name) { return storageLocks.lockSync(name, { wait: false }) ?? null; }
 
-function claim(file, expected) {
-  const flags = fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | (expected ? 0 : fs.constants.O_CREAT);
+function transactionName(root) { return 'session-transactions:' + root; }
 
-  const descriptor = fs.openSync(file, flags, 0o600);
-
-  try {
-    const metadata = fs.fstatSync(descriptor, { bigint: true });
-
-    const opened = `${metadata.dev}:${metadata.ino}`;
-
-    if (!metadata.isFile() || !canonical(file) || identity(file) !== opened) throw new Error(`Invalid publication lock: ${file}`);
-
-    if (expected && opened !== expected) throw new Error(`Publication lock identity changed: ${file}`);
-
-    if (lockDescriptor(descriptor)) return descriptor;
-  } catch (error) { fs.closeSync(descriptor); throw error; }
-
-  fs.closeSync(descriptor);
-
-  return null;
-}
-
-let heldLock;
-
-function holdTransactionLock(root, descriptor) {
-  const file = path.join(root, 'session-transactions.lock');
-  const metadata = fs.fstatSync(descriptor, { bigint: true });
-
-  if (`${metadata.dev}:${metadata.ino}` !== identity(file)) throw new Error('Held session storage lock does not match its file');
-
-  if (heldLock) throw new Error('This thread already holds a session storage lock');
-  heldLock = { file, descriptor };
-
-  return () => { heldLock = undefined; };
-}
-
-function heldTransactionLock(file) {
-  if (heldLock?.file !== file) return;
-  const metadata = fs.fstatSync(heldLock.descriptor, { bigint: true });
-
-  if (!exists(file)?.isFile() || `${metadata.dev}:${metadata.ino}` !== identity(file)) throw new Error('Held session storage lock no longer matches its file');
-
-  return heldLock.descriptor;
-}
-
-function transactionLock(root) {
-  canonicalRoot(root);
-  const file = path.join(root, 'session-transactions.lock');
-
-  const held = heldTransactionLock(file);
-
-  const borrowed = held !== undefined;
-
-  const descriptor = borrowed ? held : claim(file);
-
-  if (descriptor === null) return null;
-
-  if (borrowed && !lockDescriptor(descriptor)) throw new Error('Held session storage lock is unavailable');
-
-  return { descriptor, borrowed };
-}
-
+// Runs operation under the session transaction lock of root, or fails when another change holds it.
 function locked(root, operation) {
-  const lock = transactionLock(root);
+  canonicalRoot(root);
+  const release = storageLocks.lockSync(transactionName(root), { wait: false });
 
-  if (!lock) throw storageBusy();
-  const { descriptor, borrowed } = lock;
+  if (!release) throw storageBusy();
 
-  try {
-    return operation();
-  }
-  finally { if (!borrowed) fs.closeSync(descriptor); }
+  try { return operation(); }
+  finally { release(); }
 }
 
+// Runs operation under the session transaction lock of root, and waits up to 5 seconds for it.
 async function lockedAsync(root, operation) {
-  const { descriptor, borrowed } = await waitForTransactionLock(root);
+  canonicalRoot(root);
+  const release = await storageLocks.lock(transactionName(root), { timeoutMs: 5000 });
+
+  if (!release) throw storageBusy();
 
   try { return await operation(); }
-  finally { if (!borrowed) fs.closeSync(descriptor); }
+  finally { release(); }
 }
+
+// True when this flow holds the session transaction lock of root.
+function holdsTransactionLock(root) { return storageLocks.holds(transactionName(root)); }
 
 function storageBusy() { return new Error('Session storage is busy; retry publication after the current transaction'); }
 
-async function waitForTransactionLock(root) {
-  const deadline = performance.now() + 5000;
-
-  for (;;) {
-    const lock = transactionLock(root);
-
-    if (lock) return lock;
-
-    if (performance.now() >= deadline) throw storageBusy();
-    await delay(50);
-  }
-}
-
-function processStart(pid) {
-  const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-
-  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
-}
-
-function writer() {
-  if (process.platform !== 'linux') return { pid: process.pid };
-
-  return { pid: process.pid, boot: fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(), start: processStart(process.pid) };
-}
-
-function writerDead(owner) {
-  if (!Check(writerSchema, owner)) return false;
-
-  try {
-    if (process.platform === 'linux' && owner.boot && owner.start) {
-      if (fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() !== owner.boot) return true;
-
-      return processStart(owner.pid) !== owner.start;
-    }
-
-    process.kill(owner.pid, 0);
-
-    return false;
-  } catch (error) { return ['ENOENT', 'ESRCH'].includes(error.code); }
-}
-
-function lockPath(root, target) { return path.join(root, 'session-publication-locks', `${hash(target)}.lock`); }
+// The name of the lock that the writer of a new chat holds until it is published or given back.
+function lockName(target) { return 'session-publication:' + hash(target); }
 
 function journalPath(root, id) { return path.join(root, 'session-publications', `${id}.json`); }
 
@@ -316,13 +219,8 @@ function unregistered(root, id, target) {
   const file = path.join(root, 'sessions.sqlite');
 
   if (!exists(file)) return false;
-  const { DatabaseSync } = require('node:sqlite');
 
-  const database = new DatabaseSync(file, { readOnly: true });
-
-  try {
-    return !database.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(id, target);
-  } finally { database.close(); }
+  return !require('../session-database.cjs').connection(root).prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(id, target);
 }
 
-module.exports = { uuid, headerSchema, writerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, holdTransactionLock, heldTransactionLock, writer, writerDead, lockPath, journalPath, matches, verified, locate, unregistered };
+module.exports = { uuid, headerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, holdsTransactionLock, lockName, journalPath, matches, verified, locate, unregistered };

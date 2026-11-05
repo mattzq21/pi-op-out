@@ -1,13 +1,13 @@
 import { expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { read, write } from '../../daemon/src/restart_storage';
+import { readJson, save } from '../../daemon/resources/application-records.cjs';
 import { remoteMachine, startDaemon, useRemotes } from './harness';
 
 test('new chat commands use the selected host plugin setup', async () => {
   const daemon = await startDaemon();
   const remote = await remoteMachine(daemon, 'plugin-host', 'Plugin host');
   try {
-    write(join(remote.home, '.piop', 'plugins.json'), { enabled: ['cost'], previous: [], known: ['cost', 'review', 'web-search', 'btw', 'background-compaction'] });
+    save(join(remote.home, '.piop'), 'plugins', JSON.stringify({ enabled: ['cost'], previous: [], known: ['cost', 'review', 'web-search', 'btw', 'background-compaction'] }));
     await useRemotes(daemon, [remote]);
     expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost'], error: null });
     const commands = async (hostId: string) => (await daemon.invoke('provider_auth', { hostId, request: { action: 'draft_catalog', reload: true } })).commands.filter((name: string) => ['cost', 'review'].includes(name));
@@ -20,10 +20,10 @@ test('a bundled plugin that a host has not offered yet turns on once unless it i
   const daemon = await startDaemon();
   const remote = await remoteMachine(daemon, 'plugin-upgrade', 'Upgraded host');
   try {
-    const file = join(remote.home, '.piop', 'plugins.json');
-    write(file, { enabled: ['cost'], previous: [] });
+    const root = join(remote.home, '.piop');
+    save(root, 'plugins', JSON.stringify({ enabled: ['cost'], previous: [], known: ['cost', 'review'] }));
     await useRemotes(daemon, [remote]);
-    expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost', 'web-search', 'btw'], error: null });
-    expect(read(file)).toEqual({ enabled: ['cost', 'web-search', 'btw'], previous: [], known: ['cost', 'review', 'web-search', 'btw', 'background-compaction'] });
+    expect(await daemon.invoke('plugin_status', { hostId: remote.id })).toMatchObject({ enabled: ['cost', 'btw', 'web-search'], error: null });
+    expect(readJson(root, 'plugins')).toEqual({ enabled: ['cost', 'btw', 'web-search'], previous: [], known: ['cost', 'review', 'background-compaction', 'btw', 'web-search'] });
   } finally { await remote.stop(); await daemon.stop(); }
 }, 180000);

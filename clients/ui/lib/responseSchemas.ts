@@ -1,64 +1,22 @@
-import { pluginSettingsSchema } from "../plugins/settingsSchema";
 import { z } from "zod";
-import { USAGE_INDICATORS } from "../types";
+import { appSettingsSchema } from "../../../protocol/settings";
 import { rpcEventSchema, rpcCommandSchema } from "./rpcSchemas";
 import { entrySchema, pendingMessageSchema } from "./chatSessionEventSchema";
 import { usageSchema } from "./messageSchemas";
 
 export { rpcEventSchema, rpcCommandSchema, entrySchema, pendingMessageSchema };
 
+export { toolConfigSchema, skillConfigSchema, remoteHostSchema, appSettingsSchema, settingsPublicationSchema, settingsChangeSchema } from "../../../protocol/settings";
+export { sessionGroupSchema, sessionGroupOrdersSchema, sessionGroupsSchema } from "../../../protocol/session-groups";
+export {
+  sessionSummarySchema, storageOwnershipSchema, storageOwnerSchema, storageRootSchema, storageCategorySchema, archivedConversationSchema, hostStorageSchema,
+  storageReportSchema, codexUsageSchema, usageWindowSchema, opencodeGoUsageSchema, opencodexUsageSchema, providerUsageSchema, directoryListingSchema,
+} from "../../../protocol/results";
+
+// The client preferences that the daemon keeps with its settings.
+export const clientSettingsSchema = appSettingsSchema.pick({ keybindings: true, debugMode: true });
+
 export const voidResultSchema = z.unknown().transform(() => undefined);
-
-export const toolConfigSchema = z.object({ name: z.string(), description: z.string(), source: z.string() });
-
-export const skillConfigSchema = z.object({ name: z.string(), path: z.string(), description: z.string(), enabled: z.boolean(), userInvokedOnly: z.boolean().optional() });
-
-export const remoteHostSchema = z.object({ enabled: z.boolean().optional(), id: z.string(), name: z.string(), target: z.string(), piPath: z.string() });
-
-export const appSettingsSchema = z.object({ settingsRevision: z.string().optional(), clientSettingsRevision: z.string().optional(), settingsDurabilityError: z.string().optional(), clientSettingsDurabilityError: z.string().optional(), localEnabled: z.boolean().optional(), ...pluginSettingsSchema.shape, modelAliases: z.record(z.string(), z.string()).optional(), hiddenModels: z.array(z.string()), knownModels: z.array(z.string()).optional(), defaultThinking: z.string(), defaultFastMode: z.boolean(), contextWindowCap: z.number(), contextWindowCapEnabled: z.boolean(), modelContextWindowCaps: z.record(z.string(), z.number().nullable()), autoRetry: z.boolean(), hiddenUsageIndicators: z.array(z.enum(USAGE_INDICATORS)), debugMode: z.boolean(), keybindings: z.object({ newConversation: z.string(), toggleConversations: z.string(), toggleTerminal: z.string(), toggleDebugMode: z.string(), focusComposer: z.string(), openSettings: z.string(), toggleQueueHold: z.string() }), tools: z.array(toolConfigSchema), skills: z.array(skillConfigSchema), hosts: z.array(remoteHostSchema) });
-
-export const clientSettingsSchema = appSettingsSchema.pick({ "keybindings": true, "debugMode": true });
-
-
-export const settingsPublicationSchema = z.object({ committed: z.literal(true), durable: z.boolean(), error: z.string().optional() });
-
-export const settingsChangeSchema = z.object({ settings: appSettingsSchema, publication: settingsPublicationSchema.optional(), committed: z.boolean().optional(), warnings: z.array(z.string()).optional(), revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), committedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), synchronizationPending: z.boolean().optional(), source: z.string().optional(), phaseRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() });
-
-export const sessionSummarySchema = z.object({ id: z.string(), isDraft: z.boolean().optional(), auxiliaryParentId: z.string().optional(), auxiliaryKind: z.string().optional(), forkSourceId: z.string().optional(), forkEntryId: z.string().optional(), daemonId: z.string().optional(), isRunning: z.boolean().optional(), groupId: z.union([z.string(), z.null()]).optional(), path: z.string(), name: z.string(), project: z.string(), cwd: z.string(), cwdExists: z.boolean().optional(), linkedWorktree: z.boolean().optional(), preview: z.string(), messageCount: z.number(), lastMessageAt: z.number(), apiCost: z.number(), hostId: z.string().optional(), hostName: z.string().optional() });
-
-export const sessionGroupSchema = z.object({ id: z.string(), name: z.string(), cwd: z.union([z.string(), z.null()]).optional(), hostId: z.union([z.string(), z.null()]).optional(), hostName: z.union([z.string(), z.null()]).optional() });
-
-export const sessionGroupOrdersSchema = z.object({ sidebar: z.array(z.string()), sessions: z.record(z.string(), z.array(z.string())), children: z.record(z.string(), z.array(z.string())) });
-
-export const sessionGroupsSchema = z.object({ groups: z.array(sessionGroupSchema), parents: z.record(z.string(), z.string()), assignments: z.record(z.string(), z.union([z.string(), z.null()])), removedProjects: z.array(z.string()), orders: sessionGroupOrdersSchema });
-
-export const storageOwnershipSchema = z.enum(["owned", "referenced", "shared", "unattributed"]);
-
-export const storageOwnerSchema = z.object({ sessionId: z.string(), sessionPath: z.string().optional(), kind: z.string() });
-
-export const storageRootSchema = z.object({ path: z.string(), ownership: storageOwnershipSchema, provenance: z.array(z.string()), available: z.boolean(), owners: z.array(storageOwnerSchema), state: z.string().optional() });
-
-export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "temporary-chats", "chat-worktrees", "other-storage", "recovery-storage", "unattributed-recovery-storage", "goal-attachments", "unattributed-goal-attachments"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional(), countUnit: z.string().optional(), ownership: storageOwnershipSchema.optional(), reclaimability: z.enum(["retained", "requires-owner-check", "unknown"]).optional(), measurement: z.enum(["allocated-blocks"]).optional(), includedInTotal: z.boolean().optional(), roots: z.array(storageRootSchema).optional() });
-
-export const archivedConversationSchema = z.object({ restorable: z.boolean().default(false), id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), byteSizeCoverage: z.string().optional() });
-
-export const hostStorageSchema = z.object({ hostId: z.string(), hostName: z.string(), categories: z.array(storageCategorySchema), archives: z.array(archivedConversationSchema), warnings: z.array(z.string()), error: z.string().optional() });
-
-export const storageReportSchema = z.object({ hosts: z.array(hostStorageSchema) });
-
-export const codexUsageSchema = z.object({ remainingPercent: z.number(), resetAt: z.number().optional() });
-
-export const usageWindowSchema = z.object({ status: z.string(), remainingPercent: z.number(), resetAt: z.number().optional() });
-
-export const opencodeGoUsageSchema = z.object({ rolling: usageWindowSchema, weekly: usageWindowSchema, monthly: usageWindowSchema });
-
-const providerUsage = <T extends z.ZodType>(usage: T) => z.object({ usage: usage.optional(), error: z.string().optional() }).optional();
-
-export const opencodexUsageSchema = z.object({ accounts: z.array(z.object({ id: z.string(), remainingPercent: z.number().optional(), resetAt: z.number().optional(), error: z.string().optional() })), unavailable: z.literal(true).optional() });
-
-export const providerUsageSchema = z.object({ codex: providerUsage(codexUsageSchema), anthropic: providerUsage(codexUsageSchema), opencodeGo: providerUsage(opencodeGoUsageSchema), opencodex: providerUsage(opencodexUsageSchema) });
-
-export const directoryListingSchema = z.object({ path: z.string(), parent: z.string().optional(), directories: z.array(z.string()) });
 
 export const imageAttachmentSchema = z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string(), name: z.string().optional() });
 

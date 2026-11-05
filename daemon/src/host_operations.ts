@@ -1,9 +1,13 @@
-import { Worker } from 'node:worker_threads';
+import { MessageChannel, Worker, type MessagePort } from 'node:worker_threads';
+import { serveWorker } from '../resources/main-thread.cjs';
+import './main_thread_changes';
 import { closeSync, constants, fstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { BUILD_ID, STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
-import { CANCELLED, QUEUED, type HostOperationName, type StorageLocks, type WorkerJob, type WorkerReply } from './host_operation_protocol';
+import { CANCELLED, QUEUED, type HostOperationName, type WorkerJob, type WorkerReply } from './host_operation_protocol';
+import { logFailure } from './util/sync';
 
 export type HostOperationFailure = 'not-started' | 'failed' | 'unknown';
 
@@ -32,7 +36,13 @@ export interface HostOperation<Request, Result> {
 export const DEFAULT_TIMEOUT = 2 * 60 * 1000;
 export const STORAGE_TIMEOUT = 10 * 60 * 1000;
 
-export function hostOperation<Request, Result>(name: HostOperationName, lane: Lane, timeout: number, read: (value: unknown) => Result): HostOperation<Request, Result> {
+// An operation that runs in a worker thread. Its answer is checked with the schema before the caller gets it.
+export function hostOperation<Request, Result>(name: HostOperationName, lane: Lane, timeout: number, answer: z.ZodType<Result>): HostOperation<Request, Result> {
+  const read = (value: unknown): Result => {
+    const parsed = answer.safeParse(value);
+    if (!parsed.success) throw new Error(`Invalid answer of ${name}: ${z.prettifyError(parsed.error)}`);
+    return parsed.data;
+  };
   return { name, lane, timeout, read };
 }
 
@@ -44,7 +54,7 @@ interface Job {
   input: unknown;
   progress: Int32Array;
   env?: Record<string, string>;
-  storage?: { root: string; locks: StorageLocks };
+  storage?: { root: string };
   settled: boolean;
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -54,7 +64,7 @@ interface Job {
   cleanup(): void;
 }
 
-interface Slot { worker: Worker; job?: Job; fresh: boolean }
+interface Slot { worker: Worker; job?: Job; fresh: boolean; changes: MessagePort }
 
 let sequence = 0;
 let closed = false;
@@ -84,6 +94,7 @@ class WorkerLane {
     const index = this.queue.indexOf(job);
     if (index < 0) return false;
     this.queue.splice(index, 1);
+    notifyIdle();
     return true;
   }
 
@@ -120,8 +131,12 @@ class WorkerLane {
   }
 
   private spawn(extraEnvironment: Record<string, string> | undefined): Slot {
-    const worker = new Worker(new URL(import.meta.url), { workerData: { piopHostOperations: BUILD_ID }, env: workerEnvironment(extraEnvironment) });
-    const slot: Slot = { worker, fresh: this.fresh };
+    // The worker sends its database changes on this channel, and the main thread runs them.
+    const { port1, port2 } = new MessageChannel();
+    const signal = new SharedArrayBuffer(4);
+    const worker = new Worker(new URL(import.meta.url), { workerData: { piopHostOperations: BUILD_ID, mainThread: { port: port2, signal } }, transferList: [port2], env: workerEnvironment(extraEnvironment) });
+    serveWorker(port1, signal);
+    const slot: Slot = { worker, fresh: this.fresh, changes: port1 };
     this.slots.add(slot);
     worker.on('message', (reply: WorkerReply) => this.receive(slot, reply));
     worker.on('error', error => this.drop(slot, error instanceof Error ? error : new Error(String(error))));
@@ -152,13 +167,15 @@ class WorkerLane {
     job.cleanup();
     if (slot.fresh) this.retire(slot);
     this.pump();
+    notifyIdle();
   }
 
   private drop(slot: Slot, error: Error | HostOperationError): void {
     if (!this.slots.delete(slot)) return;
     const job = slot.job;
     slot.job = undefined;
-    void slot.worker.terminate().catch(() => {});
+    slot.changes.close();
+    void slot.worker.terminate().catch(logFailure('Could not stop a host operation thread'));
     if (job) {
       const failure = error instanceof HostOperationError ? error
         : Atomics.compareExchange(job.progress, 0, QUEUED, CANCELLED) === QUEUED
@@ -169,12 +186,14 @@ class WorkerLane {
       job.cleanup();
     } else if (!closed && !slot.fresh) console.error('Host operation worker (' + this.name + ') stopped: ' + errorMessage(error));
     this.pump();
+    notifyIdle();
   }
 
   private retire(slot: Slot): void {
     this.slots.delete(slot);
+    slot.changes.close();
     slot.worker.removeAllListeners();
-    void slot.worker.terminate().catch(() => {});
+    void slot.worker.terminate().catch(logFailure('Could not stop a host operation thread'));
   }
 
   abandonFresh(job: Job): void {
@@ -196,28 +215,6 @@ const lanes: Record<Lane, WorkerLane> = {
   agents: new WorkerLane('agents', 2, true),
 };
 
-function openStorageLocks(root: string): StorageLocks {
-  const opened: number[] = [];
-  const open = (file: string) => {
-    const descriptor = openSync(file, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
-    opened.push(descriptor);
-    if (!fstatSync(descriptor).isFile()) throw new Error('Invalid storage transaction lock: ' + file);
-    return descriptor;
-  };
-  try {
-    return {
-      restore: open(join(root, 'restore.lock')),
-      transactions: open(join(root, 'session-transactions.lock')),
-    };
-  } catch (error) { for (const descriptor of opened) closeSync(descriptor); throw error; }
-}
-
-function closeStorageLocks(locks: StorageLocks): void {
-  for (const descriptor of [locks.restore, locks.transactions]) {
-    try { closeSync(descriptor); } catch (error) { console.error('Could not close storage lock: ' + errorMessage(error)); }
-  }
-}
-
 function storageRoot(root: string): string {
   mkdirSync(root, { recursive: true, mode: 0o700 });
   return realpathSync(root);
@@ -237,8 +234,8 @@ export function runHostOperation<Request, Result>(operation: HostOperation<Reque
     if (operation.lane === 'storage') {
       try {
         const root = storageRoot(options.storageRoot ?? profileRoot());
-        storage = { root, locks: openStorageLocks(root) };
-      } catch (error) { reject(new HostOperationError('not-started', 'Could not open the storage locks: ' + errorMessage(error))); return; }
+        storage = { root };
+      } catch (error) { reject(new HostOperationError('not-started', 'Could not open the storage: ' + errorMessage(error))); return; }
     }
     let finish!: () => void;
     const done = new Promise<void>(release => { finish = release; });
@@ -250,7 +247,6 @@ export function runHostOperation<Request, Result>(operation: HostOperation<Reque
       reject: error => { stop(); reject(error); },
       done, finish,
       cleanup: () => {
-        if (job.storage) closeStorageLocks(job.storage.locks);
         job.storage = undefined;
         running.delete(job);
         finish();
@@ -279,6 +275,24 @@ export function runHostOperation<Request, Result>(operation: HostOperation<Reque
 }
 
 export function hostOperationsBusy(): boolean { return Object.values(lanes).some(lane => lane.busy()); }
+
+const idleWaiters = new Set<() => void>();
+
+function notifyIdle(): void {
+  if (hostOperationsBusy()) return;
+  for (const wake of [...idleWaiters]) wake();
+}
+
+// True once no host operation runs or waits; false when ms pass first.
+export function hostOperationsIdle(ms: number): Promise<boolean> {
+  if (!hostOperationsBusy()) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const finish = (idle: boolean) => { clearTimeout(timer); idleWaiters.delete(wake); resolve(idle); };
+    const wake = () => finish(true);
+    const timer = setTimeout(() => finish(!hostOperationsBusy()), ms);
+    idleWaiters.add(wake);
+  });
+}
 
 export async function shutdownHostOperations(wait = 10_000): Promise<void> {
   closed = true;

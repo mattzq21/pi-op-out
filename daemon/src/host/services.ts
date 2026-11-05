@@ -1,4 +1,3 @@
-import { kind, text } from './json';
 import type { FastModelSnapshot } from './fast_models';
 import { PluginService } from './plugins';
 import { ProviderService } from './providers';
@@ -8,8 +7,8 @@ export class HostServices {
   private providers: ProviderService;
   private plugins: PluginService;
 
-  constructor(executable: string) {
-    this.providers = new ProviderService(executable);
+  constructor() {
+    this.providers = new ProviderService();
     this.plugins = new PluginService();
   }
 
@@ -19,14 +18,14 @@ export class HostServices {
 
   initialize(): Promise<void> { return this.plugins.initialize(); }
 
-  async handle(packet: any): Promise<any> {
-    switch (kind(packet)) {
-      case 'provider_auth': return this.providers.handle(text(packet, 'owner'), packet.request ?? null);
-      case 'plugin_status': case 'prepare_daemon_restart': return this.plugins.handle(packet);
-      case 'provider_auth_cancel_owner': await this.providers.cancelOwner(text(packet, 'owner')); return null;
-      default: throw new Error('Unknown host service operation');
-    }
-  }
+  providerAuth(owner: string, request: unknown): Promise<any> { return this.providers.handle(owner, request ?? null); }
+
+  cancelProviderAuth(owner: string): Promise<void> { return this.providers.cancelOwner(owner); }
+
+  pluginStatus(): Promise<any> { return this.plugins.status(); }
+  pluginClient(id: string): Promise<{ source: string }> { return this.plugins.client(id); }
+
+  prepareRestart(request: { enabled: string[]; revision: string }): Promise<{ enabled: string[]; previous: string[] }> { return this.plugins.prepareRestart(request); }
 
   refreshProviders(): Promise<number> { return this.providers.refresh(); }
 

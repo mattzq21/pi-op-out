@@ -6,6 +6,7 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const io = require('../piop-storage/session-publication-io.cjs');
 const tables = require('../session-database.cjs');
+const { onMainThread } = require('../main-thread.cjs');
 
 const childSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String(), kind: Type.String({ minLength: 1 }) });
 
@@ -13,29 +14,17 @@ const indexSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.Stri
 
 const parentSchema = Type.Object({ type: Type.Literal('custom'), customType: Type.Literal(stateRecords.AUXILIARY_PARENT), data: Type.Object({ kind: Type.String({ minLength: 1 }), sessionId: Type.String(), parentSessionId: Type.String(), parentSessionPath: Type.Optional(Type.String()) }) });
 
-function database(root) {
-  const db = tables.open(root);
-
-  try {
-
-    return db;
-  } catch (error) { db.close(); throw error; }
-}
-
 function read(root, sessionId) {
-  const db = database(root);
+  const db = tables.connection(root);
+  const saved = db.prepare(`SELECT s.session_path, c.complete FROM auxiliary_child_state c
+    JOIN sessions s USING(session_id) WHERE c.session_id=?`).get(sessionId);
 
-  try {
-    const saved = db.prepare(`SELECT s.session_path, c.complete FROM auxiliary_child_state c
-      JOIN sessions s USING(session_id) WHERE c.session_id=?`).get(sessionId);
+  if (!saved) return;
 
-    if (!saved) return;
+  const children = db.prepare(`SELECT c.child_id AS sessionId, coalesce(s.session_path, '') AS sessionPath, c.kind
+    FROM auxiliary_children c JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=?`).all(sessionId);
 
-    const children = db.prepare(`SELECT c.child_id AS sessionId, coalesce(s.session_path, '') AS sessionPath, c.kind
-      FROM auxiliary_children c JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=?`).all(sessionId);
-
-    return { version: 1, sessionId, sessionPath: saved.session_path ?? '', complete: Boolean(saved.complete), children };
-  } finally { db.close(); }
+  return { version: 1, sessionId, sessionPath: saved.session_path ?? '', complete: Boolean(saved.complete), children };
 }
 
 function identity(db, sessionId, sessionPath) {
@@ -54,17 +43,12 @@ function write(db, value) {
   }
 }
 
-function store(root, value) {
+const store = onMainThread('session-child-index.store', (root, value) => {
   if (!Check(indexSchema, value)) throw new Error('Invalid conversation child index');
-  const db = database(root);
+  const db = tables.connection(root);
 
-  try {
-    db.exec('BEGIN IMMEDIATE');
-    write(db, value);
-    db.exec('COMMIT');
-  } catch (error) { throw tables.rollback(db, error); }
-  finally { db.close(); }
-}
+  tables.transaction(db, 'IMMEDIATE', () => write(db, value));
+});
 
 function ensure(root, sessionId, sessionPath, complete = false) {
   if (sessionPath) tables.registerPath(root, sessionId, sessionPath);
@@ -79,26 +63,20 @@ function ensure(root, sessionId, sessionPath, complete = false) {
   return value;
 }
 
-function add(root, parentSessionId, parentSessionPath, child) {
+const add = onMainThread('session-child-index.add', (root, parentSessionId, parentSessionPath, child) => {
   const value = { version: 1, sessionId: parentSessionId, sessionPath: parentSessionPath ?? '', complete: false, children: [child] };
 
   if (!Check(indexSchema, value)) throw new Error('Invalid conversation child index');
-  const db = database(root);
+  const db = tables.connection(root);
 
-  try {
-    db.exec('BEGIN IMMEDIATE');
-
-    if (identity(db, parentSessionId, value.sessionPath) && identity(db, child.sessionId, child.sessionPath)) {
-      db.prepare('INSERT INTO auxiliary_child_state VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING').run(parentSessionId);
-      db.prepare(`INSERT INTO auxiliary_children (parent_id, child_id, kind) VALUES (?, ?, ?)
-        ON CONFLICT(parent_id, child_id) DO UPDATE SET kind=excluded.kind`)
-        .run(parentSessionId, child.sessionId, child.kind);
-    }
-
-    db.exec('COMMIT');
-  } catch (error) { throw tables.rollback(db, error); }
-  finally { db.close(); }
-}
+  tables.transaction(db, 'IMMEDIATE', () => {
+    if (!identity(db, parentSessionId, value.sessionPath) || !identity(db, child.sessionId, child.sessionPath)) return;
+    db.prepare('INSERT INTO auxiliary_child_state VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING').run(parentSessionId);
+    db.prepare(`INSERT INTO auxiliary_children (parent_id, child_id, kind) VALUES (?, ?, ?)
+      ON CONFLICT(parent_id, child_id) DO UPDATE SET kind=excluded.kind`)
+      .run(parentSessionId, child.sessionId, child.kind);
+  });
+});
 
 function registerTranscript(root, sessionPath, body) {
   const entries = stateRecords.merge(sessionPath, body.trim().split('\n').map(JSON.parse));
@@ -123,4 +101,16 @@ async function initialize(sessionPath, sessionId, fresh) {
   });
 }
 
-module.exports = { read, store, ensure, add, registerTranscript, initialize };
+// The chats of the tree of sessionId: its root chat and every side chat under that root. sessionId comes first.
+function tree(root, sessionId) {
+  const db = tables.connection(root);
+  const parent = db.prepare('SELECT parent_id FROM auxiliary_children WHERE child_id=?');
+  let top = sessionId;
+  const seen = new Set([sessionId]);
+  for (let row; (row = parent.get(top)) && !seen.has(row.parent_id);) { top = row.parent_id; seen.add(top); }
+  const rows = db.prepare(`WITH RECURSIVE tree(id) AS (SELECT ? UNION SELECT c.child_id FROM auxiliary_children c JOIN tree t ON c.parent_id=t.id)
+    SELECT id FROM tree`).all(top);
+  return [...new Set([sessionId, ...rows.map(row => row.id)])];
+}
+
+module.exports = { read, store, ensure, add, registerTranscript, initialize, tree };

@@ -30,30 +30,30 @@ export function initialWindowTarget(): NativeConnectionTarget {
 
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; draftKey?: string; }
 
-export const loadSessionGroups = () => call("load_session_groups", { seeds: [] }, sessionGroupsSchema);
+export const loadSessionGroups = () => call("load_session_groups", { seeds: [] });
 
-export const loadProviderUsage = (refresh: boolean, provider?: UsageProviderKey) => call("provider_usage", { refresh, provider }, providerUsageSchema);
+export const loadProviderUsage = (refresh: boolean, provider?: UsageProviderKey) => call("provider_usage", { refresh, provider });
 export type UsageProviderKey = UsageIndicator;
 
-export const changeSessionGroups = (change: GroupChange | { type: "batch"; changes: GroupChange[] }) => call("change_session_groups", { change }, sessionGroupsSchema);
+export const changeSessionGroups = (change: GroupChange | { type: "batch"; changes: GroupChange[] }) => call("change_session_groups", { change });
 
-export const openGroupDirectory = (cwd: string, hostId: string) => call("open_project_directory", { cwd, hostId }, voidResultSchema);
+export const openGroupDirectory = (cwd: string, hostId: string) => call("open_project_directory", { cwd, hostId });
 
 export const openRolloutFile = (path: string, hostId: string) => call("open_rollout_file", { path, hostId }, voidResultSchema);
 
 export const openExternalUrl = (url: string) => call("open_external_url", { url }, voidResultSchema);
 
 export const loadStorageReport = async (hostId?: string, archivesOnly = false, archivesLimit?: number) => {
-  if (hostId === undefined) return call("storage_report", { archivesOnly }, storageReportSchema);
-  const report = await call("host_storage_report", { hostId, archivesOnly, archivesLimit }, storageReportSchema);
+  if (hostId === undefined) return call("storage_report", { archivesOnly });
+  const report = await call("host_storage_report", { hostId, archivesOnly, archivesLimit });
 
   return { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
 };
 
 
-export const deleteArchivedConversations = (sessionPaths: string[], hostId = "local") => call("delete_archived_session", { sessionPath: sessionPaths[0], sessionPaths, hostId }, z.array(z.string()));
+export const deleteArchivedConversations = (sessionPaths: string[], hostId = "local") => call("delete_archived_session", { sessionPath: sessionPaths[0], sessionPaths, hostId });
 
-export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId }, voidResultSchema);
+export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId });
 
 export class NativeTransport {
   readonly promptControls = new PromptControls();
@@ -90,6 +90,8 @@ export class NativeTransport {
   isArchived() { return this.archived; }
   ownsConversation() { return this.owns; }
   isConnected() { return this.running; }
+  // Changes each time this conversation connects or loses its connection.
+  currentConnection() { return this.connectionVersion; }
   canLoadModels() { return this.running || this.draftOnly(); }
   preview() { return this.sessionId && !this.running && !this.readOnly && !this.draftOnly() ? previewConversation(this.sessionId, this.hostId) : undefined; }
   hasConfirmedOwnership() { return this.running && this.owns; }
@@ -149,7 +151,8 @@ export class NativeTransport {
 
     return this.readOnly ? { ...presence, readOnly: true, archived: this.archived } : presence;
   }
-  private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(() => undefined); };
+  // A lost update is corrected when the chat attaches again, since the attach carries the presence.
+  private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(reason => console.error("Could not tell the host that this chat is open", reason)); };
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
   private retainedWidgets = new Map<string, RpcEvent>();
@@ -227,7 +230,7 @@ export class NativeTransport {
       const path = this.cwd;
       await this.disconnect(true);
 
-      if (path && !project) await call("remove_temporary_chat", { path, hostId: this.hostId }, voidResultSchema);
+      if (path && !project) await call("remove_temporary_chat", { path, hostId: this.hostId });
       this.cwd = project; this.sessionId = undefined; this.sessionPath = undefined; this.owns = true;
       throw reason;
     } finally { this.initializingChat = false; }
@@ -334,9 +337,9 @@ export class NativeTransport {
   }
   private async ensureConnectionDirectory(version: number) {
 
-    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call("create_temporary_chat", { hostId: this.hostId }, z.object({ cwd: z.string(), sessionId: z.string() }));
+    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call("create_temporary_chat", { hostId: this.hostId });
 
-    if (version !== this.connectionVersion) { await call("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }, voidResultSchema);
+    if (version !== this.connectionVersion) { await call("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId });
 
     return false; }
 
@@ -494,7 +497,7 @@ export class NativeTransport {
 
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     const baseBranch = !this.sessionId && !this.sessionPath ? this.baseBranch : undefined;
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, baseBranch, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId, presence: this.presence() }, z.object({ attached: z.boolean(), owned: z.boolean().optional(), daemonId: z.string().optional(), cwd: z.string().nullable().optional() })));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, baseBranch, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId, presence: this.presence() }));
 
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
@@ -526,7 +529,7 @@ export class NativeTransport {
 
     if (owned) this.emit({ type: "ownership_lost" });
 
-  return this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank }, z.boolean())); }
+  return this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank })); }
   onDispose(listener: () => void) {
     if (this.disposeListeners) this.disposeListeners.add(listener); else listener();
 
@@ -541,7 +544,7 @@ export class NativeTransport {
       const temporaryHost = this.hostId;
       const stopped = await this.disconnect(true);
 
-      if (temporaryPath && (stopped || !this.connectionAttempted)) await call("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }, voidResultSchema);
+      if (temporaryPath && (stopped || !this.connectionAttempted)) await call("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost });
       this.temporaryChat = false; this.temporaryChatUsed = false;
       const listeners = this.disposeListeners; this.disposeListeners = undefined;
 
@@ -615,11 +618,11 @@ export class NativeTransport {
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); listener(this.pinsSnapshot); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event));
 
   return () => this.listeners.delete(listener); }
-  listSessions() { return call("list_sessions", undefined, z.array(sessionSummarySchema)); }
-  archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }, voidResultSchema); }
-  relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }, voidResultSchema); }
+  listSessions() { return call("list_sessions"); }
+  archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }); }
+  relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }); }
   recoverMissingSession(sessionPath: string, hostId = "local") { return recoverSessionDirectory(sessionPath, hostId); }
-  openProjectDirectory(cwd: string, hostId = "local") { return call("open_project_directory", { cwd, hostId }, voidResultSchema); }
+  openProjectDirectory(cwd: string, hostId = "local") { return call("open_project_directory", { cwd, hostId }); }
   loadSettings() { return this.settings.load(); }
   loadSettingsChange() { return this.settings.loadChange(); }
   loadHostSettings() { return this.settings.loadHost(); }
@@ -628,10 +631,10 @@ export class NativeTransport {
   saveSettings(settings: AppSettings, reconnect = true, scope: "all" | "client" | "daemon" = "all", baseline?: AppSettings) {
     return this.settings.save(settings, reconnect, scope, baseline);
   }
-  homeDirectory(hostId: string) { return call("home_directory", { hostId }, z.string()); }
-  newChatBranches(path: string, hostId: string) { return call("new_chat_branches", { path, hostId }, z.object({ repository: z.string(), branches: z.array(z.string()), defaultBranch: z.string().nullable() }).nullable()); }
-  validateProjectDirectory(path: string, hostId: string, allowStorage = false, newChat = false) { return call("validate_project_directory", { path, hostId, allowStorage, newChat }, z.string()); }
-  listDirectories(hostId: string, path?: string) { return call("list_directories", { hostId, path }, directoryListingSchema); }
+  homeDirectory(hostId: string) { return call("home_directory", { hostId }); }
+  newChatBranches(path: string, hostId: string) { return call("new_chat_branches", { path, hostId }); }
+  validateProjectDirectory(path: string, hostId: string, allowStorage = false, newChat = false) { return call("validate_project_directory", { path, hostId, allowStorage, newChat }); }
+  listDirectories(hostId: string, path?: string) { return call("list_directories", { hostId, path }); }
   async prepareTemporaryChat(hostId: string) { this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false;
 
     return undefined; }

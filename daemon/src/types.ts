@@ -1,3 +1,6 @@
+import { z } from 'zod';
+import { sessionSummarySchema } from '../../protocol/results';
+
 export interface AgentAddress { hostId: string; sessionId?: string; sessionPath?: string; working: boolean; messageable: boolean }
 
 export interface SessionSummary {
@@ -36,19 +39,20 @@ export function serializeSession(session: SessionSummary): Record<string, unknow
   return result;
 }
 
-export function parseSession(value: any): SessionSummary {
-  const text = (key: string): string => { if (typeof value?.[key] !== 'string') throw new Error(`missing field \`${key}\``); return value[key]; };
-  const number = (key: string): number => { if (typeof value?.[key] !== 'number') throw new Error(`missing field \`${key}\``); return value[key]; };
-  if (typeof value?.cwdExists !== 'boolean') throw new Error('missing field `cwdExists`');
-  const forked = typeof value.forkSourceId === 'string' && value.forkSourceId;
-  if (forked && !(typeof value.forkEntryId === 'string' && value.forkEntryId)) throw new Error('missing field `forkEntryId`');
+// A chat of another host's list, checked against the shared schema.
+export function parseSession(value: unknown): SessionSummary {
+  const parsed = sessionSummarySchema.safeParse(value);
+  if (!parsed.success) throw new Error('Invalid chat in a host list: ' + z.prettifyError(parsed.error));
+  const session = parsed.data;
+  if (session.cwdExists === undefined || session.hostId === undefined || session.hostName === undefined) throw new Error('Invalid chat in a host list: it has no host or folder state');
+  const forked = Boolean(session.forkSourceId);
+  if (forked && !session.forkEntryId) throw new Error('Invalid chat in a host list: a branch has no entry');
   return {
-    id: text('id'), auxiliaryParentId: typeof value.auxiliaryParentId === 'string' ? value.auxiliaryParentId : undefined, auxiliaryKind: typeof value.auxiliaryKind === 'string' ? value.auxiliaryKind : undefined,
-    forkSourceId: forked ? value.forkSourceId : undefined, forkEntryId: forked ? value.forkEntryId : undefined,
-    groupId: typeof value.groupId === 'string' ? value.groupId : null, path: text('path'), name: text('name'), project: text('project'), cwd: text('cwd'),
-    cwdExists: value.cwdExists, modifiedAt: 0, preview: text('preview'), messageCount: number('messageCount'), lastMessageAt: number('lastMessageAt'),
-    apiCost: number('apiCost'), hostId: text('hostId'), hostName: text('hostName'), linkedWorktree: value.linkedWorktree === true || undefined,
-    worktreeRepository: typeof value.worktreeRepository === 'string' && value.worktreeRepository ? value.worktreeRepository : undefined,
+    id: session.id, auxiliaryParentId: session.auxiliaryParentId, auxiliaryKind: session.auxiliaryKind,
+    forkSourceId: forked ? session.forkSourceId : undefined, forkEntryId: forked ? session.forkEntryId : undefined,
+    groupId: session.groupId ?? null, path: session.path, name: session.name, project: session.project, cwd: session.cwd, cwdExists: session.cwdExists,
+    modifiedAt: 0, preview: session.preview, messageCount: session.messageCount, lastMessageAt: session.lastMessageAt, apiCost: session.apiCost,
+    hostId: session.hostId, hostName: session.hostName, linkedWorktree: session.linkedWorktree === true || undefined, worktreeRepository: session.worktreeRepository || undefined,
   };
 }
 

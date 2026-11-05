@@ -52,7 +52,7 @@ export class SessionSettings {
     this.failure = message;
     const revision = this.host.configuration()?.agentRevision;
     session.publish({ type: 'extension_error', error: message, agentRevision: typeof revision === 'number' ? revision : 0 }, null);
-    if (!session.viewsList.length) this.host.output({ type: 'diagnostic', line: 'Could not apply settings to ' + session.key + ': ' + error });
+    if (!session.viewsList.length) this.host.events.diagnostic('Could not apply settings to ' + session.key + ': ' + error);
   }
 
   private async apply(): Promise<void> {

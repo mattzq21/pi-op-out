@@ -11,7 +11,7 @@ export function createSettingsPendingCount(connected: () => boolean) {
   const load = () => {
     const current = ++revision;
     const attempt = backgroundAttempt("settings-pending-count", "Could not read which sessions still apply saved settings");
-    void invoke("settings_pending_count", undefined, z.number().int().nonnegative())
+    void invoke("settings_pending_count")
       .then(value => { attempt.succeeded(); if (current === revision) setCount(value); }, attempt.failed);
   };
 

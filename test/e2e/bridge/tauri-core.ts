@@ -1,6 +1,7 @@
 import { z, type JSONType } from "zod";
 import { rpcEventSchema } from "../../../clients/ui/lib/rpcSchemas";
 import type { NativeArguments } from "../../../clients/ui/lib/transportSchemas";
+import { DESKTOP_COMMANDS } from "../../../clients/ui/lib/desktopCommands";
 import { mockSharedTerminal } from "../native-terminal-fixture";
 import { draftCatalog } from "./draft-catalog";
 
@@ -21,7 +22,6 @@ window.addEventListener("unhandledrejection", event => window.__piopE2eErrors.pu
 const consoleError = console.error.bind(console);
 console.error = (...values: unknown[]) => { window.__piopE2eErrors.push("console: " + values.map(describeError).join(" ")); consoleError(...values); };
 
-const localCommands = new Set(["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "open_local_file", "reveal_local_file", "read_dropped_file"]);
 
 const mockMetadataSchema = z.object({ error: z.string().optional(), events: z.array(rpcEventSchema).optional() }).catch({});
 
@@ -31,6 +31,9 @@ function responseKey(command: string, args?: NativeArguments) {
   if (command === "broker_request") return command + ":" + String(z.object({ action: z.string() }).catch({ action: "unknown" }).parse(args?.body).action);
 
   if (command === "provider_auth") return command + ":" + String(z.object({ action: z.string() }).catch({ action: "unknown" }).parse(args?.request).action);
+
+  // The settings of a remote host have their own response, named with the host ID.
+  if ((command === "load_app_settings" || command === "load_settings_change") && typeof args?.hostId === "string" && args.hostId !== "local") return command + "@" + args.hostId;
 
   return command === "pi_command" ? command + ":" + String(args?.command?.type) : command;
 }
@@ -88,7 +91,7 @@ const runawayLimit = 300;
 const callCounts = new Map<string, number>();
 
 const bridgedInvoke: Invoke = async (cmd, payload, options) => {
-  const routed = cmd === "daemon_invoke" ? z.object({ command: z.string(), args: z.record(z.string(), z.unknown()).optional() }).parse(payload) : localCommands.has(cmd) ? { command: cmd, args: payload } : undefined;
+  const routed = cmd === "daemon_invoke" ? z.object({ command: z.string(), args: z.record(z.string(), z.unknown()).optional() }).parse(payload) : DESKTOP_COMMANDS.includes(cmd) ? { command: cmd, args: payload } : undefined;
 
   if (!routed) return realInvoke(cmd, payload, options);
   const args = routed.args as NativeArguments | undefined;
