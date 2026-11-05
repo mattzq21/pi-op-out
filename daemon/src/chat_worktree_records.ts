@@ -6,6 +6,7 @@ import { discardBranchHistory } from './chat_branch_operations';
 import { homeDir } from './environment';
 import { profileRoot } from './host_operations';
 import * as Registry from './session_registry';
+import { startSetup, stopSetup, type Setup } from './worktree_scripts';
 
 export interface ChatWorktreeRecord {
   version: 1;
@@ -21,6 +22,7 @@ export interface ChatWorktreeRecord {
   protecting?: true;
   repositoryMissing?: true;
   lastError?: string;
+  setup?: Setup;
 }
 
 export interface NewChatWorktree { chatId: string; repository: string; gitCommonDir: string; worktree: string; branch: string }
@@ -55,12 +57,15 @@ export async function create(input: { sourceCwd: string; chatId: string; home: s
   const claimed = await claimWorktree({ chatId: input.chatId, home: input.home, gitCommonDir: input.repository.gitCommonDir, taken: () => takenNames(root), save: (worktree, branch) => {
     record = record === null ? prepare({ chatId: input.chatId, ...input.repository, worktree, branch }, root) : replace(record, { ...record, worktree, branch }, root);
   } });
-  return createWorktree({ ...input, ...claimed });
+  const created = await createWorktree({ ...input, ...claimed });
+  await startSetup({ chatId: input.chatId, worktree: created.worktree, repository: created.repository }, root);
+  return created;
 }
 
 export const RECOVERY_OWNER = 'recovery';
 
 export async function abandonCreation(chatId: string, sessionPath: string | null, root = profileRoot()): Promise<void> {
+  await stopSetup(chatId);
   let record = read(chatId, root);
   if (record !== null) {
     if (record.state !== 'preparing' && record.state !== 'active') throw new Error(`Chat worktree is ${record.state}; only an unfinished creation can be undone: ${chatId}`);

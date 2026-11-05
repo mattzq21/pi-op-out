@@ -118,6 +118,7 @@ export async function archiveSession(app: App, runtime: TerminalRuntime, session
       for (const path of paths) sessionIds.push(await sessionIdentity(path));
       terminalIds.push(...terminalSessions.sessionTerminals(runtime, sessionIds));
       await stopTerminals(runtime, terminalIds);
+      await chatWorktrees.cleanUp(sessionIds);
       const archiving = await chatWorktrees.beginArchive(sessionIds);
       const invalidate = app.sessionIndex.projects.invalidateAfter('local');
       try { await storageTransactions.archive(paths); }
@@ -189,6 +190,7 @@ async function deleteStoredSessions(app: App, runtime: PiRuntime, sessionPaths: 
       const sessionIds: string[] = [];
       for (const [path] of paths) sessionIds.push(await sessionIdentity(path));
       await stopTerminals(app.terminals, terminalSessions.sessionTerminals(app.terminals, sessionIds));
+      await chatWorktrees.cleanUp(sessionIds);
       await storageTransactions.deleteSessions(targets, []);
       reportWarnings(app, await chatWorktrees.releaseDeleted(sessionIds));
       for (let index = 0; index < paths.length; index++) {

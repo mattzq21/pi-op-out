@@ -320,6 +320,8 @@ export class Orchestration {
     const session = this.host.findSession(text(packet, 'sessionKey'));
     if (!session) throw new Error('Conversation is no longer running');
     if (session.transient() || session.compacting()) throw new Error('Wait for conversation preparation or compaction to finish');
+    await session.setupSettled();
+    if (session.closed()) throw new Error('Conversation is no longer running');
     await session.settings.reconcile(false);
     const error = session.settings.error();
     if (error !== null) throw new Error(error);
