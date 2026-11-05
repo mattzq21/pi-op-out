@@ -14,7 +14,8 @@ const ignore = (() => undefined) as never;
 function Harness() {
   useAppKeyboard({ settings: () => ({ keybindings: defaultKeybindings }) as AppSettings, activePane: () => 'main', splitPane: () => undefined, canLeaveSettings: () => true,
     setView: (() => undefined) as never, panelOpen: () => false, setPanelOpen: ignore, newSession: async () => {}, toggleTerminal: () => setToggles(count => count + 1), toggleDebugMode: () => {},
-    setSplitComposerFocusRequest: ignore, setMainComposerFocusRequest: (() => setFocuses(count => count + 1)) as never, settingsDirty: () => false, view: () => 'chat', terminalOpen: () => true, setTerminalOpen: ignore });
+    setSplitComposerFocusRequest: ignore, setMainComposerFocusRequest: (() => setFocuses(count => count + 1)) as never, setSplitQueueHoldRequest: ignore, setMainQueueHoldRequest: ignore, settingsDirty: () => false, view: () => 'chat', terminalOpen: () => true, setTerminalOpen: ignore,
+    pluginHost: () => 'local', pluginEnabled: () => false, runPluginKeybind: () => {} });
 
   return <>
     <output aria-label="Terminal toggles">{toggles()}</output>

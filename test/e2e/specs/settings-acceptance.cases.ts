@@ -1,8 +1,9 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
 import { appSettingsSchema } from "../../../clients/ui/lib/responseSchemas.js";
+import { draftCatalog } from "../bridge/draft-catalog.js";
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, backendCalls, updateBackendResponse, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses } from './acceptance-fixture.js';
+import { mockBackend, backendCalls, updateBackendResponse, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses, acceptanceAgents } from './acceptance-fixture.js';
 
 describe("Settings acceptance", () => {
   beforeEach(async () => {
@@ -21,9 +22,11 @@ describe("Settings acceptance", () => {
       "pi_command:get_available_thinking_levels": { levels: [...new Set([defaultSettings.defaultThinking, "high", "off"])] },
       "pi_command:set_model": {},
       "pi_command:prompt": {},
+      "provider_auth:draft_catalog": { ...draftCatalog, config: acceptanceAgents().config },
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents();
+    await browser.execute(() => window.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event: "pi://agent-definitions-changed", payload: { hostId: "local" } }));
 
     try {
       await app.openSettings();

@@ -35,6 +35,9 @@ test('settings data loads without Pi only when the user points at Settings, and 
   });
   await act(() => t.mock.timers.tick(1000));
   await settle();
+  const change = await daemon.invoke('load_settings_change');
+  await emit('pi://host-settings-changed', { ...change, hostId: 'local' });
+  await settle();
   const before = reads.length;
   await act(() => root.querySelector('button[aria-label="Settings"]').dispatchEvent(new Event('pointerenter')));
   await settle();
@@ -43,7 +46,6 @@ test('settings data loads without Pi only when the user points at Settings, and 
   assert.ok(Array.isArray(resources.models));
   assert.ok(Array.isArray(resources.config.agents));
   assert.equal(reads.length, before + 1);
-  const change = await daemon.invoke('load_settings_change');
   await emit('pi://host-settings-changed', { ...change, hostId: 'local' });
   await act(() => t.mock.timers.tick(2000));
   await settle();

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { appSettingsSchema, modelSchema } from "../../../clients/ui/lib/responseSchemas.js";
 import { nativeArgumentsSchema, jsonResultSchema } from "../../../clients/ui/lib/transportSchemas.js";
 import { app } from "../pageobjects/app.page.js";
+import { draftCatalog } from "../bridge/draft-catalog.js";
 
 const backendCallSchema = z.object({ command: z.string(), args: nativeArgumentsSchema.default({}), mocked: z.boolean() });
 
@@ -65,7 +66,8 @@ export const isolatedUsageResponses = {
 const withKnownModels = (responses: BackendResponses) => {
   responses = { ...responses };
   const models = modelsSchema.parse(responses["pi_command:get_available_models"] ?? {}).models ?? [];
-  const known = (settings: AppSettings) => ({ ...settings, knownModels: [...new Set([...(settings.knownModels ?? []), ...models.map(model => `${model.provider}/${model.id}`)])] });
+  const ids = models.map(model => `${model.provider}/${model.id}`);
+  const known = (settings: AppSettings) => ({ ...settings, knownModels: [...new Set([...(settings.knownModels ?? []), ...ids])], hiddenModels: settings.hiddenModels.filter(id => !ids.includes(id)) });
 
   const settings = appSettingsSchema.safeParse(responses.load_app_settings);
 
@@ -234,7 +236,17 @@ before(async () => {
     catch (error) { return { error: String(error) }; }
   });
   if ("error" in result) throw new Error("Could not load isolated daemon settings: " + result.error);
-  defaultSettings = appSettingsSchema.parse(result.value);
+  const loaded = appSettingsSchema.parse(result.value);
+  // New models start hidden. The models of the test backend are known and shown from the start.
+  const ids = draftCatalog.models.map(model => `${model.provider}/${model.id}`);
+  const settings = { ...loaded, knownModels: [...new Set([...(loaded.knownModels ?? []), ...ids])], hiddenModels: loaded.hiddenModels.filter(id => !ids.includes(id)) };
+  const saved = await browser.execute(async settings => {
+    const tauri = window.__TAURI_INTERNALS__;
+    try { return { value: await tauri.invoke("daemon_invoke", { command: "save_app_settings", args: { clientId: "desktop:e2e-settings", settings } }) }; }
+    catch (error) { return { error: String(error) }; }
+  }, settings);
+  if ("error" in saved) throw new Error("Could not show the test models: " + saved.error);
+  defaultSettings = appSettingsSchema.parse(z.looseObject({ settings: z.unknown() }).parse(saved.value).settings);
 });
 
 export const acceptanceAgents = (): DefinedAgentsCapability => ({

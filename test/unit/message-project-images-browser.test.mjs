@@ -23,7 +23,7 @@ async function replyPage(t, content) {
 }
 
 test('project images named in a reply show inside it, a missing one says so, and the thumbnail opens the image while the remote file link reports its host', async t => {
-  const { page, reads } = await replyPage(t, 'The result is in `shots/ok.png`. Before: ![old run](shots/missing.png) ![](shots/gone.png). Code: `src/main.ts`.');
+  const { page, reads } = await replyPage(t, 'The result is in [shots/ok.png](shots/ok.png). Before: ![old run](shots/missing.png) ![](shots/gone.png). Code: `src/main.ts`.');
   await page.locator('img').waitFor();
   assert.equal(await page.locator('img').getAttribute('src'), PIXEL);
   await page.getByText('old run: Image unavailable', { exact: true }).waitFor();

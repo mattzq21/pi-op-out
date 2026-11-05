@@ -9,7 +9,7 @@ import '../../resources/piop-storage/goals.ts';
 import '../../resources/piop-storage/new-chats.ts';
 import '../../resources/piop-storage/session-records.ts';
 import '../../resources/session-broker/session-names.ts';
-import '../../resources/session-database.ts';
+import '../../resources/session-database/core.ts';
 import '../../resources/session-lifecycle.ts';
 import '../../resources/session-registry.ts';
 import '../../resources/storage-locks.ts';

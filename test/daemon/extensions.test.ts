@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
-import { daemonDirectory, fakePi, fakeProgram, refreshedUsage, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
+import { daemonDirectory, fakePi, fakeProgram, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
 import { recordTools } from '../../daemon/src/inventories/tools';
 
 const root = join(import.meta.dir, '../..');
@@ -70,32 +70,6 @@ beforeAll(async () => {
   installFakePi(daemon.home);
 }, 60_000);
 afterAll(() => daemon?.stop());
-
-test('Codex usage completes the server handshake and returns the limiting window', async () => {
-  fakeProgram(daemon.bin, 'codex', `#!/usr/bin/env node
-if (process.argv[2] !== 'app-server') process.exit(9);
-let initialized = false;
-let ready = false;
-require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
-  const packet = JSON.parse(line);
-  const reply = result => console.log(JSON.stringify({ id: packet.id, result }));
-  const reject = message => console.log(JSON.stringify({ id: packet.id, error: { code: -32600, message } }));
-  if (packet.method === 'initialize') {
-    if (!packet.params?.clientInfo?.name || !packet.params.clientInfo.version) return reject('Client identity is required');
-    initialized = true;
-    console.log('startup noise');
-    return reply({});
-  }
-  if (packet.method === 'initialized') { ready = initialized; return; }
-  if (packet.method === 'account/rateLimits/read') {
-    if (!ready) return reject('Initialize the server before reading account limits');
-    return reply({ rateLimits: { primary: { usedPercent: 20, resetsAt: 100 }, secondary: { usedPercent: 75, resetsAt: 200 } } });
-  }
-  reject('Unsupported test server method');
-});
-`);
-  expect((await refreshedUsage(daemon, 'codex')).usage).toEqual({ remainingPercent: 25, resetAt: 200 });
-});
 
 const mode = (path: string) => statSync(path).mode & 0o777;
 

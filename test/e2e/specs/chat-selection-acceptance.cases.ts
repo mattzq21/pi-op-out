@@ -38,9 +38,7 @@ const centerTurnMovement = (change: "select" | "clear") => browser.execute(actio
   document.addEventListener("selectionchange", () => resolve(turn.getBoundingClientRect().top - top), { once: true });
 
   if (action === "clear") { selection.removeAllRanges(); return; }
-  const range = document.createRange();
-  range.selectNodeContents(turn);
-  selection.addRange(range);
+  selection.selectAllChildren(turn);
 }), change);
 
 describe("Chat selection", () => {

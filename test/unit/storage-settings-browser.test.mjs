@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { appendFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { daemonClient } from '../daemon-client.mjs';
 import { startupPage } from '../startup-browser-fixture.mjs';
@@ -23,14 +23,12 @@ test('storage warns when an archived transcript has damaged content', async t =>
       return daemon.invoke(args.command, args.args);
     }),
   });
-  await appendFile(archived.path, 'not JSON\n');
+  await writeFile(archived.path, 'not JSON\n' + await readFile(archived.path, 'utf8'));
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  const summary = page.locator('summary').filter({ hasText: /^Storage coverage is incomplete/ });
-  await summary.waitFor();
-  assert.match(await summary.textContent(), /\d+ warnings?/);
-  const warning = summary.locator('..').locator('p').filter({ hasText: archived.path });
-  assert.equal(await warning.isVisible(), false);
-  await summary.click();
-  await warning.waitFor();
-  assert.match(await warning.textContent(), /session provenance is incomplete/);
+  const blocked = page.locator('[aria-label^="Cannot safely delete Unreadable conversation"]');
+  await blocked.waitFor();
+  assert.equal(await blocked.isDisabled(), true);
+  const row = page.locator('.archive-row.cleanup-unavailable').filter({ has: blocked });
+  assert.match(await row.textContent(), /Cleanup unavailable · This archive has invalid chat data\./);
+  assert.equal(await page.locator('[aria-label="Permanently delete Damaged chat"]').count(), 0);
 });

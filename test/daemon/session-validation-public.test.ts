@@ -13,7 +13,7 @@ test.concurrent('opening an unregistered transcript rejects it without changing 
     const path = join(directory, 'chat.jsonl');
     const body = JSON.stringify({ type: 'session', version: 3, id: crypto.randomUUID(), cwd: daemon.home }) + '\n';
     writeFileSync(path, body);
-    expect(await daemon.failure('start_pi', { runtimeId: crypto.randomUUID(), clientId: 'session-validation', cwd: daemon.home, sessionPath: path })).toContain('Session path is not registered');
+    expect(await daemon.failure('start_pi', { runtimeId: crypto.randomUUID(), clientId: 'session-validation', cwd: daemon.home, sessionPath: path })).toContain('Only piop session files can be accessed');
     expect(readFileSync(path, 'utf8')).toBe(body);
   } finally { await daemon.stop(); }
 }, 60000);

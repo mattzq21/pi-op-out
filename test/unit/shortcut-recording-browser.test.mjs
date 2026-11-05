@@ -67,7 +67,8 @@ test('shortcut recording leaves unsupported input unchanged', async t => {
 test('shortcut recording detects collisions, allows clearing, and restores defaults', async t => {
   const { page, input, saveAndReload } = await recorder(t);
   await page.keyboard.press('Tab');
-  assert.equal(await input.evaluate(node => node === document.activeElement), false);
+  assert.equal(await input.evaluate(node => node === document.activeElement), true);
+  assert.equal(await input.inputValue(), 'Ctrl+N');
   await input.focus();
   await page.keyboard.press('Control+b');
   const error = page.getByRole('alert').filter({ hasText: 'assigned more than once' });

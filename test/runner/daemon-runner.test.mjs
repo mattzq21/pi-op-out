@@ -164,9 +164,9 @@ for (const [failing, discover] of [[false, false], [true, false], [false, true]]
     assert.equal(item.controls, f.started[0].controls);
   }
   const args = JSON.parse(await readFile(f.invocation, 'utf8'));
-  assert.deepEqual(args.slice(0, 5), ['test', '--parallel=2', '--parallel-delay=0', '--timeout', '60000']);
-  assert.ok(args[5].startsWith('--timings='));
-  assert.equal(existsSync(args[5].slice('--timings='.length)), false);
-  assert.deepEqual(args.slice(6, 9), ['--update-timings', '-t', 'selected case']);
-  assert.deepEqual(args.slice(9).sort(), [...f.files].sort());
+  assert.deepEqual(args.slice(0, 7), ['test', '--preload', fileURLToPath(new URL('../daemon/typebox-preload.cjs', import.meta.url)), '--parallel=2', '--parallel-delay=0', '--timeout', '60000']);
+  assert.ok(args[7].startsWith('--timings='));
+  assert.equal(existsSync(args[7].slice('--timings='.length)), false);
+  assert.deepEqual(args.slice(8, 11), ['--update-timings', '-t', 'selected case']);
+  assert.deepEqual(args.slice(11).sort(), [...f.files].sort());
 });
