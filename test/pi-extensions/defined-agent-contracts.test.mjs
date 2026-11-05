@@ -176,7 +176,7 @@ test('invalid configuration and filesystem failures surface instead of silently 
   assert.equal(f.rawConfig(), '{bad');
 
   for (const name of ['sessions.sqlite', 'sessions.sqlite-wal', 'sessions.sqlite-shm']) await rm(join(f.root, name), { force: true });
-  await mkdir(join(f.root, 'sessions.sqlite')); await assert.rejects(f.load(), /Settings database is not a regular file/);
+  await mkdir(join(f.root, 'sessions.sqlite')); await assert.rejects(f.load(), /Storage database is not a regular file/);
   await rm(join(f.root, 'sessions.sqlite'), { recursive: true }); await f.file('config.json', JSON.stringify(configured([profile('general', { path_agent_prompt: '~/.agents/AGENTS.md' })])));
   await f.load(); await rm(join(f.home, '.agents/AGENTS.md')); await mkdir(join(f.home, '.agents/AGENTS.md'));
   await f.start(); assert.match(f.notices.at(-1).message, /cannot read agent prompt .*AGENTS\.md: EISDIR/); assert.deepEqual(await f.input('hello'), { action: 'handled' });
