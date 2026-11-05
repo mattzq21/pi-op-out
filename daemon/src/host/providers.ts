@@ -7,7 +7,7 @@ import { Sdk } from './provider_sdk';
 import { FastModelStore, type FastModelScanResult, type FastModelSnapshot } from './fast_models';
 import type { Host } from './controller';
 import { join } from 'node:path';
-import { savedCommands } from '../command_inventory';
+import { savedCommands } from '../inventories';
 
 class Flow {
   status = 'pending';

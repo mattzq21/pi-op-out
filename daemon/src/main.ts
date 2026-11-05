@@ -1,13 +1,13 @@
-import * as restartArtifacts from './restart_artifacts';
-import * as daemonLog from './daemon_log';
+import * as restartArtifacts from './restart';
+import * as daemonLog from './service';
 import { installFailureHandlers, runDaemon } from './lifecycle';
-import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError } from './daemon_endpoint';
-import { PROCESS_TAG } from './process_cleanup';
+import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError } from './service';
+import { PROCESS_TAG } from './process';
 import { errorText } from './util/sync';
-import { isHostOperationWorker, runHostOperationWorker } from './host_operation_worker';
+import { isHostOperationWorker, runHostOperationWorker } from './host_operations/worker';
 import { STORAGE_DIRECTORY } from './config';
 import { readOnlyStorage } from '../resources/session-database.cjs';
-import { stateRecords } from './plugin_contributions';
+import { stateRecords } from './plugins';
 
 // The modes that run the daemon. Each takes the daemon lock before it changes the storage.
 const OWNERS = new Set(['--serve', '--restart-candidate']);
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   installFailureHandlers();
   if (first === '--daemon-log-sink' || first === '--daemon-log-writer') {
     try {
-      if (first === '--daemon-log-sink') await daemonLog.runSink(); else await daemonLog.run();
+      if (first === '--daemon-log-sink') await daemonLog.runSink(); else await daemonLog.runLogWriter();
     } catch { process.exitCode = 1; }
     return;
   }

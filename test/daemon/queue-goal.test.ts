@@ -2,7 +2,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SessionQueue } from '../../daemon/src/host/queue';
+import { SessionQueue } from '../../daemon/src/host/queue/queue';
 import { QueueGoal } from '../../daemon/src/host/goals/state';
 import database from '../../daemon/resources/session-database.cjs';
 import goals from '../../daemon/resources/piop-storage/goals.cjs';

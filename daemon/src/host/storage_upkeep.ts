@@ -1,10 +1,10 @@
 import * as Registry from '../session_registry';
-import * as storageTransactions from '../storage_transactions';
+import * as storageTransactions from '../storage';
 import { errorText, sleep } from '../util/sync';
 import type { ConversationOwnership } from './ownership';
-import { recoverMissingTranscripts, type Recovery } from './queue_recovery';
+import { recoverMissingTranscripts, type Recovery } from './queue';
 import type { HostEvents } from './events';
-import { collectRetentionWith } from '../retention_requests';
+import { collectRetentionWith } from '../storage';
 
 export function recoverQueuedInput(root: string, ownership: ConversationOwnership, events: HostEvents): void {
   let recovery = recoverMissingTranscripts(root, ownership);

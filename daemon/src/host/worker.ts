@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { ensurePrivateDir } from '../private_fs';
 import { CommandRefusedError } from '../pi_rejection';
-import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process_cleanup';
+import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
 import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEvent } from './runtime_events';
 import type { PiStorage } from './pi_storage';

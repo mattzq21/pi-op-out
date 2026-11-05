@@ -16,7 +16,7 @@ beforeAll(async () => {
   mkdirSync(join(root, 'sessions', 'project'), { recursive: true });
   process.env.PIOP_STORAGE_DIRECTORY = relative(realpathSync(homedir()), root);
   modules = {
-    history: await import('../../daemon/src/chat_branch_history'),
+    history: await import('../../daemon/src/host_operations/branch_history'),
     publication: require('../../daemon/resources/piop-storage/session-publication.cjs'),
     database: require('../../daemon/resources/session-database.cjs'),
     assets: require('../../daemon/resources/piop-storage/goal-assets.cjs'),

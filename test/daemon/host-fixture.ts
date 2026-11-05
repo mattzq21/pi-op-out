@@ -13,7 +13,7 @@ function hostExecutable(): Promise<string> {
     await build({
       stdin: { contents: `
 import { startHost } from './daemon/src/host/index';
-import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operation_worker';
+import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operations/worker';
 import { createInterface } from 'node:readline';
 if (isHostOperationWorker()) { runHostOperationWorker(); } else {
 const output = packet => process.stdout.write(JSON.stringify(packet) + '\\n');
