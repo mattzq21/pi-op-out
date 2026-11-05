@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-const { DaemonClients } = await import('../../daemon/src/clients/daemon_clients');
+const { DaemonClients } = await import('../../../daemon/src/clients/daemon_clients');
 
 const app = { restart: { gate: { tryWrite: () => () => {} } } } as any;
 const stops = (clients: InstanceType<typeof DaemonClients>) => clients.waitForShutdown(app, async () => {}).then(() => Date.now());

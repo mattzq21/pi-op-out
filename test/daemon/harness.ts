@@ -27,6 +27,7 @@ if (/\.test\.[cm]?[jt]s$/.test(Bun.main)) afterAll(async () => {
 export interface BuildOptions { development?: boolean; projectRoot?: string; fakeTailscale?: boolean; unusedStopMs?: number }
 
 export function daemonExecutable(options: BuildOptions = {}): Promise<string> {
+  if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not start the daemon');
   const development = options.development === true;
   if (!development && !options.fakeTailscale && options.unusedStopMs === undefined && process.env.PIOP_TEST_DAEMON_EXECUTABLE) {
     return Promise.resolve(process.env.PIOP_TEST_DAEMON_EXECUTABLE);

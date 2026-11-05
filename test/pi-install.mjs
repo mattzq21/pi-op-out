@@ -15,6 +15,7 @@ let installed;
 
 // The Pi that the daemon installs, installed once for all tests.
 export function testPi() {
+  if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not install Pi');
   installed ??= installPi({ home: shared, manifest, lockfile, bun: 'bun' }).catch(error => { installed = undefined; throw error; });
   return installed;
 }

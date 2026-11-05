@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import hooksExtended from '../../daemon/resources/hooks-extended/index.ts';
-import { extendedHooks } from '../../daemon/resources/hooks-extended/interface.ts';
+import hooksExtended from '../../../daemon/resources/hooks-extended/index.ts';
+import { extendedHooks } from '../../../daemon/resources/hooks-extended/interface.ts';
 
 function fixture() {
   const native = new Map<string, Function[]>();
@@ -160,7 +160,7 @@ test('availability errors are reported, and an already available session needs n
 });
 
 test('runtime invalidation cancels availability before the context becomes stale', async () => {
-  const { installAvailability } = await import('../../daemon/resources/runtime-availability.cjs');
+  const { installAvailability } = await import('../../../daemon/resources/runtime-availability.cjs');
   const f = fixture();
   let idle = false;
   let stale = false;

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { onToolsChanged, parseTools, recordTools, savedTools } from "../../daemon/src/inventories/tools";
+import { onToolsChanged, parseTools, recordTools, savedTools } from "../../../daemon/src/inventories/tools";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

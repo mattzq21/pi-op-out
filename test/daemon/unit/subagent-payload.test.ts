@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clientPayload } from '../../daemon/src/host/payload';
+import { clientPayload } from '../../../daemon/src/host/payload';
 
 const run = { version: 1, name: 'Reader', task: 'Read', status: 'running', sessionId: 'id', sessionPath: '/s.jsonl', hostId: 'local', toolCallId: 'call', look: 3, output: 'long', startedAt: 1 };
 const icon = { name: 'Reader', sessionId: 'id', sessionPath: '/s.jsonl', hostId: 'local', toolCallId: 'call', look: 3, task: 'Read' };

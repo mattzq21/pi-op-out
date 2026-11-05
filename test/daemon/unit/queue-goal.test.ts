@@ -2,10 +2,10 @@ import { afterAll, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SessionQueue } from '../../daemon/src/host/queue/queue';
-import { QueueGoal } from '../../daemon/src/host/goals/state';
-import { connection } from '../../daemon/resources/session-database/core.cjs';
-import goals from '../../daemon/resources/piop-storage/goals.cjs';
+import { SessionQueue } from '../../../daemon/src/host/queue/queue';
+import { QueueGoal } from '../../../daemon/src/host/goals/state';
+import { connection } from '../../../daemon/resources/session-database/core.cjs';
+import goals from '../../../daemon/resources/piop-storage/goals.cjs';
 
 const root = mkdtempSync(join(tmpdir(), 'piop-queue-goal-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

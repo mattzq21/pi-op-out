@@ -16,18 +16,18 @@ beforeAll(async () => {
   mkdirSync(join(root, 'sessions', 'project'), { recursive: true });
   process.env.PIOP_STORAGE_DIRECTORY = relative(realpathSync(homedir()), root);
   modules = {
-    history: await import('../../daemon/src/host_operations/branch_history'),
-    publication: require('../../daemon/resources/piop-storage/session-publication.cjs'),
-    database: require('../../daemon/resources/session-database.cjs'),
-    core: require('../../daemon/resources/session-database/core.cjs'),
-    assets: require('../../daemon/resources/piop-storage/goal-assets.cjs'),
-    dependencies: require('../../daemon/resources/piop-storage/goal-dependencies.cjs'),
-    goals: require('../../daemon/resources/piop-storage/goals.cjs'),
-    records: require('../../daemon/resources/piop-storage/session-records.cjs'),
-    names: require('../../daemon/resources/session-broker/session-names.cjs'),
-    lock: require('../../daemon/resources/piop-storage/reference-publication-lock.cjs'),
-    operation: require('../../daemon/resources/storage-operation.cjs'),
-    locks: require('../../daemon/resources/storage-locks.cjs'),
+    history: await import('../../../daemon/src/host_operations/branch_history'),
+    publication: require('../../../daemon/resources/piop-storage/session-publication.cjs'),
+    database: require('../../../daemon/resources/session-database.cjs'),
+    core: require('../../../daemon/resources/session-database/core.cjs'),
+    assets: require('../../../daemon/resources/piop-storage/goal-assets.cjs'),
+    dependencies: require('../../../daemon/resources/piop-storage/goal-dependencies.cjs'),
+    goals: require('../../../daemon/resources/piop-storage/goals.cjs'),
+    records: require('../../../daemon/resources/piop-storage/session-records.cjs'),
+    names: require('../../../daemon/resources/session-broker/session-names.cjs'),
+    lock: require('../../../daemon/resources/piop-storage/reference-publication-lock.cjs'),
+    operation: require('../../../daemon/resources/storage-operation.cjs'),
+    locks: require('../../../daemon/resources/storage-locks.cjs'),
   };
 });
 afterAll(() => {

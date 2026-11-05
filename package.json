@@ -43,6 +43,7 @@
     "test:pi-extensions": "python3 scripts/test-run.py sh -c 'node --test --test-timeout=120000 test/pi-extensions/*.test.mjs && bun test ./pi-extensions'",
     "test:runner": "python3 test/runner/cleanup.test.py && python3 scripts/test-run.py node --test test/runner/*.test.mjs",
     "test:daemon": "python3 scripts/test-run.py node scripts/test-daemon.mjs",
+    "test:daemon:unit": "python3 scripts/test-run.py node scripts/test-daemon-unit.mjs",
     "test:rust": "python3 scripts/test-run.py env TAURI_CONFIG='{\"bundle\":{\"externalBin\":[]}}' cargo test --locked -p piop-desktop -- --test-threads=1",
     "test:mobile:ui": "python3 scripts/test-run.py node test/mobile-ui.mjs",
     "test:e2e": "python3 scripts/test-run.py node scripts/test-e2e.mjs",

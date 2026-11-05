@@ -2,8 +2,8 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PiStorage } from '../../daemon/src/host/pi_storage';
-import * as StorageLocks from '../../daemon/resources/storage-locks.cjs';
+import { PiStorage } from '../../../daemon/src/host/pi_storage';
+import * as StorageLocks from '../../../daemon/resources/storage-locks.cjs';
 
 // The daemon answers Pi's storage requests on its main thread, which cannot block. A request that needs the goal asset
 // lock while another storage change holds it waits for it, as before the daemon wrote for Pi, and does not fail.

@@ -7,6 +7,7 @@ import { startDaemon, temporaryDirectory } from './harness';
 
 let bundle: Promise<string> | undefined;
 function hostExecutable(): Promise<string> {
+  if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not start a Host');
   return bundle ??= (async () => {
     const root = resolve(import.meta.dir, '../..');
     const outfile = join(temporaryDirectory('piop-host-build-'), 'host.mjs');

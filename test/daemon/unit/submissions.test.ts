@@ -2,9 +2,9 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connection } from '../../daemon/resources/session-database/core.cjs';
-import { CommandRefusedError } from '../../daemon/src/pi_rejection';
-import { SubmissionLedger } from '../../daemon/src/host/submissions';
+import { connection } from '../../../daemon/resources/session-database/core.cjs';
+import { CommandRefusedError } from '../../../daemon/src/pi_rejection';
+import { SubmissionLedger } from '../../../daemon/src/host/submissions';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

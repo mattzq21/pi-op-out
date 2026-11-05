@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Glob } from 'bun';
 import { join, relative } from 'node:path';
 
-const root = join(import.meta.dir, '../..');
+const root = join(import.meta.dir, '../../..');
 
 // A worker thread names each database change, and the main thread runs it. The main thread knows a change only if it
 // loaded its module, so every module that names one must be loaded at start.
