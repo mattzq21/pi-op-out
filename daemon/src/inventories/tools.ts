@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir } from '../environment';
-import { saveToolInventoryJson, toolInventoryJson, transaction } from '../../resources/session-database.ts';
+import { saveToolInventoryJson, toolInventoryJson, transaction } from '../../resources/session-database/index.ts';
 import type { ToolConfig } from '../settings_types';
 import { reported } from '../pi';
 

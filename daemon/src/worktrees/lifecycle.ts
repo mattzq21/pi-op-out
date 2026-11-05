@@ -1,12 +1,12 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { readHeaderLine } from '../host/protocol';
-import * as SessionTables from '../../resources/session-database.ts';
+import { readHeaderLine } from '../util/lines.ts';
+import * as SessionTables from '../../resources/session-database/index.ts';
 import { archivedCommit, archiveRef, deleteChatWorktree, planRestore, protectArchive, releaseArchive, removeArchivedWorktree, removeRestoredWorktree, restoreWorktree, type ChatArchive, type ChatWorktree } from './worktrees';
 import * as Worktrees from './records';
-import * as Records from '../../resources/chat-worktree-records.ts';
-import * as SessionLifecycle from '../storage/lifecycle.ts';
+import * as Records from './chat_records.ts';
+import { lifecycle as SessionLifecycle } from '../storage';
 import type { ChatWorktreeRecord } from './records';
 import { homeDir } from '../environment';
 import { profileRoot } from '../host_operations';

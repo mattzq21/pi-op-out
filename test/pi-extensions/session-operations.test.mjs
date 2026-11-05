@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
-import * as database from '../../daemon/resources/session-database.ts';
+import * as database from '../../daemon/resources/session-database/index.ts';
 import { connection } from '../../daemon/resources/session-database/core.ts';
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +17,7 @@ after(() => rm(home, { recursive: true, force: true }));
 let compiled;
 function compiledControls() {
   return compiled ??= build({
-    stdin: { contents: 'export { default as controls } from "./daemon/resources/piop-controls/index.ts";', resolveDir: process.cwd() },
+    stdin: { contents: 'export { default as controls } from "./daemon/resources/piop-controls/extension.ts";', resolveDir: process.cwd() },
     bundle: true, write: false, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent',
     external: ['@earendil-works/*'],
     banner: { js: "import { createRequire as __fixtureRequire } from 'node:module'; const require = __fixtureRequire(import.meta.url);" },

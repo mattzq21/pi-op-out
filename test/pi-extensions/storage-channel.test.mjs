@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { readLines } from '../../daemon/resources/lf-lines.ts';
+import { readLines } from '../../daemon/src/util/lines.ts';
 
-const channel = fileURLToPath(new URL('../../daemon/resources/storage-channel.ts', import.meta.url));
+const channel = fileURLToPath(new URL('../../daemon/resources/session-database/storage-channel.ts', import.meta.url));
 
 // Runs calls in a child process, as Pi does, while this process answers on the channel as the daemon does.
 function run(source, answer, env = { PIOP_STORAGE_CHANNEL: '3' }) {

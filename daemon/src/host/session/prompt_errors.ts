@@ -1,4 +1,4 @@
-import { jsonEqual, text } from './json';
+import { jsonEqual, text } from '../json';
 
 export class PromptErrors {
   private inputRejection: any = null;

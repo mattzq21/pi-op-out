@@ -1,15 +1,13 @@
-import { extendedHooks } from "../hooks-extended/interface.ts";
+import { extendedHooks } from "../hooks-extended/index.ts";
 import type { AgentToolResult, ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { BrokerRequestError, currentHost, request } from "./client.ts";
+import { BrokerRequestError, currentHost, request, activeConversation } from "./client.ts";
 import { createProfileSession } from "./agent-profiles.ts";
-import { durableMailbox } from "../piop-storage/durable-mailbox.ts";
-import { activeConversation } from "./conversation-location.ts";
-import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary } from "../piop-storage/session-records.ts";
-import { sessionName } from "./session-names.ts";
+import { AUXILIARY_PARENT, auxiliaryParent, isAuxiliary, sessionName } from "../piop-storage/index.ts";
+import { durableMailbox } from "../agent-records/index.ts";
 import { steering } from "./steering.ts";
 
 const messageSchema = Type.Object({ role: Type.String(), content: Type.Optional(Type.Unknown()), toolName: Type.Optional(Type.String()), customType: Type.Optional(Type.String()), details: Type.Optional(Type.Unknown()), stopReason: Type.Optional(Type.String()), errorMessage: Type.Optional(Type.String()) });

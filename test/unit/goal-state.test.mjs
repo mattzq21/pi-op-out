@@ -1,10 +1,10 @@
-import storageExtension from "../../daemon/resources/piop-storage/index.ts";
+import storageExtension from "../../daemon/resources/piop-storage/extension.ts";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import * as goals from '../../daemon/resources/piop-storage/goals.ts';
+import * as goals from '../../daemon/resources/storage-operations/goals.ts';
 import { connection } from '../../daemon/resources/session-database/core.ts';
 
 function fixture(t) {
@@ -76,7 +76,7 @@ test('invalid or mismatched goals are rejected', t => {
 });
 
 test('storage remains available while other extensions save during shutdown', async () => {
-  const { sessionStorage } = await import('../../daemon/resources/piop-storage/interface.ts');
+  const { sessionStorage } = await import('../../daemon/resources/piop-storage/extension.ts');
   const handlers = new Map();
   const shutdown = [];
   const entries = [];

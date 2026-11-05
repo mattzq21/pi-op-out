@@ -1,4 +1,4 @@
-import { patchMethod } from './pi-patch.ts';
+import { patchMethod } from '../pi/index.ts';
 const key = Symbol.for('piop.mcp-connections');
 const listeners = globalThis[key] ??= new Set();
 const installed = new WeakSet();

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { installDom, renderHook, act } from '../dom.mjs';
 import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
-import { recentHistory } from '../../daemon/src/host/history_window.ts';
+import { recentHistory } from '../../daemon/src/host/views/history_window.ts';
 
 const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
 const user = { role: 'user', content: 'Bring me a screenshot', timestamp: 100 };

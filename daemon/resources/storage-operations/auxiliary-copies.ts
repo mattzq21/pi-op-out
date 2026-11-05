@@ -1,10 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import * as stateRecords from './session-records.ts';
-import * as database from '../session-database.ts';
-import * as childIndex from '../session-broker/session-child-index.ts';
-import * as names from '../session-broker/session-names.ts';
+import * as stateRecords from '../piop-storage/index.ts';
+import * as database from '../session-database/index.ts';
 
 export interface PlannedCopy {
   kind: string; sourceId: string; sessionId: string; sessionPath: string; name: string | undefined;
@@ -100,7 +98,7 @@ function planAuxiliaryCopies({ root, sourceId, target, cutoff, cwd }: { root: st
   const queue = [sourceId];
 
   for (let index = 0; index < queue.length; index++) {
-    for (const child of childIndex.children(root, queue[index])) {
+    for (const child of stateRecords.children(root, queue[index])) {
       if (copied.has(child.sessionId) || child.archived) continue;
       const file = database.lookup(root, child.sessionId);
       if (!file) continue;
@@ -111,7 +109,7 @@ function planAuxiliaryCopies({ root, sourceId, target, cutoff, cwd }: { root: st
       const copyId = database.reserve(root);
       copied.add(child.sessionId);
       ids.push([child.sessionId, copyId]);
-      copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: path.join(path.dirname(target.path), String(header.timestamp).replace(/[:.]/g, '-') + '_' + copyId + '.jsonl'), header, entries, name: names.sessionName(file, child.sessionId) });
+      copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: path.join(path.dirname(target.path), String(header.timestamp).replace(/[:.]/g, '-') + '_' + copyId + '.jsonl'), header, entries, name: stateRecords.sessionName(file, child.sessionId) });
       queue.push(child.sessionId);
     }
   }

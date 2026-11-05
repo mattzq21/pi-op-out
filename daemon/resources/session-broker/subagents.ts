@@ -1,4 +1,5 @@
-import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
+import { createChat, reserveSessionId, isAuxiliary } from "../piop-storage/index.ts";
+import { savedSubagentRuns } from "../agent-records/index.ts";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
 import type { SubagentLimitsRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import { Type, type TOptional, type TString } from "typebox";
@@ -8,15 +9,12 @@ import { childFastModeEntry } from "./fast-mode.ts";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { currentHost } from "./client.ts";
-import { activeConversation } from "./conversation-location.ts";
+import { currentHost, activeConversation } from "./client.ts";
 import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnapshot, snapshotStatus, subagentResponses } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
 import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagentReceiptSchema, SubagentCancellation, type ActiveSubagent } from "./subagent-reconciliation.ts";
 import { releaseLook, reserveLook } from "./subagent-looks.ts";
 import { steering, type SteerSource } from "./steering.ts";
-import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
-import { isAuxiliary } from "../piop-storage/session-records.ts";
 
 const NICKNAME = "^[A-Z][a-z0-9]{0,7}$";
 

@@ -1,5 +1,5 @@
 import { join, dirname, basename, resolve } from 'node:path';
-import { clearQueue, isQueueHeld, nextQueueItemId, savedQueue, setQueueHeld, transaction, writeQueue, type QueueRow } from '../../../resources/session-database.ts';
+import { clearQueue, isQueueHeld, nextQueueItemId, savedQueue, setQueueHeld, transaction, writeQueue, type QueueRow } from '../../../resources/session-database/index.ts';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 

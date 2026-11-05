@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { leadingCalls, skillPaths } from "./skill-calls.ts";
+import { leadingCalls, skillPaths } from "./index.ts";
 
 export default function skills(pi: ExtensionAPI) {
   pi.on("input", (event, ctx) => {

@@ -1,5 +1,5 @@
 import { MessageChannel, Worker, type MessagePort } from 'node:worker_threads';
-import { serveWorker } from '../../resources/main-thread.ts';
+import { serveWorker } from '../../resources/session-database/index.ts';
 import './main_thread_changes';
 import { closeSync, constants, fstatSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';

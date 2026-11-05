@@ -1,5 +1,5 @@
-import * as stateRecords from '../piop-storage/session-records.ts';
-import * as tables from '../session-database.ts';
+import * as stateRecords from './session-records.ts';
+import * as tables from '../session-database/index.ts';
 
 export interface IndexedChild { sessionId: string; kind: string; archived: boolean }
 

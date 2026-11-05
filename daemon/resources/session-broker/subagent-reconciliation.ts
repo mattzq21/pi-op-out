@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { branchEntries, interruptSession, sendSessionMessage, sessionSnapshot, snapshotStatus, watchSession } from "./orchestration.ts";
 import { saveRun, type SubagentRun } from "./subagent-state.ts";
-import { activeConversation } from "./conversation-location.ts";
+import { activeConversation } from "./client.ts";
 
 const assistantSchema = Schema.Object({ role: Schema.Literal("assistant"), stopReason: Schema.String(), errorMessage: Schema.Optional(Schema.String()), content: Schema.Array(Schema.Unknown()) });
 

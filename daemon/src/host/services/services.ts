@@ -1,7 +1,7 @@
 import type { FastModelSnapshot } from './fast_models';
 import { PluginService } from './plugins';
 import { ProviderService } from './providers';
-import type { Host } from './controller';
+import type { Host } from '../controller';
 
 export class HostServices {
   private providers: ProviderService;

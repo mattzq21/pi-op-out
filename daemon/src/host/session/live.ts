@@ -1,5 +1,5 @@
 import { clone, jsonEqual, kind, merge, setEntry, text } from '../json';
-import { assistantDelta } from '../payload';
+import { assistantDelta } from '../views';
 
 export class LiveOutput {
   private messages: Array<[string, any]> = [];

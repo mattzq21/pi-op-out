@@ -1,4 +1,4 @@
-import { Mutex, errorText } from '../util/sync';
+import { Mutex, errorText } from '../../util/sync';
 
 export type FastModelScanResult =
   | Readonly<{ provider: string; status: 'ok'; supportedModelIds: readonly string[]; context: string }>

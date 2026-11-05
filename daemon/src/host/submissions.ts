@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { isGoalSubmissionQueued, lookup, pruneSubmissionOutcomes, receivedSubmissions, saveSubmissionOutcome, submissionOutcome } from '../../resources/session-database.ts';
+import { isGoalSubmissionQueued, lookup, pruneSubmissionOutcomes, receivedSubmissions, saveSubmissionOutcome, submissionOutcome } from '../../resources/session-database/index.ts';
 import { CommandRefusedError } from '../pi_rejection';
 import { errorText } from '../util/sync';
 

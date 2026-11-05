@@ -6,7 +6,7 @@ import * as Registry from '../session_registry';
 import * as peers from '../peers';
 import { profileRoot } from '../host_operations';
 import { Mutex } from '../util/sync';
-import { replaceSessionGroupRows, sessionGroupRows, transaction } from '../../resources/session-database.ts';
+import { replaceSessionGroupRows, sessionGroupRows, transaction } from '../../resources/session-database/index.ts';
 import type { SessionSummary } from '../types';
 import { listDirectories } from './listing';
 import type { App } from '../app';

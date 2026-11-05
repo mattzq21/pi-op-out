@@ -15,7 +15,7 @@ const { SettingsManager } = await sdk('settings-manager');
 const { SessionManager } = await sdk('session-manager');
 const { ModelRuntime } = await sdk('model-runtime');
 process.env.PIOP_COMMAND_POLICY ??= JSON.stringify({ queued: [], disabled: {} });
-const { dispatchPrompt, installQueueProtocol } = createRequire(import.meta.url)('../../daemon/resources/runtime-bridge.ts');
+const { dispatchPrompt, installQueueProtocol } = createRequire(import.meta.url)('../../daemon/resources/pi-runtime/bridge.ts');
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
 test('a direct prompt tags its user message with the client submission', async t => {

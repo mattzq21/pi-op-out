@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import * as Lifecycle from '../../resources/session-lifecycle.ts';
+import { lifecycle as Lifecycle } from '../../resources/chat-storage/index.ts';
 import { hostOperation, profileRoot, runHostOperation, STORAGE_TIMEOUT } from '../host_operations';
 
 export interface SavedSession { sessionId: string; sessionPath: string; archived: boolean }

@@ -1,4 +1,4 @@
-import { extendedHooks } from "../../daemon/resources/hooks-extended/interface.ts";
+import { extendedHooks } from "../../daemon/resources/hooks-extended/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerContextCapSettings } from "./defaults.ts";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";

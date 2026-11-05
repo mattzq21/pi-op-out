@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { restore as restoreSaved, write as writeSaved } from '../../../resources/piop-storage/goals.ts';
+import { restoreGoal, writeGoal } from '../../../resources/storage-operations/index.ts';
 import { goalChangedPrompt, goalPrompt } from './prompts';
 import { agentObjective, type GoalPlace } from './files';
 
@@ -26,7 +26,7 @@ export class QueueGoal {
   }
 
   static restore(file: string | undefined): QueueGoal {
-    return new QueueGoal(file ? restoreSaved(file) : undefined);
+    return new QueueGoal(file ? restoreGoal(file) : undefined);
   }
 
   live(): Goal | undefined { return this.goal && this.goal.status !== 'complete' ? this.goal : undefined; }
@@ -42,7 +42,7 @@ export class QueueGoal {
 
   save(place: GoalPlace, next: Goal | null): void {
     if (next && next.sessionId !== place.sessionId) throw new Error('Goal belongs to another conversation');
-    writeSaved(place.file, place.sessionId, next);
+    writeGoal(place.file, place.sessionId, next);
     this.goal = next && { ...next };
     // The goal row owns the goal file now, so a cleanup that ran since the file was written keeps it from here on.
     if (next) agentObjective(place, next.objective);

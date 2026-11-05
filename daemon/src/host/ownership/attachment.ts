@@ -1,8 +1,8 @@
-import { flag, text } from './json';
+import { flag, text } from '../json';
 import type { Guard } from './ownership';
-import { argument, expandHome, isUuid, parseLaunchSpec, specIdentity, type LaunchSpec, type SessionLaunch } from './protocol';
-import type { Host } from './controller';
-import type { Session } from './session';
+import { argument, expandHome, isUuid, parseLaunchSpec, specIdentity, type LaunchSpec, type SessionLaunch } from '../pi';
+import type { Host } from '../controller';
+import type { Session } from '../session';
 
 export async function attach(host: Host, packet: any): Promise<any> {
   const attachment = new Attachment(host, packet);

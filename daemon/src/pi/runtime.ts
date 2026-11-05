@@ -13,7 +13,7 @@ import { installedPi } from '../pi_install';
 import { validateSessionWorkingDirectory } from '../sessions';
 import { loadAppSettings } from '../settings';
 import * as Registry from '../session_registry';
-import * as SessionLifecycle from '../storage/lifecycle.ts';
+import { lifecycle as SessionLifecycle } from '../storage';
 import { Mutex, observedElsewhere } from '../util/sync';
 import { ActiveAgents } from './active_agents';
 import type { AgentAddress, BlankSessionCleanup } from '../types';

@@ -1,9 +1,9 @@
-import { kind, text } from './json';
-import { ownershipError } from './ownership';
+import { kind, text } from '../json';
+import { ownershipError } from '../ownership';
 import { savedToolPayload } from './payload';
 import { historyOutline, olderHistory, recentHistory, turnWork } from './history_window';
 import { ToolPayload } from './tool_payload';
-import type { Host } from './controller';
+import type { Host } from '../controller';
 
 export interface ReadonlyView { id: string; path: string | null }
 

@@ -1,5 +1,5 @@
-import { flag, text, array } from './json';
-import { logFailure } from '../util/sync';
+import { flag, text, array } from '../json';
+import { logFailure } from '../../util/sync';
 
 const DISCOVERY_ERROR = 'Could not discover models. Check the API URL and connectivity from the selected host.';
 

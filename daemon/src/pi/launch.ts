@@ -8,9 +8,9 @@ import * as Ext from '../extensions';
 import * as Contributions from '../plugins';
 import { ensureDesktopSessionsDir, shellQuote } from '../process';
 import { validateRemoteHost, type AppSettings } from '../settings_types';
-import * as SessionTables from '../../resources/session-database.ts';
+import * as SessionTables from '../../resources/session-database/index.ts';
 import type { BrokerRuntime } from '../broker';
-import { QUEUE_TOOLS } from '../host/goals/commands';
+import { QUEUE_TOOLS } from '../host';
 
 export { validateRemoteHost };
 export { remoteHost, remoteLoginCommand, ssh, sshBase, userSshConfig } from './host_connection';

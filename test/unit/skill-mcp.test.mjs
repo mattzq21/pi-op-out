@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { skillMcp, SKILL_MCP_FAILED } from '../../daemon/resources/skill-mcp.ts';
+import { skillMcp, SKILL_MCP_FAILED } from '../../daemon/resources/mcp/skill-mcp.ts';
 import { EventEmitter } from 'node:events';
-import { installConnectionEvents } from '../../daemon/resources/mcp-connections.ts';
+import { installConnectionEvents } from '../../daemon/resources/mcp/connections.ts';
 
 class Connection {
   constructor(name) { this.name = name; }

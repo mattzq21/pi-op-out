@@ -5,7 +5,7 @@ import { GOAL_ENTRY_ID, type QueueState } from './state';
 import { piImages, type QueueDelivery } from './delivery';
 import { commandName } from '../../plugins';
 import { queuedCommand, withImageIds } from './submission';
-import { activateGoal, goalArgument, goalSubmission, prepareGoal } from '../goals/commands';
+import { activateGoal, goalArgument, goalSubmission, prepareGoal } from '../goals';
 
 export async function changePending(queue: QueueDelivery, gate: QueueGate, id: string, action: any, assertOwner: () => void): Promise<any> {
   const release = await gate.lock();

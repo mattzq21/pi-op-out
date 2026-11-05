@@ -1,4 +1,4 @@
-import { patchMethod } from './pi-patch.ts';
+import { patchMethod } from '../pi/index.ts';
 
 const installed = new WeakSet();
 const waitKey = Symbol.for("piop.wait-for-idle");

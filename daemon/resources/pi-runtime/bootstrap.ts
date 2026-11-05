@@ -1,14 +1,12 @@
-import { withSessionIds } from './identities.ts';
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { installSessionStorage } from './session-storage.ts';
-import { installSessionLists } from '../sdk-session-list.ts';
-import { transcriptWrites } from '../storage-channel.ts';
-import { patchMethod } from '../pi-patch.ts';
+import { installSessionLists, installSessionStorage, withSessionIds } from '../piop-storage/index.ts';
+import { storageChannel } from '../session-database/index.ts';
+import { patchMethod } from '../pi/index.ts';
 
 export async function installStorage(runtimeRoot) {
   const { SessionManager } = await import(pathToFileURL(join(runtimeRoot, "dist/core/session-manager.js")).href);
-  installSessionStorage(SessionManager, transcriptWrites);
+  installSessionStorage(SessionManager, storageChannel.transcriptWrites);
   installSessionLists(SessionManager);
   const { AgentSessionRuntime } = await import(pathToFileURL(join(runtimeRoot, "dist/core/agent-session-runtime.js")).href);
   for (const name of ["newSession", "fork", "switchSession", "importFromJsonl"]) {

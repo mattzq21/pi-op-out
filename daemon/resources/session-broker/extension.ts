@@ -1,19 +1,12 @@
-import type { AppRequest } from "../../pi-extensions/piop-define-agents/contracts.ts";
+import type { AppRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSubagents } from "./session-broker/subagents.ts";
-import { registerConversationClient } from "./session-broker/client.ts";
-import { registerOrchestration } from "./session-broker/orchestration.ts";
-import { registerInputHold } from "./session-broker/input-hold.ts";
-import { registerQueueHold } from "./session-broker/queue-hold.ts";
-import { registerPromptTools } from "./session-broker/prompt-tools.ts";
-import { registerQueueTools } from "./session-broker/queue-tools.ts";
-import { registerContextInsertions } from "./session-broker/context-insertions.ts";
-import { registerToolInventory } from "./session-broker/tool-inventory.ts";
-import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
-
-export { createChat, type NewChat } from "./piop-storage/session-file.ts";
-
-export { registerSubagents } from "./session-broker/subagents.ts";
+import { registerSubagents } from "./subagents.ts";
+import { registerConversationClient } from "./client.ts";
+import { registerOrchestration } from "./orchestration.ts";
+import { registerInputHold, registerQueueHold } from "./holds.ts";
+import { registerPromptTools, registerQueueTools, registerToolInventory } from "./tools.ts";
+import { registerContextInsertions } from "./context-insertions.ts";
+import { registerAuxiliaryChats } from "./auxiliary.ts";
 
 export default function sessionBroker(pi: ExtensionAPI) {
   const key = Symbol.for("piop.runtime-bridge");

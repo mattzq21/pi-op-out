@@ -1,8 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import * as database from './session-database.ts';
-import { onMainThread } from './main-thread.ts';
-import { folderNames, ownsFolder, uuid } from './temporary-chat-inventory.ts';
+import * as database from '../session-database/index.ts';
+import { onMainThread } from '../session-database/index.ts';
 
 function directoryExists(directory) {
   try {
@@ -172,4 +171,26 @@ function temporaryChat(request) {
   return null;
 }
 
-export { temporaryChat, cleanupDeleted };
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+
+function folderNames(id) {
+  const hex = id.replaceAll('-', '');
+
+  return Array.from({ length: hex.length - 3 }, (_, index) => hex.slice(0, index + 4));
+}
+
+function ownsFolder(root, id, directory) {
+  return uuid.test(id) && path.dirname(directory) === path.join(root, 'tmp') && folderNames(id).includes(path.basename(directory));
+}
+
+function list(root) {
+  const rows = database.temporaryChatAllocations(root);
+
+  for (const row of rows) {
+    if (!ownsFolder(root, row.session_id, row.original_path)) throw new Error('Invalid saved temporary chat directory');
+  }
+
+  return rows;
+}
+
+export { temporaryChat, cleanupDeleted, list, folderNames, ownsFolder, uuid };

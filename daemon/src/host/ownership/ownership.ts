@@ -1,17 +1,15 @@
-import * as SessionRecords from "../../resources/piop-storage/session-records.ts";
-import { sessionName } from "../../resources/session-broker/session-names.ts";
+import * as SessionRecords from "../../../resources/piop-storage/index.ts";
+import { sessionName } from "../../../resources/piop-storage/index.ts";
 import { randomUUID } from 'node:crypto';
-import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { extname, join, dirname, sep } from 'node:path';
-import * as ConversationStorage from '../storage';
-import * as SessionTables from '../../resources/session-database.ts';
-import * as ChildIndex from '../../resources/session-broker/session-child-index.ts';
-import { getProjectRepository } from '../projects';
-import * as StorageLocks from '../../resources/storage-locks.ts';
-import { flag } from './json';
-import { readHeaderLine } from './protocol';
-import { errorText } from '../util/sync';
-import * as SessionLifecycle from '../storage/lifecycle.ts';
+import { readFileSync, realpathSync } from 'node:fs';
+import { extname, join, sep } from 'node:path';
+import * as ConversationStorage from '../../storage';
+import * as SessionTables from '../../../resources/session-database/index.ts';
+import { getProjectRepository } from '../../projects';
+import * as StorageLocks from '../../../resources/chat-storage/index.ts';
+import { flag } from '../json';
+import { readHeaderLine } from '../../util/lines.ts';
+import { errorText } from '../../util/sync';
 
 export function ownershipError(): string { return 'Take ownership of this conversation before changing it'; }
 
@@ -172,7 +170,7 @@ export class ConversationOwnership {
   }
 
   chatTree(id: string): string[] {
-    return ChildIndex.tree(this.root, id).filter(member => UUID.test(member));
+    return SessionRecords.tree(this.root, id).filter(member => UUID.test(member));
   }
 
   private async transferMember(id: string, previous: any): Promise<void> {

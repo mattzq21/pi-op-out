@@ -2,33 +2,24 @@ import { join } from 'node:path';
 import { CommandRefusedError } from '../pi_rejection';
 import { refreshProjectRepository } from '../projects';
 import * as Registry from '../session_registry';
-import * as SessionTables from '../../resources/session-database.ts';
+import * as SessionTables from '../../resources/session-database/index.ts';
 import * as Settings from '../settings';
 import * as Extensions from '../extensions';
 import { recordTools, recordCommands, savedCommands } from '../inventories';
 import * as DaemonRestart from '../restart';
 import { Mutex, errorText } from '../util/sync';
-import { flag, kind, text, jsonEqual } from './json';
-import * as Agents from './agents';
-import { attach } from './attachment';
-import { previewPrompt, stopPromptPreviews } from './prompt_preview';
-import { forkFromView } from './branching';
-import { KeyedLocks } from './lock_gate';
-import { ClientViews } from './client_views';
-import { MutationGuards } from './mutation_guards';
-import { MessagePins } from './message_pins';
-import { Orchestration } from './orchestration';
-import { ConversationOwnership, ownershipError } from './ownership';
-import { clientPayload } from './payload';
+import { flag, text, jsonEqual } from './json';
+import { agents as Agents } from './services';
+import { attach, MutationGuards, ConversationOwnership, ownershipError } from './ownership';
+import { previewPrompt, stopPromptPreviews, argument, sessionSpec, serializeSpec, type SessionLaunch } from './pi';
+import type { RuntimeEvent, RuntimeEventSource } from './pi';
+import { forkFromView, Orchestration } from './chats';
+import { ClientViews, MessagePins, clientPayload, detachReadonly, readonlyCommand, readonlyPresence, ToolPayloadCache } from './views';
 import { clientEvents, type HostEvents } from './events';
 import type { AttachRequest, HostConfiguration, MutationEnd, MutationRequest, OrchestrationRequest } from './requests';
-import { argument, sessionSpec, serializeSpec, type SessionLaunch } from './protocol';
 import { drainSaves } from './queue';
-import { detachReadonly, readonlyCommand, readonlyPresence } from './readonly_views';
-import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { Session, type SessionHost, sessionCommand } from './session';
 import { SubmissionLedger } from './submissions';
-import { ToolPayloadCache } from './tool_payload';
 import type { HostServices } from './services';
 import type { BrokerCall } from '../broker';
 
@@ -550,5 +541,24 @@ export class Host implements SessionHost {
     const result = await session.finishDetach(discardBlank, preserveRunning);
     await this.releaseUnused(session);
     return result;
+  }
+}
+
+// One lock for each key. A key's lock exists only while someone holds or waits for it.
+class KeyedLocks {
+  private locks = new Map<string, Mutex>();
+
+  async lock(key: string): Promise<() => void> {
+    let found = this.locks.get(key);
+    if (!found) { found = new Mutex(); this.locks.set(key, found); }
+    const mutex = found;
+    return this.releaser(key, mutex, await mutex.lock());
+  }
+
+  private releaser(key: string, mutex: Mutex, release: () => void): () => void {
+    return () => {
+      release();
+      if (!mutex.isLocked && this.locks.get(key) === mutex) this.locks.delete(key);
+    };
   }
 }

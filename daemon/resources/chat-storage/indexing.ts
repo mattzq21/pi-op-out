@@ -1,5 +1,5 @@
-import * as stateRecords from './piop-storage/session-records.ts';
-import * as names from './session-broker/session-names.ts';
+import * as stateRecords from '../piop-storage/index.ts';
+import * as names from '../piop-storage/index.ts';
 import fs from 'node:fs';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';

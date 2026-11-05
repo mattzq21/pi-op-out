@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { build } from 'esbuild';
-import { installConnectionEvents, subscribeConnections } from '../../daemon/resources/mcp-connections.ts';
+import { installConnectionEvents, subscribeConnections } from '../../daemon/resources/mcp/connections.ts';
 import { testPi } from '../pi-install.mjs';
 
 const { root } = await testPi();
@@ -21,7 +21,7 @@ test('real MCP process restores, keeps a crashed server for the next call, and l
     const shim = join(dir, 'sdk.mjs');
     writeFileSync(shim, `import { createMcpExtension as native } from ${JSON.stringify(pathToFileURL(join(root, 'dist/index.js')).href)}; export const CONFIG_DIR_NAME = '.pi'; export const getAgentDir = () => ${JSON.stringify(join(dir, 'agent'))}; export const createMcpExtension = () => native({loadConfig: () => ({servers: [], errors: []}), logPath: ${JSON.stringify(join(dir, 'mcp.log'))}});`);
     const bundle = join(dir, 'bridge.mjs');
-    await build({ entryPoints: ['daemon/resources/mcp-bridge.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'sdk', setup(builder) {
+    await build({ entryPoints: ['daemon/resources/mcp/extension.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'sdk', setup(builder) {
       builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: shim, external: true }));
     } }] });
     const { default: bridge } = await import(pathToFileURL(bundle));

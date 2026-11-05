@@ -1,11 +1,11 @@
 import * as stateRecords from './session-records.ts';
 import { takeSessionId } from './identities.ts';
-import * as registry from '../session-registry.ts';
+import { lookup } from '../session-database/index.ts';
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 
-import { storageTarget } from "../storage-file.ts";
-import { patchMethod, requireMethods } from "../pi-patch.ts";
+import { storageTarget } from "./storage-file.ts";
+import { patchMethod, requireMethods } from "../pi/index.ts";
 import { readTranscript, sessionHeaderMatches, sessionReferenceRoot } from "./transcript-file.ts";
 
 
@@ -136,7 +136,7 @@ function persistSessionEntry(manager, entry) {
 }
 
 function registeredSessionPath(id, directory) {
-  const file = registry.sessionPath(sessionReferenceRoot(), id);
+  const file = lookup(sessionReferenceRoot(), id);
   return file && storageTarget(storagePath.dirname(file)) === directory ? file : undefined;
 }
 

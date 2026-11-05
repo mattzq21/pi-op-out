@@ -1,6 +1,6 @@
-import { isObject, kind } from './json';
-import { showsSubagents } from '../../../protocol/subagents';
-import { messageDisplay } from '../plugins';
+import { isObject, kind } from '../json';
+import { showsSubagents } from '../../../../protocol/subagents';
+import { messageDisplay } from '../../plugins';
 
 function utf16Length(value: string): number { return value.length; }
 

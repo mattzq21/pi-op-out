@@ -1,4 +1,4 @@
-import { replaceSidebarSummaries, sidebarSummaries, type SidebarSummary } from '../../resources/session-database.ts';
+import { replaceSidebarSummaries, sidebarSummaries, type SidebarSummary } from '../../resources/session-database/index.ts';
 import { parseSession, serializeSession } from '../types';
 import type { CachedSession } from './listing';
 

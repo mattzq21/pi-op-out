@@ -1,6 +1,6 @@
 import * as stateRecords from '../daemon/resources/piop-storage/session-records.ts';
-import * as sessionNames from '../daemon/resources/session-broker/session-names.ts';
-import { reserve, bind } from "../daemon/resources/session-database.ts";
+import * as sessionNames from '../daemon/resources/piop-storage/session-names.ts';
+import { reserve, bind } from "../daemon/resources/session-database/index.ts";
 import { connection } from "../daemon/resources/session-database/core.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,7 +13,7 @@ import { localStorageChannel } from './local-storage-channel.mjs';
 
 export async function buildTraceControls(outfile) {
   if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not build the Pi controls');
-  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [localStorageChannel()],
+  await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/extension.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [localStorageChannel()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
 }

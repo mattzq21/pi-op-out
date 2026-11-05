@@ -1,10 +1,9 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema } from "typebox";
 import { Parse } from "typebox/value";
-import { isAuxiliary } from "../../../daemon/resources/piop-storage/session-records.ts";
-import { sessionName } from "../../../daemon/resources/session-broker/session-names.ts";
-import { sessionControls } from "../../../daemon/resources/piop-controls/interface.ts";
-import { openAuxiliaryChat } from "../../../daemon/resources/session-broker/auxiliary.ts";
+import { isAuxiliary, sessionName } from "../../../daemon/resources/piop-storage/index.ts";
+import { sessionControls } from "../../../daemon/resources/piop-controls/index.ts";
+import { openAuxiliaryChat } from "../../../daemon/resources/session-broker/index.ts";
 
 const queuedRequestSchema = Schema.Object({ command: Schema.Literal("btw"), args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
 

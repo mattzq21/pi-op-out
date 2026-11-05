@@ -5,14 +5,14 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installConnectionEvents } from '../../daemon/resources/mcp-connections.ts';
+import { installConnectionEvents } from '../../daemon/resources/mcp/connections.ts';
 
 class Connection { constructor(name) { this.name = name; this.state = 'connected'; } changed() {} }
 installConnectionEvents(Connection);
 
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === '@earendil-works/pi-coding-agent' && context.parentURL?.endsWith('/resources/mcp-bridge.ts')) {
+    if (specifier === '@earendil-works/pi-coding-agent' && context.parentURL?.endsWith('/resources/mcp/extension.ts')) {
       return { url: 'data:text/javascript,export const CONFIG_DIR_NAME = ".pi"; export const getAgentDir = () => "/nonexistent"; export const createMcpExtension = () => pi => globalThis.__PIOP_MCP_SDK__(pi);', shortCircuit: true };
     }
 
@@ -20,7 +20,7 @@ const hooks = registerHooks({
   },
 });
 
-const { default: mcpBridge } = await import('../../daemon/resources/mcp-bridge.ts');
+const { default: mcpBridge } = await import('../../daemon/resources/mcp/extension.ts');
 
 hooks.deregister();
 

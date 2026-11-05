@@ -1,4 +1,4 @@
-import { commandInventoryJson, saveCommandInventoryJson } from '../../resources/session-database.ts';
+import { commandInventoryJson, saveCommandInventoryJson } from '../../resources/session-database/index.ts';
 import { reported } from '../pi';
 
 export interface CommandOption { value: string; label: string; description?: string }

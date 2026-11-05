@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import costLimitExtension from '../../plugins/cost/extension/index.ts';
-import hooksExtended from '../../daemon/resources/hooks-extended/index.ts';
+import hooksExtended from '../../daemon/resources/hooks-extended/extension.ts';
 
 function costLimit(pi) {
   const listeners = new Map();

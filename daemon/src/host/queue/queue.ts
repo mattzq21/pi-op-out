@@ -7,8 +7,7 @@ import { QueueRecord, track } from './record';
 import { QueueDelivery, type Execution } from './delivery';
 import { changePending, releaseTaken, takeFailed, takeNext } from './changes';
 import { enqueue, queuedCommand } from './submission';
-import { QueueGoal } from '../goals/state';
-import { goalArgument, goalCommand, queueTool, runEnded } from '../goals/commands';
+import { QueueGoal, goalArgument, goalCommand, queueTool, runEnded } from '../goals';
 import { editMessage, type MessageEdit } from './message_edit';
 
 const TIMEOUT = 'Pi command timed out';

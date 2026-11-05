@@ -5,12 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { installRuntimeStorage, removeStoredModelProvider, saveStoredModelProvider, storedModelText } from './sdk-storage.ts';
-import { claim } from './storage-channel.ts';
-import { createFastModelDiscovery } from './fast-model-discovery.ts';
-import { OCX_PROVIDER_ID, ocxProviderConfig } from '../../pi-extensions/piop-ocx-provider/ocx-provider.mjs';
+import { storageChannel } from '../session-database/index.ts';
+import { createFastModelDiscovery } from './fast-models.ts';
+import { OCX_PROVIDER_ID, ocxProviderConfig } from '../../../pi-extensions/piop-ocx-provider/ocx-provider.mjs';
 
 // The SDK takes its storage channel before it starts any program, so those programs do not get it.
-claim();
+storageChannel.claim();
 
 const reason = (error) => error instanceof Error ? error.message : String(error);
 

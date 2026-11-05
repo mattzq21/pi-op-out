@@ -31,7 +31,7 @@ test('every skill called at the start of a prompt reaches the model, and an unkn
   await modelRuntime.setRuntimeApiKey('openai', 'test-key-not-a-credential');
   const model = modelRuntime.getModels().find(model => model.provider === 'openai');
   const resourceLoader = new DefaultResourceLoader({ cwd: directory, agentDir: directory, settingsManager, noExtensions: true, noContextFiles: true, noThemes: true, noPromptTemplates: true,
-    additionalSkillPaths: [alpha, beta], additionalExtensionPaths: [resolve('daemon/resources/piop-controls/skills.ts')] });
+    additionalSkillPaths: [alpha, beta], additionalExtensionPaths: [resolve('daemon/resources/skills/extension.ts')] });
   await resourceLoader.reload();
   const { session } = await createAgentSession({ cwd: directory, agentDir: directory, modelRuntime, model, resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(), tools: [] });
   t.after(() => session.dispose());

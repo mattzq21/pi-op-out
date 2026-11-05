@@ -2,10 +2,9 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { AUXILIARY_PARENT, canFork, isCurrent } from "../piop-storage/session-records.ts";
-import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
-import { currentHost } from "../session-broker/client.ts";
-import type { AuxiliaryCopy } from "./interface.ts";
+import { AUXILIARY_PARENT, canFork, isCurrent, createChat, reserveSessionId } from "../piop-storage/index.ts";
+import { currentHost } from "../session-broker/index.ts";
+import type { AuxiliaryCopy } from "./index.ts";
 
 type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
 

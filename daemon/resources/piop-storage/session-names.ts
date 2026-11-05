@@ -1,5 +1,5 @@
-import * as database from '../session-database.ts';
-import { onMainThread } from '../main-thread.ts';
+import * as database from '../session-database/index.ts';
+import { onMainThread } from '../session-database/index.ts';
 
 const MAX_NAME_LENGTH = 50;
 

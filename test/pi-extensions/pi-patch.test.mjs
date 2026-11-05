@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { patchGetter, patchMethod, requireMethods } from '../../daemon/resources/pi-patch.ts';
-import { installAvailability } from '../../daemon/resources/runtime-availability.ts';
-import { installConnectionEvents } from '../../daemon/resources/mcp-connections.ts';
+import { patchGetter, patchMethod, requireMethods } from '../../daemon/resources/pi/patch.ts';
+import { installAvailability } from '../../daemon/resources/pi-runtime/availability.ts';
+import { installConnectionEvents } from '../../daemon/resources/mcp/connections.ts';
 
 const missing = (owner, name) => new RegExp(`^Error: Pi has no (method|property) ${owner}\\.${name}, which piop uses\\. Update piop's Pi changes for this Pi version\\.$`);
 

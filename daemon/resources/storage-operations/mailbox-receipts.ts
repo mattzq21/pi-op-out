@@ -1,4 +1,4 @@
-import * as database from '../session-database.ts';
+import * as database from '../session-database/index.ts';
 
 // The delivery IDs of the agent mail that the transcript of a chat holds. The transcript writes keep it,
 // inside their own transactions.

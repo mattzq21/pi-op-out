@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { closeSync, futimesSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, futimesSync, openSync, readFileSync, constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Type, type Static } from 'typebox';
 import { Check } from 'typebox/value';
 import { DEVELOPMENT, PROJECT_DIR, PROTOCOL_VERSION, STORAGE_DIRECTORY } from '../config';
 import { homeDir } from '../environment';
 import { ensurePrivateDir, setPrivateFilePermissions } from '../private_fs';
-import * as records from '../../resources/application-records.ts';
+import { records } from '../../resources/session-database/index.ts';
 import * as restartStorage from '../restart_storage';
 import { tryLockFileSync, type FileLock } from '../util/flock';
 import { extensionBase } from '../extensions';
@@ -89,7 +89,6 @@ export function signal(): void {
 function lockFreed(): { freed: Promise<void>; cancel: () => void } {
   const source = `
 import { dlopen, read } from 'bun:ffi';
-import { constants, openSync } from 'node:fs';
 const library = dlopen(${JSON.stringify(libcName())}, {
   flock: { args: ['i32', 'i32'], returns: 'i32' },
   __errno_location: { args: [], returns: 'ptr' },

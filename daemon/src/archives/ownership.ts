@@ -3,7 +3,7 @@ import { sessionIdentity } from '../pi';
 import { localHost } from '../local_host';
 import type { Host, MutationRequest } from '../host';
 import type { App } from '../app';
-import * as SessionLifecycle from '../storage/lifecycle.ts';
+import { lifecycle as SessionLifecycle } from '../storage';
 
 export class MutationGuard {
   private finished = false;

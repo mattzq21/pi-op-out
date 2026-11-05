@@ -1,3 +1,4 @@
+import { closeSync, openSync, readSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import type { Readable } from 'node:stream';
 
@@ -54,4 +55,21 @@ async function* lines(input: Readable): AsyncGenerator<string> {
   yield* ready;
 }
 
-export { readLines, lines };
+// The first line of the file path, with its LF, read without the rest of the file. At most limit bytes.
+function readHeaderLine(path: string, limit = 64 * 1024): string {
+  const fd = openSync(path, 'r');
+  try {
+    const buffer = Buffer.alloc(limit);
+    let length = 0;
+    while (length < limit) {
+      const count = readSync(fd, buffer, length, limit - length, null);
+      if (count === 0) break;
+      const newline = buffer.subarray(length, length + count).indexOf(10);
+      length += count;
+      if (newline >= 0) { length = length - count + newline + 1; break; }
+    }
+    return buffer.subarray(0, length).toString('utf8');
+  } finally { closeSync(fd); }
+}
+
+export { readLines, lines, readHeaderLine };

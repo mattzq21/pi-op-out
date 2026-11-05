@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import * as database from '../session-database.ts';
-import { onMainThread } from '../main-thread.ts';
+import * as database from '../session-database/index.ts';
+import { onMainThread } from '../session-database/index.ts';
 
 // A goal objective longer than LIMIT reaches the agent as one file, named by the digest of its text. The goal rows own
 // these files: a file stays while a goal row has its objective, and is written again from that row when it is missing.

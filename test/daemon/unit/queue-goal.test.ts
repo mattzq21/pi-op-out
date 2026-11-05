@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { SessionQueue } from '../../../daemon/src/host/queue/queue';
 import { QueueGoal } from '../../../daemon/src/host/goals/state';
 import { connection } from '../../../daemon/resources/session-database/core.ts';
-import * as goals from '../../../daemon/resources/piop-storage/goals.ts';
+import * as goals from '../../../daemon/resources/storage-operations/goals.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'piop-queue-goal-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

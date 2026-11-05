@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import * as storageDatabase from './session-database.ts';
-import { onMainThread } from './main-thread.ts';
+import * as storageDatabase from '../../daemon/resources/session-database/index.ts';
+import { onMainThread } from '../../daemon/resources/session-database/index.ts';
 
 // The agent definitions in the storage database: the global ones, and those of each project. Only the daemon's main
 // thread saves them. The agent loader runs in a worker thread and asks for each change.

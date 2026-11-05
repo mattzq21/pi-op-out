@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { onMainThread, currentCaller, linkedWorker } from './main-thread.ts';
+import { onMainThread, currentCaller, linkedWorker } from '../session-database/index.ts';
 
 export interface LockOptions { shared?: boolean; wait?: boolean; timeoutMs?: number; busy?: string }
 

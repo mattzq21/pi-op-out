@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { onMainThread, holdTransaction } from '../main-thread.ts';
-import * as StorageChannel from '../storage-channel.ts';
-import * as MainThread from '../main-thread.ts';
+import { onMainThread, holdTransaction } from './main-thread.ts';
+import * as StorageChannel from './storage-channel.ts';
+import * as MainThread from './main-thread.ts';
 import Crypto from 'node:crypto';
 
 // The shared connection of this process. Never close it. Only the modules in session-database/ and tests use it.
@@ -11,7 +11,7 @@ export type Connection = Omit<DatabaseSync, "close">;
 
 
 // The core of the storage database: its file, schema, connection and transactions. Only the modules in this folder use
-// it; all other code uses the named operations of session-database.ts.
+// it; all other code uses the named operations of index.ts.
 
 const DATABASE_NAME = 'sessions.sqlite';
 

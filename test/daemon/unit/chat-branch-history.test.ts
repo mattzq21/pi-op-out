@@ -17,15 +17,15 @@ beforeAll(async () => {
   process.env.PIOP_STORAGE_DIRECTORY = relative(realpathSync(homedir()), root);
   modules = {
     history: await import('../../../daemon/src/host_operations/branch_history'),
-    newChats: require('../../../daemon/resources/piop-storage/new-chats.ts'),
-    database: require('../../../daemon/resources/session-database.ts'),
+    newChats: require('../../../daemon/resources/storage-operations/new-chats.ts'),
+    database: require('../../../daemon/resources/session-database/index.ts'),
     core: require('../../../daemon/resources/session-database/core.ts'),
-    goalFiles: require('../../../daemon/resources/piop-storage/goal-files.ts'),
-    goals: require('../../../daemon/resources/piop-storage/goals.ts'),
+    goalFiles: require('../../../daemon/resources/storage-operations/goal-files.ts'),
+    goals: require('../../../daemon/resources/storage-operations/goals.ts'),
     records: require('../../../daemon/resources/piop-storage/session-records.ts'),
-    names: require('../../../daemon/resources/session-broker/session-names.ts'),
-    lifecycle: require('../../../daemon/resources/session-lifecycle.ts'),
-    locks: require('../../../daemon/resources/storage-locks.ts'),
+    names: require('../../../daemon/resources/piop-storage/session-names.ts'),
+    lifecycle: require('../../../daemon/resources/chat-storage/lifecycle.ts'),
+    locks: require('../../../daemon/resources/chat-storage/locks.ts'),
   };
 });
 afterAll(() => {

@@ -7,9 +7,9 @@ let home: string;
 let root: string;
 let folder: string;
 let previousStorage: string | undefined;
-const database = require('../../daemon/resources/session-database.ts');
-const newChats = require('../../daemon/resources/piop-storage/new-chats.ts');
-const lifecycle = require('../../daemon/resources/session-lifecycle.ts');
+const database = require('../../daemon/resources/session-database/index.ts');
+const newChats = require('../../daemon/resources/storage-operations/new-chats.ts');
+const lifecycle = require('../../daemon/resources/chat-storage/lifecycle.ts');
 const core = require('../../daemon/resources/session-database/core.ts');
 
 beforeAll(() => {

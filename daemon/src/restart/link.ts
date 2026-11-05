@@ -1,7 +1,7 @@
 import { connect } from 'node:net';
 import type { ChildProcess } from 'node:child_process';
 import type { Duplex } from 'node:stream';
-import { readLines } from '../../resources/lf-lines.ts';
+import { readLines } from '../util/lines.ts';
 
 // The pipe between the processes of a daemon restart: the daemon and its restart coordinator, and the coordinator and
 // the new daemon. Each side sends JSON lines. The pipe closes when either process ends, so no side waits for a dead one.

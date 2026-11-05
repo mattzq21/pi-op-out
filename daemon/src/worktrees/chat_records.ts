@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import * as database from './session-database.ts';
-import type { ChatWorktreeRecord, NewChatWorktree } from '../src/worktrees/records';
+import * as database from '../../resources/session-database/index.ts';
+import type { ChatWorktreeRecord, NewChatWorktree } from './records';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const CHAT_ID = new RegExp('^' + UUID + '$');

@@ -8,10 +8,10 @@ import { localLaunchDirectory, remoteDirectoryPath, remoteHost, ssh, reserveSess
 import { output, shellQuote } from '../process';
 import { inspectSessionProjectsWith, ProjectMetadataCache, refreshProjectRepository } from '../projects';
 import * as sidebarStorage from './sidebar';
-import * as WorktreeRecords from '../../resources/chat-worktree-records.ts';
+import { list as worktreeRecords } from '../worktrees';
 import { loadAppSettings } from '../settings';
 import type { RemoteHost } from '../settings_types';
-import { localSessionRows } from '../../resources/session-database.ts';
+import { localSessionRows } from '../../resources/session-database/index.ts';
 import { Mutex, isMissing } from '../util/sync';
 import * as peers from '../peers';
 import type { SessionSummary } from '../types';
@@ -105,7 +105,7 @@ export async function listLocalSessions(index: SessionIndexRuntime, root: string
 }
 
 function attachWorktreeRepositories(sessions: SessionSummary[], profile: string): void {
-  const records = WorktreeRecords.list(profile).sort((a, b) => Number(a.state === 'archived') - Number(b.state === 'archived'));
+  const records = worktreeRecords(profile).sort((a, b) => Number(a.state === 'archived') - Number(b.state === 'archived'));
   for (const session of sessions) {
     const record = records.find(item => session.cwd === item.worktree || session.cwd.startsWith(item.worktree + '/'));
     if (record) session.worktreeRepository = record.repository;

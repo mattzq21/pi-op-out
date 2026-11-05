@@ -13,3 +13,7 @@ export function storageOperation(name: unknown) {
   if (!operations || !Object.hasOwn(operations, operation)) throw new Error("Unknown storage request: " + String(name));
   return { area, name: operation, run: operations[operation as keyof typeof operations] };
 }
+
+export { fork as forkChat } from "./new-chats.ts";
+export { bySubmission as goalBySubmission, restore as restoreGoal, write as writeGoal } from "./goals.ts";
+export { agentText as goalAgentText, collect as collectGoalFiles } from "./goal-files.ts";

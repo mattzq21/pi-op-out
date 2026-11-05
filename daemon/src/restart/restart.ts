@@ -6,7 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import * as endpoint from '../service';
 import * as artifacts from './artifacts';
 import * as restartStorage from '../restart_storage';
-import * as records from '../../resources/application-records.ts';
+import { records } from '../../resources/session-database/index.ts';
 import * as daemonLog from '../service';
 import { localHost } from '../local_host';
 import * as peers from '../peers';

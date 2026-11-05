@@ -12,10 +12,10 @@ import * as Records from '../../daemon/src/worktrees/records';
 import * as History from '../../daemon/src/host_operations/branch_history';
 import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/projects/repositories';
 
-const database = require('../../daemon/resources/session-database.ts');
+const database = require('../../daemon/resources/session-database/index.ts');
 const core = require('../../daemon/resources/session-database/core.ts');
-const newChats = require('../../daemon/resources/piop-storage/new-chats.ts');
-const goals = require('../../daemon/resources/piop-storage/goals.ts');
+const newChats = require('../../daemon/resources/storage-operations/new-chats.ts');
+const goals = require('../../daemon/resources/storage-operations/goals.ts');
 
 const daemons: TestDaemon[] = [];
 afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.stop(); }, 60000);

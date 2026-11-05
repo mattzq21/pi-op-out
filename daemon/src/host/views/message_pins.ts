@@ -1,5 +1,5 @@
-import { text } from './json';
-import type { HostEvents } from './events';
+import { text } from '../json';
+import type { HostEvents } from '../events';
 
 export interface MessagePin { entryId: string; role: 'prompt' | 'response'; text: string; timestamp: number }
 

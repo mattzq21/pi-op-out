@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
-const localTranscriptWrites = () => require('../daemon/resources/piop-storage/transcript-writes.ts').localTranscriptWrites();
-const storageOperation = name => require('../daemon/resources/piop-storage/storage-operations.ts').storageOperation(name);
+const localTranscriptWrites = () => require('../daemon/resources/storage-operations/transcript-writes.ts').localTranscriptWrites();
+const storageOperation = name => require('../daemon/resources/storage-operations/index.ts').storageOperation(name);
 const sessionReferenceRoot = () => require('../daemon/resources/piop-storage/transcript-file.ts').sessionReferenceRoot();
 
 // Pi's storage channel for tests and fixtures that run Pi's code without the daemon: the daemon's storage operations

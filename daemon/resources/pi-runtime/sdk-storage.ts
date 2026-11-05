@@ -1,12 +1,12 @@
-import * as storageDatabase from './session-database.ts';
+import * as storageDatabase from '../session-database/index.ts';
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 import { homedir as storageHome } from "node:os";
 import { isDeepStrictEqual as sameStorageValue } from "node:util";
 import { pathToFileURL as storageFileUrl } from "node:url";
 
-import { patchMethod, requireMethods } from './pi-patch.ts';
-import { call } from './storage-channel.ts';
+import { patchMethod, requireMethods } from '../pi/index.ts';
+import { storageChannel } from '../session-database/index.ts';
 
 // Pi keeps reading its settings and sign-in files itself. It asks the daemon to save each change, through its storage channel.
 
@@ -78,7 +78,7 @@ function readPiFile(path) {
 }
 
 function publishPiFile(path, body) {
-  call("settings.publishFile", { path: storagePath.resolve(path), body });
+  storageChannel.call("settings.publishFile", { path: storagePath.resolve(path), body });
 }
 
 // Pi's sign-in, model and MCP sign-in files. Pi still takes its own lock on the file, so a sign-in refresh in one Pi
@@ -190,7 +190,7 @@ function withStoredSettings(path, operation) {
     const current = storageDatabase.sdkSettingsText(sessionReferenceRoot(), key);
     const next = operation(current);
 
-    if (next === undefined || call("settings.replace", { path: key, previous: current ?? null, next })) return;
+    if (next === undefined || storageChannel.call("settings.replace", { path: key, previous: current ?? null, next })) return;
 
     if (attempt === 20) throw new Error("Pi settings kept changing while they were saved. Try again.");
   }

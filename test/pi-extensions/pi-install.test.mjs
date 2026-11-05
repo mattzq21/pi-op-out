@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { installName, installPi } = require('../../daemon/resources/pi-install.ts');
-const { SUPPORTED_PI_VERSION } = require('../../daemon/resources/pi-runtime.ts');
+const { installName, installPi } = require('../../daemon/resources/pi/install.ts');
+const { SUPPORTED_PI_VERSION } = require('../../daemon/resources/pi/install.ts');
 
 const manifest = '{"name":"piop-pi","dependencies":{"@earendil-works/pi-coding-agent":"' + SUPPORTED_PI_VERSION + '"}}';
 const lockfile = '{"lockfileVersion":1}';

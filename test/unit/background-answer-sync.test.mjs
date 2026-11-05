@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createRoot } from 'solid-js';
 import { installDom } from '../dom.mjs';
 import { useChatSession } from '../../clients/ui/lib/useChatSession.ts';
-import { recentHistory } from '../../daemon/src/host/history_window.ts';
+import { recentHistory } from '../../daemon/src/host/views/history_window.ts';
 
 const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 2, pendingMessageCount: 0 };
 const messages = [{ role: 'user', content: 'Question', timestamp: 100 }, { role: 'assistant', content: [{ type: 'text', text: 'Answer' }], stopReason: 'stop', timestamp: 101 }];

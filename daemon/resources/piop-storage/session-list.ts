@@ -1,10 +1,10 @@
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import * as database from "./session-database.ts";
-import { sessionName } from "./session-broker/session-names.ts";
-import { sessionHeaderMatches } from "./piop-storage/transcript-file.ts";
-import { patchMethod, requireMethods } from "./pi-patch.ts";
+import * as database from "../session-database/index.ts";
+import { sessionName } from "./session-names.ts";
+import { sessionHeaderMatches } from "./transcript-file.ts";
+import { patchMethod, requireMethods } from "../pi/index.ts";
 
 function rootDirectory(): string {
   return realpathSync(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"));

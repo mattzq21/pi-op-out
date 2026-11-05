@@ -1,7 +1,7 @@
 import { clone, text } from '../json';
 import * as Contributions from '../../plugins';
 import { enqueue } from './submission';
-import { goalArgument } from '../goals/commands';
+import { goalArgument } from '../goals';
 import type { QueueDelivery } from './delivery';
 import type { QueueGate } from './gate';
 

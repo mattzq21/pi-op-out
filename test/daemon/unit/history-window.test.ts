@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { historyOutline, olderHistory, recentHistory, turnWork } from '../../../daemon/src/host/history_window';
+import { historyOutline, olderHistory, recentHistory, turnWork } from '../../../daemon/src/host/views/history_window';
 
 function chat(turns: number, reply: string) {
   const entries: any[] = [];

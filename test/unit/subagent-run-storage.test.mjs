@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import * as database from '../../daemon/resources/session-database.ts';
+import * as database from '../../daemon/resources/session-database/index.ts';
 import { connection } from '../../daemon/resources/session-database/core.ts';
-import { OPERATIONS } from '../../daemon/resources/piop-storage/subagent-run-store.ts';
+import { OPERATIONS } from '../../daemon/resources/storage-operations/subagent-run-store.ts';
 
 test('subagent status updates use one SQL row with the current task', t => {
   const root = mkdtempSync(join(tmpdir(), 'piop-run-state-'));

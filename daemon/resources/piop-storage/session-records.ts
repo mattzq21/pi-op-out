@@ -1,5 +1,5 @@
-import * as database from '../session-database.ts';
-import { onMainThread } from '../main-thread.ts';
+import * as database from '../session-database/index.ts';
+import { onMainThread } from '../session-database/index.ts';
 import { randomUUID } from 'node:crypto';
 
 interface StateRecord { after: string | null; entry: { type: string; id: string; customType?: string; [key: string]: unknown } }

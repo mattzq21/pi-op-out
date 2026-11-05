@@ -1,4 +1,4 @@
-import { patchGetter, patchMethod } from './pi-patch.ts';
+import { patchGetter, patchMethod } from '../pi/index.ts';
 
 const pullState = Symbol("piop.queue-pull");
 

@@ -1,6 +1,6 @@
 import { clone, jsonEqual, text } from '../json';
 import { errorText } from '../../util/sync';
-import type { GoalPlace } from '../goals/files';
+import type { GoalPlace } from '../goals';
 import type { QueueOffer, QueueState } from './state';
 import type { QueueRecord } from './record';
 

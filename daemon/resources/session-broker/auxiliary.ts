@@ -1,5 +1,5 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { auxiliaryParent } from "../piop-storage/session-records.ts";
+import { auxiliaryParent } from "../piop-storage/index.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { currentHost } from "./client.ts";

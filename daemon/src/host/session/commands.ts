@@ -1,7 +1,7 @@
 import { kind, text } from '../json';
-import * as Branching from '../branching';
+import * as Branching from '../chats';
 import * as Contributions from '../../plugins';
-import { goalSubmission } from '../goals/commands';
+import { goalSubmission } from '../goals';
 import { messageEdit } from '../queue';
 import type { Host } from '../controller';
 import type { Session } from './session';

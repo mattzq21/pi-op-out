@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import * as storageDatabase from "../../daemon/resources/session-database.ts";
-import { call } from "../../daemon/resources/storage-channel.ts";
-import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "../../daemon/resources/agent-definitions-writes.ts";
+import * as storageDatabase from "../../daemon/resources/session-database/index.ts";
+import { storageChannel } from "../../daemon/resources/session-database/index.ts";
+import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "./definitions-storage.ts";
 import { execFile } from "node:child_process";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -199,7 +199,7 @@ function snapshotRoot(path: string) { return dirname(dirname(dirname(path))); }
 // The daemon saves the snapshot in the storage of this Pi.
 function savePromptSnapshot(digest: string, contents: string) {
   verifiedPrompt(contents, digest);
-  call("settings.promptSnapshot", { digest, contents });
+  storageChannel.call("settings.promptSnapshot", { digest, contents });
 }
 
 export async function readPrompt(path: string): Promise<string> {

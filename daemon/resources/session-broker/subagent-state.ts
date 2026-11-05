@@ -3,11 +3,10 @@ import { Type as Schema } from "typebox";
 import { Check } from "typebox/value";
 import { currentHost } from "./client.ts";
 import { sendAgentMailboxes } from "./orchestration.ts";
-import { persistSubagentRun, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
-import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-identity.ts";
-import { AUXILIARY_PARENT } from "../piop-storage/session-records.ts";
+import { AUXILIARY_PARENT } from "../piop-storage/index.ts";
+import { persistSubagentRun, savedSubagentRuns, runSchema, resultNotificationId, type SubagentRun } from "../agent-records/index.ts";
 
-export { runSchema, type SubagentRun } from "./subagent-identity.ts";
+export { runSchema, type SubagentRun } from "../agent-records/index.ts";
 
 
 export const SUBAGENT_PARENT = AUXILIARY_PARENT;

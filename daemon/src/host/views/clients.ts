@@ -1,6 +1,6 @@
-import { jsonEqual } from './json';
-import type { ReadonlyView } from './readonly_views';
-import type { Session } from './session';
+import { jsonEqual } from '../json';
+import type { ReadonlyView } from './readonly';
+import type { Session } from '../session';
 
 // What the Host keeps about each client view. A runtime ID is one client window, or one hidden helper, that shows one conversation.
 // - Its request is what the client asked for when it attached.

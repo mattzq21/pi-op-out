@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 import { build } from 'esbuild';
-import * as database from '../daemon/resources/session-database.ts';
+import * as database from '../daemon/resources/session-database/index.ts';
 import { testPi } from './pi-install.mjs';
 
 const { root } = await testPi();
@@ -31,7 +31,7 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
   await build({ entryPoints: ['test/session-storage-entry.mjs'], outfile: storage, bundle: true, platform: 'node', format: 'esm', banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" } });
   const shim = join(dir, 'sdk.mjs');
   writeFileSync(shim, `import {createMcpExtension as native} from ${JSON.stringify(pathToFileURL(join(root,'dist/index.js')).href)}; export const CONFIG_DIR_NAME='.pi'; export const getAgentDir=()=>${JSON.stringify(join(dir,'agent'))}; export const createMcpExtension=()=>native({loadConfig:()=>({servers:[],errors:[]}), logPath:${JSON.stringify(join(dir,'mcp.log'))}});`);
-  await build({ entryPoints: ['daemon/resources/mcp-bridge.ts'], outfile: bridge, bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'sdk', setup(b) { b.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: shim, external: true })); } }] });
+  await build({ entryPoints: ['daemon/resources/mcp/extension.ts'], outfile: bridge, bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'sdk', setup(b) { b.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: shim, external: true })); } }] });
   const area = join(dir, '.piop'); mkdirSync(join(area, 'sessions'), { recursive: true });
   const id = database.reserve(area), file = join(area, 'sessions', `test_${id}.jsonl`);
   database.bind(area, id, file);

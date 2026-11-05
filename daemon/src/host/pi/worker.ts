@@ -1,17 +1,15 @@
-import { reserve } from '../session_registry';
-import { readLines } from '../../resources/lf-lines.ts';
+import { reserve } from '../../session_registry';
+import { readLines } from '../../util/lines.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Duplex } from 'node:stream';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
-import { ensurePrivateDir } from '../private_fs';
-import { CommandRefusedError } from '../pi_rejection';
-import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../process';
+import { CommandRefusedError } from '../../pi_rejection';
+import { descendantProcesses, killVerified, newProcessTag, PROCESS_TAG, signalProcessGroup, taggedProcesses } from '../../process';
 import { kind, type LaunchSpec, wireCommand } from './protocol';
-import { isRuntimeEvent, parseRuntimeEvent, runtimeEventResult, type RuntimeEvent } from './runtime_events';
-import type { PiStorage } from './pi_storage';
-import { observedElsewhere } from '../util/sync';
+import type { PiStorage } from './storage';
+import { observedElsewhere } from '../../util/sync';
+import { isObject } from '../json';
 
 export interface Request { command: any; requestType: string; snapshotState: any }
 
@@ -240,4 +238,22 @@ export class RuntimeWorker {
     if (!this.exited || this.closedFlag) return;
     await new Promise<void>(resolve => { if (this.closedFlag) resolve(); else this.closedWaiters.push(resolve); });
   }
+}
+
+export interface RuntimeEvent { id: string; name: string; data: Record<string, unknown> }
+
+export interface RuntimeEventSource { sessionKey: string; identity: string; cwd: string | null }
+
+export function isRuntimeEvent(value: unknown): boolean { return kind(value) === 'piop_runtime_event'; }
+
+export function parseRuntimeEvent(value: any): RuntimeEvent {
+  if (typeof value?.id !== 'string' || !value.id) throw new Error('Runtime event has no ID');
+  if (typeof value.name !== 'string' || !value.name) throw new Error('Runtime event ' + value.id + ' has no name');
+  if (!isObject(value.data)) throw new Error('Runtime event ' + value.name + ' has no data');
+  return { id: value.id, name: value.name, data: value.data };
+}
+
+export function runtimeEventResult(id: string, error?: string, data?: unknown): any {
+  if (error !== undefined) return { type: 'piop_runtime_event_result', id, error };
+  return data === undefined ? { type: 'piop_runtime_event_result', id } : { type: 'piop_runtime_event_result', id, data };
 }

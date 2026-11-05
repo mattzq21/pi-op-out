@@ -1,30 +1,24 @@
-import { canFork } from '../../../resources/piop-storage/session-records.ts';
-import { sessionName } from '../../../resources/session-broker/session-names.ts';
+import { canFork, sessionName } from '../../../resources/piop-storage/index.ts';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { getProjectRepository } from '../../projects';
 import { Mutex, errorText } from '../../util/sync';
 import { array, clone, flag, kind, setEntry, text } from '../json';
-import { historyOutline, olderHistory, recentHistory, turnWork } from '../history_window';
-import { savedToolPayload } from '../payload';
-import { readHeaderLine, argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch } from '../protocol';
+import { historyOutline, olderHistory, recentHistory, turnWork, savedToolPayload, ToolPayload, type ToolPayloadCache } from '../views';
+import { argument, prepareSpec, specIdentity, type LaunchSpec, type SessionLaunch, RuntimeWorker, type Request, type WorkerObserver, PiStorage } from '../pi';
+import type { RuntimeEvent, RuntimeEventSource } from '../pi';
+import { readHeaderLine } from '../../util/lines.ts';
 import { SessionQueue, QueueStorage, savedUserMessages } from '../queue';
 import type { Execution } from '../queue';
 import { SessionDialogs, interactive } from './dialogs';
 import { IdleStop } from './idle';
 import { LiveOutput } from './live';
 import { SessionSettings } from './settings';
-import { PromptErrors } from '../prompt_errors';
+import { PromptErrors } from './prompt_errors';
 import { CommandRefusedError } from '../../pi_rejection';
-import { ToolPayload, type ToolPayloadCache } from '../tool_payload';
-import type { RuntimeEvent, RuntimeEventSource } from '../runtime_events';
-import { RuntimeWorker, type Request, type WorkerObserver } from '../worker';
-import { QueueGoal } from '../goals/state';
-import { GOAL_COMMAND } from '../goals/commands';
-import { agentObjective, goalPreparationView, type GoalPlace } from '../goals/files';
+import { QueueGoal, GOAL_COMMAND, agentObjective, goalPreparationView, type GoalPlace } from '../goals';
 import type { BrokerAnswer, BrokerCall } from '../../broker';
 import type { HostEvents } from '../events';
-import { PiStorage } from '../pi_storage';
 import { setupMessage, setupRecorded, setupView, stopSetup, watchSetup, type Setup } from '../../worktrees';
 
 export interface SessionHost {

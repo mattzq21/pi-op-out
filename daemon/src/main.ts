@@ -4,9 +4,9 @@ import { installFailureHandlers, runDaemon } from './lifecycle';
 import { ALREADY_RUNNING_EXIT_CODE, DaemonAlreadyRunningError } from './service';
 import { PROCESS_TAG } from './process';
 import { errorText } from './util/sync';
-import { isHostOperationWorker, runHostOperationWorker } from './host_operations/worker';
+import { isHostOperationWorker, runHostOperationWorker } from './host_operations';
 import { STORAGE_DIRECTORY } from './config';
-import { readOnlyStorage } from '../resources/session-database.ts';
+import { readOnlyStorage } from '../resources/session-database/index.ts';
 import { stateRecords } from './plugins';
 
 // The modes that run the daemon. Each takes the daemon lock before it changes the storage.

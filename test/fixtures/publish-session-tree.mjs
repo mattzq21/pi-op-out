@@ -6,8 +6,8 @@ import { randomUUID } from 'node:crypto';
 const { home, cwd, folder } = JSON.parse(readFileSync(0, 'utf8'));
 process.env.HOME = home; delete process.env.PIOP_STORAGE_DIRECTORY;
 {
-  const { create } = await import('../../daemon/resources/piop-storage/new-chats.ts');
-  const { reserve } = await import("../../daemon/resources/session-database.ts");
+  const { create } = await import('../../daemon/resources/storage-operations/new-chats.ts');
+  const { reserve } = await import("../../daemon/resources/session-database/index.ts");
   const sessions = join(home, '.piop', 'sessions', folder);
   await mkdir(sessions, { recursive: true });
   const publish = async (name, parent) => {

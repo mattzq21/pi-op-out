@@ -1,4 +1,5 @@
-import * as database from './session-database.ts';
+import { databaseExists, transaction } from './core.ts';
+import { applicationSetting, createApplicationSetting, removeApplicationSetting, saveApplicationSetting } from './settings.ts';
 import { onMainThread } from './main-thread.ts';
 
 export type RecordName = 'settings' | 'agent-definitions' | 'daemon' | 'daemon-id' | 'debug-mobile' | 'debug-mobile-identity' | 'plugins';
@@ -19,12 +20,12 @@ function checked(name: string): string {
   return name;
 }
 
-function get(root: string, name: string): Buffer | undefined { return database.applicationSetting(root, checked(name)); }
+function get(root: string, name: string): Buffer | undefined { return applicationSetting(root, checked(name)); }
 
 // The record name of root, or undefined when it or the storage database does not exist.
 function read(root: string, name: RecordName): Buffer | undefined {
   checked(name);
-  if (!database.databaseExists(root)) return undefined;
+  if (!databaseExists(root)) return undefined;
   return get(root, name);
 }
 
@@ -35,25 +36,25 @@ function readJson(root: string, name: RecordName): any {
 }
 
 const save = onMainThread('application-records.save', (root: string, name: RecordName, value: Buffer | string): void => {
-  database.saveApplicationSetting(root, checked(name), Buffer.from(value));
+  saveApplicationSetting(root, checked(name), Buffer.from(value));
 });
 
 // Removes the record only if it still has the value expected. True when it was removed.
 const removeIfEqual = onMainThread('application-records.removeIfEqual', (root: string, name: RecordName, expected: Buffer | string): boolean => {
-  return database.transaction(root, 'IMMEDIATE', () => {
+  return transaction(root, 'IMMEDIATE', () => {
     const current = get(root, name);
     if (!current || !current.equals(Buffer.from(expected))) return false;
-    database.removeApplicationSetting(root, name);
+    removeApplicationSetting(root, name);
     return true;
   });
 });
 
 // The record, saved first with the value initial when it does not exist.
 const created = onMainThread('application-records.readOrCreate', (root: string, name: RecordName, initial: Buffer | string): Buffer => {
-  return database.transaction(root, 'IMMEDIATE', () => {
+  return transaction(root, 'IMMEDIATE', () => {
     const saved = get(root, name);
     if (saved) return saved;
-    database.createApplicationSetting(root, name, Buffer.from(initial));
+    createApplicationSetting(root, name, Buffer.from(initial));
     return Buffer.from(initial);
   });
 });

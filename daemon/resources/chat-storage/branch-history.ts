@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import * as stateRecords from './piop-storage/session-records.ts';
-import * as database from './session-database.ts';
-import * as newChats from './piop-storage/new-chats.ts';
-import * as names from './session-broker/session-names.ts';
+import * as stateRecords from '../piop-storage/index.ts';
+import * as database from '../session-database/index.ts';
+import { forkChat } from '../storage-operations/index.ts';
+import * as names from '../piop-storage/index.ts';
 import { readSessionHeader } from './session-header.ts';
-import { onMainThread } from './main-thread.ts';
-import * as lifecycle from './session-lifecycle.ts';
+import { onMainThread } from '../session-database/index.ts';
+import * as lifecycle from './lifecycle.ts';
 
 export interface BranchHistoryRequest {
   root: string;
@@ -108,7 +108,7 @@ async function publishBranchHistory(request: BranchHistoryRequest): Promise<Bran
   const name = request.keepName === true ? sourceName : branchName(sourceName, selected);
 
   try {
-    newChats.fork(root, { path: sessionPath, entries: [header, ...selected, ...current.values()], ...name === undefined ? {} : { name }, goalSource: source.id,
+    forkChat(root, { path: sessionPath, entries: [header, ...selected, ...current.values()], ...name === undefined ? {} : { name }, goalSource: source.id,
       source: source.id, ...selected.length ? { cutoff: selected.at(-1).timestamp } : {}, cwd: { from: source.cwd, to: cwd } });
   } catch (error) {
     try { await discardBranchHistory(root, sessionId, sessionPath); }

@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import type { AppRequest } from '../../pi-extensions/piop-define-agents/contracts.ts';
+import type { AppRequest } from '../../../pi-extensions/piop-define-agents/contracts.ts';
 
 type QueuePromptScope = { session; queueId?: string; submissionId?: string; tagged: boolean };
 
@@ -19,16 +19,15 @@ const wrappedAgents = new WeakSet();
 
 const wrappedManagers = new WeakSet();
 
-import { installReloadLifecycle, afterReload, serializeConfiguration, runtimeRequest } from './runtime-configuration.ts';
+import { installReloadLifecycle, afterReload, serializeConfiguration, runtimeRequest } from './configuration.ts';
 
 import { queuePull } from './queue-pull.ts';
 
-import { supportedPi } from './pi-runtime.ts';
+import { supportedPi, patchMethod, requireMethods } from '../pi/index.ts';
 
-import { patchMethod, requireMethods } from './pi-patch.ts';
-import * as StorageChannel from './storage-channel.ts';
-import * as McpConnections from './mcp-connections.ts';
-import * as RuntimeAvailability from './runtime-availability.ts';
+import { storageChannel as StorageChannel } from '../session-database/index.ts';
+import * as McpConnections from '../mcp/index.ts';
+import * as RuntimeAvailability from './availability.ts';
 
 // Pi takes its storage channel before it starts any program, so those programs do not get it.
 StorageChannel.claim();
@@ -735,7 +734,7 @@ async function main() {
   const [executable, ...args] = process.argv.slice(2);
   const { root } = supportedPi(executable);
   const { installRuntimeStorage } = await import('./sdk-storage.ts');
-  const { installStorage } = await import('./piop-storage/bootstrap.ts');
+  const { installStorage } = await import('./bootstrap.ts');
   await installRuntimeStorage(root);
   await installStorage(root);
   process.argv = [process.execPath, join(root, "dist/cli.js"), ...args];

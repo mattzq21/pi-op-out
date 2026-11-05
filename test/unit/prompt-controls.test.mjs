@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createMemo, createRoot } from 'solid-js';
-import { discoveredModel, mergeModels } from '../../daemon/src/host/catalogs.ts';
+import { discoveredModel, mergeModels } from '../../daemon/src/host/services/catalogs.ts';
 import { PromptControls } from '../../clients/ui/lib/promptControls.ts';
 import { modelSchema } from '../../clients/ui/lib/responseSchemas.ts';
 

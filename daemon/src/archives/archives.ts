@@ -1,8 +1,7 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { extname, join, sep } from 'node:path';
+import { extname, sep } from 'node:path';
 import { z } from 'zod';
 import { archivedConversationSchema, hostStorageSchema, storageCategorySchema } from '../../../protocol/results';
-import { STORAGE_DIRECTORY } from '../config';
 import { homeDir } from '../environment';
 import { sessionIdentity } from '../pi';
 import { desktopSessionsDir } from '../process';
@@ -12,14 +11,13 @@ import { MutationGuard } from './ownership';
 import * as sessionGroups from '../sessions';
 import * as terminalSessions from '../terminals';
 import { stopTerminals } from '../terminals';
-import type { PiRuntime } from '../pi';
 import type { TerminalRuntime } from '../terminals';
 import type { App } from '../app';
-import * as SessionLifecycle from '../storage/lifecycle.ts';
-import type { SavedSession } from '../storage/lifecycle.ts';
-import { isAuxiliary, records } from '../../resources/piop-storage/session-records.ts';
-import type { FolderMove } from '../worktrees/lifecycle.ts';
-import { readHeaderLine } from '../host/protocol';
+import { lifecycle as SessionLifecycle } from '../storage';
+import type { SavedSession } from '../storage';
+import { isAuxiliary, records } from '../../resources/piop-storage/index.ts';
+import type { FolderMove } from '../worktrees';
+import { readHeaderLine } from '../util/lines.ts';
 
 export type HostStorage = z.output<typeof hostStorageSchema>;
 

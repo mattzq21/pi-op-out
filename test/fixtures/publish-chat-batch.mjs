@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { reserveId, bind, transaction } from '../../daemon/resources/session-database.ts';
+import { reserveId, bind, transaction } from '../../daemon/resources/session-database/index.ts';
 import * as stateRecords from '../../daemon/resources/piop-storage/session-records.ts';
-import * as sessionNames from '../../daemon/resources/session-broker/session-names.ts';
+import * as sessionNames from '../../daemon/resources/piop-storage/session-names.ts';
 
 const { home, count, cwd, contents } = JSON.parse(readFileSync(0, 'utf8'));
 const root = join(home, '.piop');

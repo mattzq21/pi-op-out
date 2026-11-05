@@ -64,7 +64,8 @@ Piop keeps its data in `~/.piop/`. It installs its own copy of Pi in `~/.piop/pi
 
 | Folder | Contents |
 | --- | --- |
-| `daemon/` | `piopd`, the background service |
+| `daemon/src/` | `piopd`, the background service. Each folder is one area; other areas use only its `index.ts` |
+| `daemon/resources/` | Code that runs in Pi's processes, and the storage code that runs on the main thread and worker threads of `piopd`. Each folder is one area; other areas use only its `index.ts` |
 | `clients/ui/` | Shared user interface (SolidJS) |
 | `clients/desktop/` | Desktop app (Tauri) |
 | `clients/android/` | Android app (Capacitor) |

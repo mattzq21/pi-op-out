@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { Parse } from "typebox/value";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { FastModelSnapshot } from "../../daemon/src/host/fast_models.ts";
+import type { FastModelSnapshot } from "../../daemon/src/host/index.ts";
 import type { FastModeSession, FastModeSessionRequest } from "../piop-openai-fast-mode/src/types.ts";
 
 export type { FastModelSnapshot };

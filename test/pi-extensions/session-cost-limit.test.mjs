@@ -13,7 +13,7 @@ const { root } = await testPi();
 const sdk = name => import(pathToFileURL(join(root, `dist/core/${name}.js`)));
 const { createAgentSession } = await sdk('sdk');
 const { AgentSession } = await sdk('agent-session');
-const { installAvailability } = await import('../../daemon/resources/runtime-availability.ts');
+const { installAvailability } = await import('../../daemon/resources/pi-runtime/availability.ts');
 installAvailability(AgentSession);
 const { DefaultResourceLoader } = await sdk('resource-loader');
 const { SettingsManager } = await sdk('settings-manager');
@@ -23,7 +23,7 @@ const usage = (total, billed = false) => ({ input: 1, output: 1, cacheRead: 0, c
 
 let bundle;
 function compiledCost() {
-  return bundle ??= build({ stdin: { contents: 'export { default } from "./plugins/cost/extension/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/index.ts";', resolveDir: process.cwd() }, write: false, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' }).then(result => result.outputFiles[0].contents);
+  return bundle ??= build({ stdin: { contents: 'export { default } from "./plugins/cost/extension/index.ts"; export { default as hooksExtended } from "./daemon/resources/hooks-extended/extension.ts";', resolveDir: process.cwd() }, write: false, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' }).then(result => result.outputFiles[0].contents);
 }
 
 async function fixture(t, { toolCost = 0, responseCost = 1, toolBilled = false, responseBilled = false, toolCalls = false, dir, sessionManager, extraExtensions = [], keepRecentTokens = 20000 } = {}) {

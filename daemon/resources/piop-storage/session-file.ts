@@ -1,5 +1,5 @@
 export { reserveSessionId } from "./identities.ts";
-import { call } from "../storage-channel.ts";
+import { storageChannel } from "../session-database/index.ts";
 
 // New chats that a Pi extension makes. The daemon saves each with all that belongs to it, or nothing: each call goes
 // through the storage channel and waits for the answer.
@@ -14,10 +14,10 @@ export interface NewChat {
 }
 
 export async function createChat(chat: NewChat): Promise<void> {
-  call("chats.create", chat);
+  storageChannel.call("chats.create", chat);
 }
 
 // Saves a fork of the chat source, with copies of the side chats, reviews and subagents that source had at cutoff.
 export async function createFork(fork: NewChat & { source: string; cutoff?: string }): Promise<void> {
-  call("chats.fork", fork);
+  storageChannel.call("chats.fork", fork);
 }

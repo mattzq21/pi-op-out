@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import type { AgentProfilesRequest, AgentStartPurpose, SubagentProfileRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
+import { createChat, reserveSessionId } from "../piop-storage/index.ts";
 import { currentHost } from "./client.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
 

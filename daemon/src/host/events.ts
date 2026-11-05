@@ -1,4 +1,4 @@
-import { clientPayload } from './payload';
+import { clientPayload } from './views';
 
 export interface SessionStateReport {
   sessionKey: string;

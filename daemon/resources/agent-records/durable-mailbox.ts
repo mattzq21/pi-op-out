@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Check, Parse } from "typebox/value";
-import { call } from "../storage-channel.ts";
+import { storageChannel } from "../session-database/index.ts";
 import { messageDetails, messageSchema, objectSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
 
 export type { MailboxDetails, MailboxMessage } from "./mailbox-records.ts";
@@ -24,12 +24,12 @@ function normalizeMessage(ctx: ExtensionContext, message: SendMessage, deliveryI
 }
 
 async function savedDeliveries(ctx: ExtensionContext) {
-  return new Set<string>(await call("mailbox.saved", chat(ctx)) as string[]);
+  return new Set<string>(await storageChannel.call("mailbox.saved", chat(ctx)) as string[]);
 }
 
 async function pendingRecords(ctx: ExtensionContext) {
   const request = chat(ctx);
-  const records = await call("mailbox.pending", request) as MailboxRecord[];
+  const records = await storageChannel.call("mailbox.pending", request) as MailboxRecord[];
 
   if (request.sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed while reading agent mail");
 
@@ -39,11 +39,11 @@ async function pendingRecords(ctx: ExtensionContext) {
 async function storePending(ctx: ExtensionContext, deliveryId: string, message: MailboxMessage) {
   if (message.details.mailboxSessionId !== ctx.sessionManager.getSessionId()) throw new Error("Conversation changed before agent mail was accepted");
 
-  return await call("mailbox.store", { ...chat(ctx), deliveryId, message }) as MailboxRecord;
+  return await storageChannel.call("mailbox.store", { ...chat(ctx), deliveryId, message }) as MailboxRecord;
 }
 
 async function removePending(ctx: ExtensionContext, record: MailboxRecord) {
-  await call("mailbox.remove", { ...chat(ctx), record });
+  await storageChannel.call("mailbox.remove", { ...chat(ctx), record });
 }
 
 export class DurableMailbox {

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { save } from '../../daemon/resources/application-records.ts';
+import { save } from '../../daemon/resources/session-database/records.ts';
 import { agentDaemon } from './agent-chats';
 import { temporaryDirectory } from './harness';
 

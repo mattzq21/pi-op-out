@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { piDirectory } from "./validation-runtime.ts";
-import { installRuntimeStorage } from "../../daemon/resources/sdk-storage.ts";
+import { installRuntimeStorage } from "../../daemon/resources/pi-runtime/index.ts";
 import type { Agent } from "./contracts.ts";
 import { fastModelProblem, type FastModelSnapshot } from "./fast-models.ts";
 

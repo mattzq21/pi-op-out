@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 let root: string;
-const database = require('../../daemon/resources/session-database.ts');
+const database = require('../../daemon/resources/session-database/index.ts');
 const core = require('../../daemon/resources/session-database/core.ts');
 let writes: any;
 let mailbox: any;
@@ -12,8 +12,8 @@ let mailbox: any;
 beforeAll(async () => {
   root = join(realpathSync(mkdtempSync(join(tmpdir(), 'piop-transcript-writes-'))), '.piop');
   mkdirSync(join(root, 'sessions'), { recursive: true });
-  writes = (await import('../../daemon/resources/piop-storage/transcript-writes.ts')).OPERATIONS;
-  mailbox = (await import('../../daemon/resources/piop-storage/mailbox-store.ts')).OPERATIONS;
+  writes = (await import('../../daemon/resources/storage-operations/transcript-writes.ts')).OPERATIONS;
+  mailbox = (await import('../../daemon/resources/storage-operations/mailbox-store.ts')).OPERATIONS;
 });
 afterAll(() => rmSync(join(root, '..'), { recursive: true, force: true }));
 

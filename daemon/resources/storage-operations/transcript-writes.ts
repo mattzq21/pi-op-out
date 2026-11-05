@@ -1,9 +1,8 @@
-import * as stateRecords from "./session-records.ts";
+import * as stateRecords from "../piop-storage/index.ts";
 import * as receipts from "./mailbox-receipts.ts";
 import { copy as copyGoalRecord } from "./goals.ts";
-import * as database from "../session-database.ts";
-import { storagePublish } from "../storage-file.ts";
-import { sessionReferenceRoot } from "./transcript-file.ts";
+import * as database from "../session-database/index.ts";
+import { storagePublish, sessionReferenceRoot } from "../piop-storage/index.ts";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 

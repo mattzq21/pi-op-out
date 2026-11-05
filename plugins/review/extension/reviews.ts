@@ -4,19 +4,13 @@ import { join } from "node:path";
 import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { createChat, reserveSessionId } from "../../../daemon/resources/piop-storage/session-file.ts";
+import { createChat, reserveSessionId, AUXILIARY_PARENT, auxiliaryParent, records, children } from "../../../daemon/resources/piop-storage/index.ts";
 import type { SessionAgentState, SubagentProfileRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import { Type as Schema, type Static } from "typebox";
 import { Check, Parse } from "typebox/value";
-import { currentHost } from "../../../daemon/resources/session-broker/client.ts";
-import { childFastModeEntry } from "../../../daemon/resources/session-broker/fast-mode.ts";
-import { locateConversation } from "../../../daemon/resources/session-broker/conversation-location.ts";
-import { readJson } from "../../../daemon/resources/application-records.ts";
+import { currentHost, childFastModeEntry, locateConversation, openAuxiliaryChat } from "../../../daemon/resources/session-broker/index.ts";
+import { records as applicationRecords, storageRoot } from "../../../daemon/resources/session-database/index.ts";
 import type { ReviewImage, ReviewSession } from "./interface.ts";
-import { openAuxiliaryChat } from "../../../daemon/resources/session-broker/auxiliary.ts";
-import { AUXILIARY_PARENT, auxiliaryParent, records } from "../../../daemon/resources/piop-storage/session-records.ts";
-import { children } from "../../../daemon/resources/session-broker/session-child-index.ts";
-import { storageRoot } from "../../../daemon/resources/session-database.ts";
 import reviewPrompt from "./review-prompt.txt";
 
 const reviewSchema = Schema.Object({ kind: Schema.Literal("review"), sessionId: Schema.String(), sessionPath: Schema.String(), cwd: Schema.String(), parentSessionId: Schema.String(), hostId: Schema.Optional(Schema.String()), scope: Schema.Optional(Schema.String()) });
@@ -101,7 +95,7 @@ async function openReview(ctx: ExtensionContext, record: ReviewRecord, name: str
 }
 
 async function reviewSettings() {
-  const settings = Parse(settingsSchema, readJson(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"), "settings")?.plugins?.review ?? {});
+  const settings = Parse(settingsSchema, applicationRecords.readJson(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop"), "settings")?.plugins?.review ?? {});
 
   const agent = settings.reviewAgent?.trim() || "reviewer";
   return { agent, prompt: reviewPrompt };

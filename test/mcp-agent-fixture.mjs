@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 let bundle;
 function compiledBridge() {
   return bundle ??= build({
-    entryPoints: ['daemon/resources/mcp-bridge.ts'], write: false,
+    entryPoints: ['daemon/resources/mcp/extension.ts'], write: false,
     bundle: true, format: 'esm', platform: 'node', target: 'node22', logLevel: 'silent',
     plugins: [{ name: 'external-mcp-sdk', setup(builder) {
       builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: './external-mcp-sdk.mjs', external: true }));

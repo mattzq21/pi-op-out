@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, realpathSync, statSync, watch, type Dirent, 
 import { basename, dirname, join, sep } from 'node:path';
 import { STORAGE_DIRECTORY } from '../config';
 import { homeDir } from '../environment';
-import { saveSkillInventoryJson, skillInventoryJson, transaction } from '../../resources/session-database.ts';
+import { saveSkillInventoryJson, skillInventoryJson, transaction } from '../../resources/session-database/index.ts';
 import type { AppSettings } from '../settings_types';
 
 export function frontmatterValue(content: string, key: string): string | undefined {

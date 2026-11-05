@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { Mutex, errorText, logFailure, observedElsewhere } from '../util/sync';
-import { array, flag, text, jsonEqual } from './json';
+import { Mutex, errorText, logFailure, observedElsewhere } from '../../util/sync';
+import { array, flag, text, jsonEqual } from '../json';
 import * as Catalogs from './catalogs';
 import { authText, authUrl } from './catalogs';
 import { Sdk } from './provider_sdk';
 import { FastModelStore, type FastModelScanResult, type FastModelSnapshot } from './fast_models';
-import type { Host } from './controller';
+import type { Host } from '../controller';
 import { join } from 'node:path';
-import { savedCommands } from '../inventories';
+import { savedCommands } from '../../inventories';
 
 class Flow {
   status = 'pending';

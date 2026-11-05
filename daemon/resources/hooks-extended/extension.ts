@@ -1,6 +1,6 @@
 import { availability } from "./availability.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ExtendedHooks, ExtendedHookEvents, ExtendedHookHandler } from "./interface.ts";
+import type { ExtendedHooks, ExtendedHookEvents, ExtendedHookHandler } from "./index.ts";
 
 export default function hooksExtended(pi: ExtensionAPI) {
   const handlers: { [K in keyof ExtendedHookEvents]: Set<ExtendedHookHandler<K>> } = {

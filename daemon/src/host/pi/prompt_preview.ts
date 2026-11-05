@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { errorText } from '../util/sync';
-import { kind, text } from './json';
+import { errorText } from '../../util/sync';
+import { kind, text } from '../json';
 import { parseLaunchSpec } from './protocol';
 import { RuntimeWorker } from './worker';
-import { PiStorage } from './pi_storage';
+import { PiStorage } from './storage';
 
 const TIMEOUT = 120_000;
 

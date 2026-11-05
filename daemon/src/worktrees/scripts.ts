@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { access, constants, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import * as Records from '../../resources/chat-worktree-records.ts';
+import * as Records from './chat_records.ts';
 import { newProcessTag, PROCESS_TAG, signalProcessGroup } from '../process';
 
 // Setup scripts and cleanup scripts of chat worktrees (docs/adr/0009-worktree-setup-and-cleanup-scripts.md).

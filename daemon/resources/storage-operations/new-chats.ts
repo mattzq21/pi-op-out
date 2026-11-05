@@ -2,13 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
-import * as database from '../session-database.ts';
-import { onMainThread } from '../main-thread.ts';
-import * as stateRecords from './session-records.ts';
+import * as database from '../session-database/index.ts';
+import { onMainThread } from '../session-database/index.ts';
+import * as stateRecords from '../piop-storage/index.ts';
 import * as goals from './goals.ts';
 import * as auxiliaryCopies from './auxiliary-copies.ts';
-import * as names from '../session-broker/session-names.ts';
-import * as children from '../session-broker/session-child-index.ts';
 
 // New chats: forks, branches, side chats, reviews, subagent and agent chats, and the copies of a fork's auxiliary chats.
 // Their transcripts are written first. Then one transaction binds their reserved IDs and saves all that belongs to them:
@@ -55,7 +53,7 @@ function checked(root: string, chat: NewChat): NewChat {
 
   if (chat.entries.some(stateRecords.isName)) throw new Error('A new chat gets its name from its name field, not from its entries');
 
-  if (chat.name !== undefined) names.validName(chat.name);
+  if (chat.name !== undefined) stateRecords.validName(chat.name);
 
   return chat;
 }
@@ -100,7 +98,7 @@ const commit = onMainThread('new-chats.commit', (root: string, chats: NewChat[],
       stateRecords.insertRecords(root, id, stateRecords.capture(chat.entries));
 
       if (chat.goalSource !== undefined) goals.copyGoal(root, chat.goalSource, id);
-      children.register(root, id, chat.entries);
+      stateRecords.register(root, id, chat.entries);
     }
 
     if (!plan) return;

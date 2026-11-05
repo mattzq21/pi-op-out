@@ -1,9 +1,9 @@
 import { isAbsolute } from "node:path";
 import { Type, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import * as database from "../session-database.ts";
+import * as database from "../session-database/index.ts";
 import { list as savedReceipts } from "./mailbox-receipts.ts";
-import { messageSchema, recordSchema, type MailboxMessage, type MailboxRecord } from "./mailbox-records.ts";
+import { messageSchema, recordSchema, type MailboxMessage, type MailboxRecord } from "../agent-records/index.ts";
 
 // Agent mail that waits in the database until its chat saves it. Only the daemon runs these; Pi asks through its storage channel.
 

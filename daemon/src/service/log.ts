@@ -1,5 +1,5 @@
 import { connect, type Socket } from 'node:net';
-import { readLines } from '../../resources/lf-lines.ts';
+import { readLines } from '../util/lines.ts';
 import type { Readable } from 'node:stream';
 import { ptr } from 'bun:ffi';
 import { loadLibc } from '../util/libc';

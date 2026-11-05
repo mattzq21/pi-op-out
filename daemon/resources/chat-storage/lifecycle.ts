@@ -2,13 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
-import * as database from './session-database.ts';
-import { onMainThread } from './main-thread.ts';
-import * as blank from './blank-session-target.ts';
-import * as conversationStorage from './conversation-storage.ts';
-import * as temporaryChat from './temporary-chat.ts';
-import * as goalFiles from './piop-storage/goal-files.ts';
-import { lockSync } from './storage-locks.ts';
+import * as database from '../session-database/index.ts';
+import { onMainThread } from '../session-database/index.ts';
+import * as conversationStorage from './conversation-ownership.ts';
+import * as temporaryChat from './temporary-chats.ts';
+import { collectGoalFiles } from '../storage-operations/index.ts';
+import { lockSync } from './locks.ts';
+import { validSessionHeader } from './session-header.ts';
 
 // A transcript stays where it was made for its whole life. A new chat writes its files, and then its rows in one
 // transaction. Archive and restore change only its database row; delete removes its rows in one transaction, and its
@@ -109,7 +109,7 @@ function deleteSessions(root: string, ids: string[]): string[] {
     catch (error) { warnings.push(`Deleted, but the files of ${target} were kept until the next start: ${(error as Error).message}`); }
   }
 
-  try { goalFiles.collect(root); }
+  try { collectGoalFiles(root); }
   catch (error) { warnings.push(`Deleted, but its goal files were kept until the next start: ${(error as Error).message}`); }
 
   const temporary = cleanupTemporaryChats(root);
@@ -121,7 +121,7 @@ function deleteSessions(root: string, ids: string[]): string[] {
 
 function deleteBlank(root: string, target: any): string[] {
   const request = { ...target, root: path.join(root, 'sessions') };
-  const candidate = blank.prepare(request);
+  const candidate = blankSession(request);
 
   if (!candidate || candidate.root !== root || session(root, candidate.id)?.sessionPath !== candidate.target.path) return [];
 
@@ -195,7 +195,7 @@ function sweep(root: string): string[] {
 
   visit(path.join(root, 'sessions'));
 
-  try { goalFiles.collect(root, true); }
+  try { collectGoalFiles(root, true); }
   catch (error) { warnings.push(`Could not remove the unused goal files: ${(error as Error).message}`); }
 
   const temporary = cleanupTemporaryChats(root);
@@ -203,6 +203,42 @@ function sweep(root: string): string[] {
   if (temporary) warnings.push(temporary);
 
   return warnings;
+}
+
+// The chat target names when it is a saved chat without a message and without queued input, else undefined.
+function blankSession(target) {
+  const directory = target.root;
+
+  if (!fs.existsSync(directory)) return;
+  const root = fs.realpathSync(directory);
+  const file = target.path || (target.id && database.lookup(path.dirname(root), target.id));
+
+  if (!file || !fs.existsSync(file)) return;
+  const source = fs.realpathSync(file);
+
+  if (path.dirname(source) !== root || !source.endsWith('.jsonl')) return;
+
+  return inspectBlank(root, source, target.id);
+}
+
+function inspectBlank(directory, file, expected) {
+  let entries;
+
+  try { entries = fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line)); }
+  catch { return; }
+
+  const header = entries[0];
+
+  if (!validSessionHeader(header) || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(header.id)) return;
+
+  if (header.id === '00000000-0000-4000-8000-000000000001' || (expected && header.id !== expected)) return;
+
+  if (entries.some(entry => entry.type === 'message')) return;
+  const root = path.dirname(directory);
+
+  if (database.hasQueuedInput(root, header.id)) return;
+
+  return { root, id: header.id, target: { root: directory, path: file, area: 'sessions' } };
 }
 
 export { session, idOf, descendants, archive, restore, forget, run, sweep };

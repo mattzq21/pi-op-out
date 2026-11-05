@@ -1,3 +1,4 @@
+// The skills Pi extension is extension.ts: it puts the skills that a message calls with /skill:name into the message.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const CALL = /\/skill:(\S+)(?:\s+|$)/y;

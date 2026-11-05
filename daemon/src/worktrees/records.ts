@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import * as Records from '../../resources/chat-worktree-records.ts';
+import * as Records from './chat_records.ts';
 import { claimWorktree, createWorktree, removeCreatedWorktree, type CreatedWorktree, type Repository } from './worktrees';
 import { forgetProjectRepository } from '../projects';
 import { discardBranchHistory } from './branch_operations';

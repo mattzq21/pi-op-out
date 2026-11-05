@@ -1,4 +1,4 @@
-import hooksExtended from "../../daemon/resources/hooks-extended/index.ts";
+import hooksExtended from "../../daemon/resources/hooks-extended/extension.ts";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const budgets = { reserveTokens: 16_384, keepRecentTokens: 20_000 };

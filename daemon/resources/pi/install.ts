@@ -1,15 +1,61 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { SUPPORTED_PI_VERSION, supportedPi } from './pi-runtime.ts';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const PI_PACKAGE = '@earendil-works/pi-coding-agent';
+const SUPPORTED_PI_VERSION = '1.5.0';
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 const PENDING = /^\.install-(\d+)-(\d+)-[0-9a-f-]{36}$/;
 
 function missing(error) {
   return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+function unreachable(error) {
+  return missing(error) || error?.code === 'EACCES';
+}
+
+function executablePath(executable) {
+  try { return realpathSync(executable); }
+  catch (error) { if (unreachable(error)) throw new Error(`Pi was not found at ${executable}`); throw error; }
+}
+
+function packageAt(directory) {
+  const file = join(directory, 'package.json');
+  let body;
+
+  try { body = readFileSync(file, 'utf8'); }
+  catch (error) { if (unreachable(error)) return undefined; throw error; }
+
+  try { return JSON.parse(body); }
+  catch (error) { throw new Error(`Could not read ${file}: ${error.message}`); }
+}
+
+function piInstallation(executable) {
+  const entry = executablePath(executable);
+
+  for (let directory = dirname(entry); ; directory = dirname(directory)) {
+    const metadata = packageAt(directory);
+
+    if (metadata?.name === PI_PACKAGE) {
+      if (typeof metadata.version !== 'string') throw new Error(`Pi at ${directory} has no version`);
+
+      return { root: directory, version: metadata.version };
+    }
+
+    if (dirname(directory) === directory) throw new Error(`${entry} is not part of a ${PI_PACKAGE} installation`);
+  }
+}
+
+function supportedPi(executable: string): { root: string; version: string } {
+  const pi = piInstallation(executable);
+
+  if (pi.version !== SUPPORTED_PI_VERSION) {
+    throw new Error(`Piop needs Pi ${SUPPORTED_PI_VERSION}, but found Pi ${pi.version} at ${pi.root}`);
+  }
+
+  return pi;
 }
 
 // The folder name of one install: the Pi version, and a hash of the exact list of packages.
@@ -82,4 +128,4 @@ async function installPi({ home, manifest, lockfile, bun, env = process.env, log
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 }
 
-export { installName, installPi };
+export { SUPPORTED_PI_VERSION, supportedPi, installName, installPi };

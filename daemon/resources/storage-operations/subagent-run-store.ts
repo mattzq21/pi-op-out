@@ -1,8 +1,8 @@
 import { isAbsolute } from "node:path";
 import { Type as Schema, type Static } from "typebox";
 import { Parse } from "typebox/value";
-import * as database from "../session-database.ts";
-import { resultNotificationId, runSchema, type SubagentRun } from "../session-broker/subagent-identity.ts";
+import * as database from "../session-database/index.ts";
+import { resultNotificationId, runSchema, type SubagentRun } from "../agent-records/index.ts";
 
 // The subagent runs of each parent chat. Only the daemon runs these; Pi asks through its storage channel.
 

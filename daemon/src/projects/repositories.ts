@@ -1,6 +1,6 @@
 import { detectRepository } from '../worktrees';
 import { resolve } from 'node:path';
-import { projectRepositoryJson, removeProjectRepository, saveProjectRepositoryJson } from '../../resources/session-database.ts';
+import { projectRepositoryJson, removeProjectRepository, saveProjectRepositoryJson } from '../../resources/session-database/index.ts';
 
 export interface ProjectRepository { root: string; gitDir: string }
 

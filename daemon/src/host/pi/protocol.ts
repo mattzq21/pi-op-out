@@ -1,10 +1,10 @@
-import { closeSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { kind } from './json';
-import { pluginRequest } from '../plugins';
+import { kind } from '../json';
+import { readHeaderLine } from '../../util/lines.ts';
+import { pluginRequest } from '../../plugins';
 
-export { kind, text, flag, array, messageText } from './json';
+export { kind, text, flag, array, messageText } from '../json';
 
 export interface LaunchSpec { program: string; args: string[]; env: Record<string, string>; cwd: string | null }
 
@@ -50,22 +50,6 @@ export function sessionSpec(spec: LaunchSpec, flagName: string, value: string): 
 export function prepareSpec(spec: LaunchSpec, key: string, client: string, home: string): void {
   spec.env.PIOP_CONVERSATION_CLIENT = client;
   if (argument(spec, '--session') === undefined && argument(spec, '--session-id') === undefined) spec.args.push('--session-id', key);
-}
-
-export function readHeaderLine(path: string, limit = 64 * 1024): string {
-  const fd = openSync(path, 'r');
-  try {
-    const buffer = Buffer.alloc(limit);
-    let length = 0;
-    while (length < limit) {
-      const count = readSync(fd, buffer, length, limit - length, null);
-      if (count === 0) break;
-      const newline = buffer.subarray(length, length + count).indexOf(10);
-      length += count;
-      if (newline >= 0) { length = length - count + newline + 1; break; }
-    }
-    return buffer.subarray(0, length).toString('utf8');
-  } finally { closeSync(fd); }
 }
 
 export function specIdentity(spec: LaunchSpec, fallback: string): string {

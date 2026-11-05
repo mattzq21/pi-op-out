@@ -1,14 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { STORAGE_DIRECTORY } from '../config';
-import { homeDir, nodeExecutable, pathWithNode } from '../environment';
-import { generatedExtensions } from '../extensions';
-import { readLines } from '../../resources/lf-lines.ts';
-import { installedPi } from '../pi_install';
-import { Mutex } from '../util/sync';
+import { STORAGE_DIRECTORY } from '../../config';
+import { homeDir, nodeExecutable, pathWithNode } from '../../environment';
+import { generatedExtensions } from '../../extensions';
+import { readLines } from '../../util/lines.ts';
+import { installedPi } from '../../pi_install';
+import { Mutex } from '../../util/sync';
 import type { Duplex } from 'node:stream';
-import { PiStorage } from './pi_storage';
+import { PiStorage } from '../pi';
 
 const REQUEST_TIMEOUT_MS = 630_000;
 const PROBE_TIMEOUT_MS = 10_000;

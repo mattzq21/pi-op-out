@@ -1,5 +1,5 @@
 import { clone, flag, kind, text } from '../json';
-import { GOAL_TOOL, QueueGoal } from '../goals/state';
+import { GOAL_TOOL, QueueGoal } from '../goals';
 
 export const CONSUMPTION_FIELDS = ['consumedContent', 'consumedTimestamp', 'consumedInputId', 'deliveryStarted'];
 

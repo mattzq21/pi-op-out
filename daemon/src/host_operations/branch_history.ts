@@ -1,4 +1,4 @@
-import * as History from '../../resources/chat-branch-history.ts';
+import * as History from '../../resources/chat-storage/index.ts';
 import type { BranchHistoryRequest, BranchHistoryResult } from '../worktrees';
 
 export function publishBranchHistory(request: BranchHistoryRequest): Promise<BranchHistoryResult> {

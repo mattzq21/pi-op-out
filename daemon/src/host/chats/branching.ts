@@ -1,15 +1,16 @@
-import { basename, isAbsolute, join } from 'node:path';
-import { rememberProjectRepository } from '../projects';
-import * as Worktrees from '../worktrees';
-import { detectRepository, publishBranchHistory } from '../worktrees';
-import * as Registry from '../session_registry';
-import { flag, kind, text } from './json';
-import { Guard, ownershipError } from './ownership';
-import { argument, expandHome, parseLaunchSpec, readHeaderLine, sessionSpec, specIdentity, type LaunchSpec } from './protocol';
-import type { Host } from './controller';
-import { readonlyCommand, type ReadonlyView } from './readonly_views';
-import type { Session } from './session';
-import { forkPoint } from '../../resources/piop-storage/session-records.ts';
+import { basename, isAbsolute } from 'node:path';
+import { rememberProjectRepository } from '../../projects';
+import * as Worktrees from '../../worktrees';
+import { detectRepository, publishBranchHistory } from '../../worktrees';
+import * as Registry from '../../session_registry';
+import { flag, kind, text } from '../json';
+import { Guard, ownershipError } from '../ownership';
+import { argument, expandHome, parseLaunchSpec, sessionSpec, specIdentity, type LaunchSpec } from '../pi';
+import { readHeaderLine } from '../../util/lines.ts';
+import type { Host } from '../controller';
+import { readonlyCommand, type ReadonlyView } from '../views';
+import type { Session } from '../session';
+import { forkPoint } from '../../../resources/piop-storage/index.ts';
 
 const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
 const FORKS = ['fork', 'fork_after', 'copy_after', 'clone'];

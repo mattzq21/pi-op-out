@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { daemonExecutable, temporaryDirectory } from './harness';
 import { tryLockFileSync } from '../../daemon/src/util/flock';
-import { save } from '../../daemon/resources/application-records.ts';
+import { save } from '../../daemon/resources/session-database/records.ts';
 import { PROTOCOL_VERSION } from '../../daemon/src/config';
 
 test('stop finishes when a closing daemon releases its lock during connection retries', async () => {

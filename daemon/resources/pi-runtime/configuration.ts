@@ -1,5 +1,5 @@
-import { patchMethod } from './pi-patch.ts';
-import type { AppRequest } from '../../pi-extensions/piop-define-agents/contracts.ts';
+import { patchMethod } from '../pi/index.ts';
+import type { AppRequest } from '../../../pi-extensions/piop-define-agents/contracts.ts';
 
 const reloadOperations = new WeakMap();
 

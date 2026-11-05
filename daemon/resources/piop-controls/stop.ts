@@ -1,4 +1,4 @@
-import { extendedHooks } from "../hooks-extended/interface.ts";
+import { extendedHooks } from "../hooks-extended/index.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Check } from "typebox/value";

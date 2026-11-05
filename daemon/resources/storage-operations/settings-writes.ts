@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import * as database from '../session-database.ts';
-import { storagePublish, storageTarget } from '../storage-file.ts';
+import * as database from '../session-database/index.ts';
+import { storagePublish, storageTarget } from '../piop-storage/index.ts';
 
 // Pi's setting changes, run by the daemon. Pi asks for them through its storage channel.
 

@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import * as Endpoint from '../service';
-import * as Records from '../../resources/application-records.ts';
-import * as Contributions from '../plugins';
-import { catalog } from '../plugins';
-import type { PluginStatus } from '../../../protocol/plugins';
-import { RwLock, errorText } from '../util/sync';
+import * as Endpoint from '../../service';
+import { records as Records } from '../../../resources/session-database/index.ts';
+import * as Contributions from '../../plugins';
+import { catalog } from '../../plugins';
+import type { PluginStatus } from '../../../../protocol/plugins';
+import { RwLock, errorText } from '../../util/sync';
 
 const known = () => catalog().plugins.map(plugin => plugin.manifest.id);
 

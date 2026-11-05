@@ -1,4 +1,4 @@
-import * as Storage from '../../resources/conversation-storage.ts';
+import { conversationOwnership as Storage } from '../../resources/chat-storage/index.ts';
 
 export function read(root: string, key: string): string | undefined { return Storage.readRecord(root, key) ?? undefined; }
 

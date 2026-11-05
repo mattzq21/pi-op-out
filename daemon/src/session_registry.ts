@@ -1,4 +1,4 @@
-import * as SessionTables from '../resources/session-database.ts';
+import * as SessionTables from '../resources/session-database/index.ts';
 
 export function ids(root: string): string[] {
   return SessionTables.registeredSessionIds(root);
