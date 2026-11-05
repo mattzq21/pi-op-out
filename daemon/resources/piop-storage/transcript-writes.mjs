@@ -14,6 +14,9 @@ import * as storagePath from "node:path";
 
 export const PUBLICATION_LOCKED = new Set(["publish", "append"]);
 
+// The changes that take the goal asset lock first.
+export const GOAL_ASSETS_LOCKED = new Set(["copyGoal"]);
+
 function damaged(error) {
   const failure = error instanceof Error ? error : new Error(String(error));
   failure.damaged = true;

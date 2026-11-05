@@ -16,7 +16,7 @@ const CATALOG = [{ id: 'notes', name: 'Notes', client: { scope: 'host' } }, { id
 test('the client parts of the enabled plugins of a host start, and stop when the plugins are disabled', async () => {
   const dom = installDom();
   globalThis.pluginEvents = [];
-  let status = { enabled: ['notes', 'clock', 'cost'], configured: ['notes', 'clock', 'cost'], revision: 'commands-1', error: null, plugins: CATALOG, queuedCommands: ['compact'] };
+  let status = { enabled: ['notes', 'clock', 'cost'], configured: ['notes', 'clock', 'cost'], revision: 'commands-1', error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
   const loaded = [];
   let view;
   mockIPC((command, args) => {
@@ -33,7 +33,7 @@ test('the client parts of the enabled plugins of a host start, and stop when the
     await retryUntil(() => assert.deepEqual(globalThis.pluginEvents.toSorted(), ['start clock', 'start notes']));
     assert.deepEqual(loaded.toSorted(), ['clock', 'notes']);
     await waitForClientPlugins('local');
-    status = { enabled: [], configured: [], revision: 'commands-2', error: null, plugins: CATALOG, queuedCommands: ['compact'] };
+    status = { enabled: [], configured: [], revision: 'commands-2', error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
     await act(() => refreshPlugins('local'));
     await waitForClientPlugins('local');
     assert.deepEqual(globalThis.pluginEvents.slice(2).toSorted(), ['stop clock', 'stop notes']);
@@ -45,7 +45,7 @@ test('the client parts of the enabled plugins of a host start, and stop when the
 
 test('a client part that cannot load is reported for its host', async () => {
   const dom = installDom();
-  const status = { enabled: ['notes'], configured: ['notes'], revision: 'broken-1', error: null, plugins: [{ id: 'notes', name: 'Notes', client: { scope: 'host' } }], queuedCommands: ['compact'] };
+  const status = { enabled: ['notes'], configured: ['notes'], revision: 'broken-1', error: null, plugins: [{ id: 'notes', name: 'Notes', client: { scope: 'host' } }], queuedCommands: ['compact'], queuedWithPrompt: [] };
   mockIPC(command => {
     if (command === 'plugin_status') return status;
     if (command === 'plugin_client') return { source: 'export const settings = { label: "Notes" };' };

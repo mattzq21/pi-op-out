@@ -60,6 +60,9 @@ function claimed(owner, result) {
   return result;
 }
 
+// The changes that take the goal asset lock first.
+export const GOAL_ASSETS_LOCKED = new Set(["retainHistory", "releaseHistory"]);
+
 export const OPERATIONS = {
   publish: (root, request, owner) => writeSessionFile(root, request?.path, request?.entries, request?.options).then(result => claimed(owner, result)),
   acknowledge: async (root, request, owner) => {

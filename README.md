@@ -21,7 +21,6 @@ Piop gives Pi a graphical interface. One background service (`piopd`) keeps your
 You need:
 
 - Linux (Debian-based for the `.deb` package)
-- [Pi](https://github.com/earendil-works/pi): `curl -fsSL https://pi.dev/install.sh | sh`
 - [Bun](https://bun.sh) and [Node.js](https://nodejs.org) 26.13 or newer
 - [Rust](https://rustup.rs) and the [Tauri system dependencies](https://tauri.app/start/prerequisites/)
 
@@ -59,17 +58,19 @@ Usage: piopd <start|stop>
   stop   Shut down the running daemon gracefully
 ```
 
-Piop keeps its data in `~/.piop/`. It finds Pi in `~/.local/bin`, `~/.npm-global/bin`, `~/.bun/bin`, or your `PATH`.
+Piop keeps its data in `~/.piop/`. It installs its own copy of Pi in `~/.piop/pi/`.
 
 ## Project layout
 
 | Folder | Contents |
 | --- | --- |
-| `daemon/` | `piopd`, the background service, and its built-in plugins |
+| `daemon/` | `piopd`, the background service |
 | `clients/ui/` | Shared user interface (SolidJS) |
 | `clients/desktop/` | Desktop app (Tauri) |
 | `clients/android/` | Android app (Capacitor) |
-| `extensions/` | Pi extensions that Piop loads |
+| `pi-extensions/` | Pi extensions that Piop loads |
+| `plugins/` | Built-in plugins. Other plugins go in `~/.piop/plugins/` |
+| `protocol/` | The messages between the clients and `piopd` |
 | `docs/adr/` | Design decisions |
 | `GLOSSARY.md` | Words that this project uses |
 

@@ -47,6 +47,16 @@ function acquire(root) {
   return release;
 }
 
+// The goal asset lock of root for code that can wait without blocking the main thread: it waits up to 5 seconds, as a
+// worker thread does. Code of the same flow then gets the lock again at once.
+async function acquireAsync(root) {
+  const release = await storageLocks.lock('goal-assets:' + root, { timeoutMs: 5000 });
+
+  if (!release) throw new Error(GOAL_ASSETS_BUSY);
+
+  return release;
+}
+
 function locked(root, operation) {
   const release = acquire(root);
 
@@ -358,4 +368,4 @@ function endReclamation(root, directory, expected) {
   updateReclamation(root, directory, expected, true);
 }
 
-module.exports = { rootForDirectory, acquire, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, historyContract, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };
+module.exports = { rootForDirectory, acquire, acquireAsync, locked, exists, identity, validPath, readOwners, directReferences, references, claim, retainHistory, historyContract, ownedDirectories, verifyContract, releaseHistory, discardPreparation, beginReclamation, endReclamation };

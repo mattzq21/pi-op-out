@@ -12,7 +12,7 @@ describe('settings editor', () => {
   beforeEach(() => {
     dom = installDom(); saves = []; dirty = []; supportedModels = ['model']; previews = [];
     mockIPC((command, args) => {
-      if (command === 'plugin_status') return { enabled: ['cost', 'review', 'web-search'], configured: ['cost', 'review', 'web-search'], revision: 'settings-1', error: null, plugins: CATALOG, queuedCommands: ['compact'] };
+      if (command === 'plugin_status') return { enabled: ['cost', 'review', 'web-search'], configured: ['cost', 'review', 'web-search'], revision: 'settings-1', error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
       if (command === 'plugin_client') return pluginClient(args);
       if (command === 'provider_auth' && args.request.action === 'list') return { providers: [{ id: 'anthropic', name: 'Anthropic', configured: true, methods: [{ type: 'oauth', name: 'Claude', interactive: true }] }, { id: 'opencodex', name: 'OCX', configured: true, source: 'built in', methods: [] }, { id: 'openai', name: 'OpenAI', configured: false, methods: [{ type: 'api_key', name: 'API key', interactive: true }] }] };
       if (command === 'agent_prompt_preview') { previews.push(args); return { model: 'p/model', messages: [{ role: 'system', text: 'You are the local agent.' }], tools: [{ place: 'tools', json: '[{"name":"read"}]' }] }; }
@@ -177,7 +177,7 @@ describe('settings editor', () => {
   test('the review agent choice follows the selected host plugin state without clearing saved choices', async () => {
     let enabled = ['cost', 'review'];
     mockIPC((command, args) => {
-      if (command === 'plugin_status') return { enabled, configured: enabled, revision: enabled.join(','), error: null, plugins: CATALOG, queuedCommands: ['compact'] };
+      if (command === 'plugin_status') return { enabled, configured: enabled, revision: enabled.join(','), error: null, plugins: CATALOG, queuedCommands: ['compact'], queuedWithPrompt: [] };
       if (command === 'plugin_client') return pluginClient(args);
       throw new Error('Unexpected command: ' + command);
     }, { shouldMockEvents: true });
