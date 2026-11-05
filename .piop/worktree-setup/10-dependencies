@@ -1,0 +1,4 @@
+#!/bin/sh
+# Links node_modules to the shared copy in ~/.cache/piop/bun-installations; installs that copy first if it is missing.
+set -eu
+exec bun scripts/setup-dependencies.mjs
