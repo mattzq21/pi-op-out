@@ -96,3 +96,23 @@ test('non-repository chat cannot create a worktree branch', async () => {
     expect(existsSync(join(agents.daemon.home, '.piop/worktrees'))).toBe(false);
   } finally { await agents.close(); }
 }, 60000);
+
+test('a worktree branch of a worktree chat stays in the project of the main repository', async () => {
+  const agents = await agentDaemon();
+  try {
+    agents.scripts.set('Nested branch', () => ({ text: 'Nested answer' }));
+    const chat = await agents.rootChat({ repository: true });
+    await chat.command({ type: 'prompt', message: 'Nested branch' });
+    await chat.until(messages => text(messages.at(-1)) === 'Nested answer');
+    const reply = async () => (await chat.command({ type: 'get_entries' })).entries.find((e: any) => e.message?.role === 'assistant');
+    await chat.command({ type: 'fork_after', entryId: (await reply()).id });
+    const first = await chat.command({ type: 'get_state' });
+    await chat.command({ type: 'fork_after', entryId: (await reply()).id });
+    const second = await chat.command({ type: 'get_state' });
+    expect(second.cwd).not.toBe(first.cwd);
+    const sessions = await agents.daemon.invoke('list_sessions');
+    const repository = (id: string) => sessions.find((s: any) => s.id === id)?.worktreeRepository;
+    expect(repository(first.sessionId)).toBe(chat.cwd);
+    expect(repository(second.sessionId)).toBe(chat.cwd);
+  } finally { await agents.close(); }
+}, 120000);

@@ -1,5 +1,6 @@
 import { basename, isAbsolute, join } from 'node:path';
-import { getProjectRepository, rememberProjectRepository } from '../project_repositories';
+import { rememberProjectRepository } from '../project_repositories';
+import { detectRepository } from '../chat_worktrees';
 import * as Worktrees from '../chat_worktree_records';
 import { publishBranchHistory } from '../chat_branch_operations';
 import * as Registry from '../session_registry';
@@ -226,8 +227,8 @@ class Branch {
 
   private async publish(entryId: string, worktree: boolean): Promise<any> {
     const cwd = this.read.cwd;
-    const savedRepository = worktree && cwd ? getProjectRepository(this.host.storageRoot(), cwd) : null;
-    if (worktree && (!cwd || !savedRepository)) throw new Error('This folder is not a Git repository');
+    const repository = worktree && cwd ? await detectRepository(cwd) : null;
+    if (worktree && (!cwd || !repository)) throw new Error('This folder is not a Git repository');
     if (!cwd) throw new Error('The conversation has no working directory');
     const snapshot = this.read.snapshot;
     const entries = snapshot.history.entries;
@@ -236,8 +237,7 @@ class Branch {
     const sessionId = Registry.reserve(this.host.storageRoot());
     this.managedId = sessionId;
     let branchCwd = cwd;
-    if (savedRepository) {
-      const repository = { repository: savedRepository.root, gitCommonDir: savedRepository.gitDir };
+    if (repository) {
       this.worktree = true;
       const created = await Worktrees.create({ sourceCwd: cwd, chatId: sessionId, home: this.host.home, repository }, this.host.storageRoot());
       rememberProjectRepository(this.host.storageRoot(), created.worktree, { root: created.worktree, gitDir: created.gitCommonDir });
