@@ -5,7 +5,7 @@ import { currentHost } from "./client.ts";
 import { sendAgentMailboxes } from "./orchestration.ts";
 import { persistSubagentRun, savedSubagentRuns } from "../piop-storage/subagent-results.ts";
 import { runSchema, resultNotificationId, type SubagentRun } from "./subagent-identity.ts";
-import { AUXILIARY_PARENT } from "../piop-storage/session-records.cjs";
+import { AUXILIARY_PARENT } from "../piop-storage/session-records.ts";
 
 export { runSchema, type SubagentRun } from "./subagent-identity.ts";
 

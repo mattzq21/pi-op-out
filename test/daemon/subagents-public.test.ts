@@ -389,8 +389,8 @@ test('archiving a parent while its child runs a command ends the child\'s comman
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Delegate a slow job' });
   await job.started();
-  const { sessionFile } = await root.command({ type: 'get_state' });
-  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: sessionFile, terminalIds: [], clientId: 'laptop' });
+  const { sessionId } = await root.command({ type: 'get_state' });
+  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionId, terminalIds: [], clientId: 'laptop' });
   const calls = agents.model.requests.length;
   await job.stopped();
   expect(existsSync(join(root.cwd, 'child-late.txt'))).toBe(false);
@@ -422,8 +422,8 @@ test('deleting a parent while its child runs a command stops the child and delet
   const root = await agents.rootChat();
   await root.command({ type: 'prompt', message: 'Delegate a doomed job' });
   await job.started();
-  const { sessionFile } = await root.command({ type: 'get_state' });
-  const deleted = await agents.daemon.invoke('delete_session', { hostId: 'local', sessionPath: sessionFile, clientId: 'laptop' });
+  const { sessionId } = await root.command({ type: 'get_state' });
+  const deleted = await agents.daemon.invoke('delete_sessions', { hostId: 'local', sessionIds: [sessionId], clientId: 'laptop' });
   expect(deleted).toHaveLength(2);
   const calls = agents.model.requests.length;
   await job.stopped();

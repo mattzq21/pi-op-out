@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -35,7 +35,7 @@ test('storage report counts real conversation files and marks malformed archives
   publicSession(daemon.home, daemon.home, 'project');
   writeFileSync(join(profile, 'sessions/project/ignored.txt'), 'not counted');
   const toArchive = publicSession(daemon.home, daemon.home, 'project');
-  await daemon.invoke('archive_session', { sessionPath: toArchive.path, hostId: 'local', terminalIds: [], clientId: 'storage-test' });
+  await daemon.invoke('archive_session', { sessionId: toArchive.id, hostId: 'local', terminalIds: [], clientId: 'storage-test' });
   const before = await daemon.invoke('storage_report');
   const broken = before.hosts.find((host: any) => host.hostId === 'local').archives.find((chat: any) => chat.id === toArchive.id);
   expect(broken).toBeDefined();
@@ -51,8 +51,9 @@ test('storage report counts real conversation files and marks malformed archives
   expect(local).toMatchObject({ hostId: 'local', hostName: 'Local' });
   expect(local.error).toBeUndefined();
   const category = (id: string) => local.categories.find((category: any) => category.id === id);
-  expect(category('active-conversations')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'sessions')) });
-  expect(category('archived-conversations')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'archived')) });
+  const archivedBytes = [broken.path, broken.path.replace(/\.jsonl$/, '.snapshots')].filter(path => existsSync(path)).reduce((total, path) => total + allocatedBytes(path), 0);
+  expect(category('active-conversations')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'sessions')) - archivedBytes });
+  expect(category('archived-conversations')).toMatchObject({ itemCount: 1, byteSize: archivedBytes });
   expect(category('temporary-chats')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'tmp')) });
   expect(category('chat-worktrees')).toMatchObject({ itemCount: 1, byteSize: allocatedBytes(join(profile, 'worktrees')) });
   expect(local.archives).toEqual([expect.objectContaining({ path: broken.path, deletable: false, restorable: false, deleteError: expect.stringContaining('invalid chat data') })]);
@@ -62,7 +63,7 @@ test('storage report shows each machine under its own name and reports machines 
   const remote = await startDaemon();
   try {
     const toArchive = publicSession(remote.home, remote.home, 'project', JSON.stringify({ type: 'session_info', name: 'Remote archive' }) + '\n');
-    await remote.invoke('archive_session', { sessionPath: toArchive.path, hostId: 'local', terminalIds: [], clientId: 'storage-test' });
+    await remote.invoke('archive_session', { sessionId: toArchive.id, hostId: 'local', terminalIds: [], clientId: 'storage-test' });
     const before = await remote.invoke('storage_report');
     const archived = before.hosts.find((host: any) => host.hostId === 'local').archives.find((chat: any) => chat.id === toArchive.id);
     expect(archived).toBeDefined();
@@ -147,9 +148,9 @@ test('session list follows its project folder appearing and disappearing', async
 });
 
 test('deleting a transcript with invalid chat data fails and keeps the file', async () => {
-  const { path } = publicSession(daemon.home, daemon.home, 'delete-invalid');
+  const { id, path } = publicSession(daemon.home, daemon.home, 'delete-invalid');
   writeFileSync(path, 'invalid json');
-  expect(await daemon.failure('delete_session', { sessionPath: path, hostId: 'local', clientId: 'test-client' })).toBe('This conversation has been deleted or archived');
+  expect(await daemon.failure('delete_sessions', { sessionIds: [id], hostId: 'local', clientId: 'test-client' })).toBe('This conversation has been deleted or archived');
   expect(readFileSync(path, 'utf8')).toBe('invalid json');
 });
 
@@ -196,10 +197,10 @@ test('deletion refused for another client keeps the open conversation readable a
     const open = (runtimeId: string, sessionPath: string, presence?: any) => local.invoke('start_pi', { runtimeId, clientId: 'test-client', cwd: local.home, sessionPath, presence });
     expect(await open('blocked-runtime', blocked.path)).toMatchObject({ owned: true });
     expect(await open('own-delete-runtime', ownDelete.path)).toMatchObject({ owned: true });
-    const remove = (path: string, clientId = 'other-client') => ({ sessionPath: path, hostId: 'local', clientId });
+    const remove = (id: string, clientId = 'other-client') => ({ sessionIds: [id], hostId: 'local', clientId });
     const listedIds = async () => (await local.invoke('list_sessions')).map((row: any) => row.id).filter((id: string) => [blocked.id, ownDelete.id].includes(id));
-    expect(await local.failure('delete_session', remove(blocked.path))).toBe('Take ownership of this conversation before changing it');
-    expect(await local.invoke('delete_session', remove(ownDelete.path, 'test-client'))).toEqual([ownDelete.path]);
+    expect(await local.failure('delete_sessions', remove(blocked.id))).toBe('Take ownership of this conversation before changing it');
+    expect(await local.invoke('delete_sessions', remove(ownDelete.id, 'test-client'))).toEqual([ownDelete.id]);
     expect(await listedIds()).toEqual([blocked.id]);
     await local.invoke('stop_pi', { runtimeId: 'blocked-runtime' });
     await open('reader-runtime', blocked.path, { readOnly: true });
@@ -207,7 +208,7 @@ test('deletion refused for another client keeps the open conversation readable a
       const history = await local.invoke('pi_command', { runtimeId: 'reader-runtime', command: { type: 'get_entries' } });
       expect(history.entries.filter((entry: any) => entry.type === 'message')).toMatchObject([{ id: 'question', message: { role: 'user', content: 'Keep while open' } }]);
     } finally { await local.invoke('stop_pi', { runtimeId: 'reader-runtime' }); }
-    expect(await local.invoke('delete_session', remove(blocked.path))).toEqual([blocked.path]);
+    expect(await local.invoke('delete_sessions', remove(blocked.id))).toEqual([blocked.id]);
     expect(await listedIds()).toEqual([]);
   } finally { await local.stop(); }
 }, 60_000);
@@ -219,12 +220,12 @@ test('another client can archive a chat open by its owner, which stops the owner
     const chat = publicSession(local.home, local.home, 'cross-client-archive', question);
     const open = (runtimeId: string, clientId: string, sessionPath: string, presence?: any) => local.invoke('start_pi', { runtimeId, clientId, cwd: local.home, sessionPath, presence });
     expect(await open('owner-runtime', 'owner-client', chat.path)).toMatchObject({ owned: true });
-    await local.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'other-client' });
+    await local.invoke('archive_session', { sessionId: chat.id, hostId: 'local', terminalIds: [], clientId: 'other-client' });
     expect(await local.failure('pi_command', { runtimeId: 'owner-runtime', command: { type: 'prompt', message: 'after archive' } })).toBe('Take ownership of this conversation before changing it');
     const archives = (await local.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').archives.filter((row: any) => row.id === chat.id);
     expect(archives).toEqual([expect.objectContaining({ id: chat.id, restorable: true })]);
     expect((await local.invoke('list_sessions')).some((row: any) => row.id === chat.id)).toBe(false);
-    await local.invoke('restore_archived_session', { sessionPath: archives[0].path, hostId: 'local', clientId: 'other-client' });
+    await local.invoke('restore_session', { sessionId: chat.id, hostId: 'local', clientId: 'other-client' });
     await open('reader-runtime', 'other-client', chat.path, { readOnly: true });
     try {
       const history = await local.invoke('pi_command', { runtimeId: 'reader-runtime', command: { type: 'get_entries' } });
@@ -247,7 +248,7 @@ test.concurrent('deleting an active chat removes it from the list and preserves 
   try {
     const target = publishedChat(daemon, 'Delete active chat');
     const other = publishedChat(daemon, 'Keep active chat');
-    expect(await daemon.invoke('delete_session', { sessionPath: target.path, hostId: 'local', clientId: 'test-client' })).toEqual([target.path]);
+    expect(await daemon.invoke('delete_sessions', { sessionIds: [target.id], hostId: 'local', clientId: 'test-client' })).toEqual([target.id]);
     expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === target.path)).toEqual({ hostId: 'local', sessionPath: target.path, sessionId: target.id });
     const rows = await daemon.invoke('list_sessions');
     expect(rows.filter((row: any) => [target.id, other.id].includes(row.id)).map((row: any) => row.id)).toEqual([other.id]);
@@ -259,12 +260,30 @@ test.concurrent('deleting an archived chat removes it from the report and preser
   try {
     const target = publishedChat(daemon, 'Delete archived chat');
     const other = publishedChat(daemon, 'Keep archived chat');
-    for (const chat of [target, other]) await daemon.invoke('archive_session', { sessionPath: chat.path, hostId: 'local', terminalIds: [], clientId: 'test-client' });
-    const before = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
-    const path = before.archives.find((row: any) => row.id === target.id).path;
-    expect(await daemon.invoke('delete_archived_session', { sessionPath: path, hostId: 'local', clientId: 'test-client' })).toEqual([path]);
-    expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionPath === path)).toEqual({ hostId: 'local', sessionPath: path, sessionId: target.id });
+    for (const chat of [target, other]) await daemon.invoke('archive_session', { sessionId: chat.id, hostId: 'local', terminalIds: [], clientId: 'test-client' });
+    mkdirSync(target.path.replace(/\.jsonl$/, '.snapshots'), { recursive: true });
+    expect(await daemon.invoke('delete_sessions', { sessionIds: [target.id], hostId: 'local', clientId: 'test-client' })).toEqual([target.id]);
+    expect(await daemon.waitEvent('pi://session-removed', payload => payload.sessionId === target.id)).toEqual({ hostId: 'local', sessionPath: target.path, sessionId: target.id });
+    expect([existsSync(target.path), existsSync(target.path.replace(/\.jsonl$/, '.snapshots')), existsSync(other.path)]).toEqual([false, false, true]);
     const after = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
     expect(after.archives.filter((row: any) => [target.id, other.id].includes(row.id)).map((row: any) => row.name)).toEqual(['Keep archived chat']);
+  } finally { await daemon.stop(); }
+}, 60000);
+
+test.concurrent('the daemon start removes the files of chats that have no session row', async () => {
+  let daemon = await startDaemon();
+  try {
+    const kept = publishedChat(daemon, 'Keep after restart');
+    const sessions = join(daemon.home, '.piop/sessions');
+    const orphan = join(sessions, '2026-01-01T00-00-00-000Z_' + crypto.randomUUID() + '.jsonl');
+    writeFileSync(orphan, JSON.stringify({ type: 'session', version: 3, id: crypto.randomUUID(), timestamp: new Date().toISOString(), cwd: daemon.home }) + '\n');
+    mkdirSync(orphan.replace(/\.jsonl$/, '.snapshots'));
+    const lone = join(sessions, 'lone.snapshots');
+    mkdirSync(lone);
+    const home = daemon.home;
+    await daemon.stop();
+    daemon = await startDaemon({ home });
+    expect([existsSync(orphan), existsSync(orphan.replace(/\.jsonl$/, '.snapshots')), existsSync(lone), existsSync(kept.path)]).toEqual([false, false, false, true]);
+    expect((await daemon.invoke('list_sessions')).map((row: any) => row.id)).toContain(kept.id);
   } finally { await daemon.stop(); }
 }, 60000);

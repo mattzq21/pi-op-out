@@ -4,8 +4,8 @@ import { userInfo } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { installName, installPi } = require('../daemon/resources/pi-install.cjs');
-const { SUPPORTED_PI_VERSION } = require('../daemon/resources/pi-runtime.cjs');
+const { installName, installPi } = require('../daemon/resources/pi-install.ts');
+const { SUPPORTED_PI_VERSION } = require('../daemon/resources/pi-runtime.ts');
 const manifest = readFileSync(new URL('../daemon/resources/pi/package.json', import.meta.url), 'utf8');
 const lockfile = readFileSync(new URL('../daemon/resources/pi/bun.lock', import.meta.url), 'utf8');
 const name = installName(manifest, lockfile);
@@ -15,6 +15,7 @@ let installed;
 
 // The Pi that the daemon installs, installed once for all tests.
 export function testPi() {
+  if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not install Pi');
   installed ??= installPi({ home: shared, manifest, lockfile, bun: 'bun' }).catch(error => { installed = undefined; throw error; });
   return installed;
 }

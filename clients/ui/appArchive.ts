@@ -5,7 +5,6 @@ import { createRef, type RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { SessionSummary } from "./types";
 import { isTemporaryChatCwd } from "./lib/sessionGroups";
-import { storageFailure } from "./lib/storageFailure";
 
 type ArchiveContext = {
   reuseSessionDraft: () => boolean;
@@ -77,7 +76,7 @@ export function createConversationArchive(context: ArchiveContext) {
 
     const recoverArchiveFailure = async (cause: unknown) => { if (isActiveSession && activeTransportRef.current === ownerTransport) { try { await ownerTransport.connect(); await capturedSession.refresh(); updateConnected(true); } catch { updateConnected(false); } }
 
-    addNotice(storageFailure("archive", cause));
+    addNotice({ title: "Could not archive conversation", message: cause instanceof Error ? cause.message : String(cause) });
 
     void syncSessionIndex(); };
 
@@ -150,7 +149,7 @@ export function createConversationArchive(context: ArchiveContext) {
       if (!isActiveSession) await capturedRuntimePool.remove(session);
       else { updateConnected(false); await ownerTransport.disconnect(); }
 
-      await capturedTransport.archiveSession(session.path, session.hostId, terminalIds);
+      await capturedTransport.archiveSession(session.id, session.hostId, terminalIds);
       removeArchivedUi();
 
       if (!isActiveSession) { await syncSessionIndex();

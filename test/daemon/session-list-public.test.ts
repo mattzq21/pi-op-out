@@ -88,7 +88,7 @@ test.concurrent('a chat renamed while its agent runs keeps one row with the new 
     await daemon.stop();
     daemon = await startDaemon({ home });
     expect((await daemon.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toMatchObject([{ path: chat.path, name: 'Renamed chat', messageCount: 1 }]);
-    await daemon.invoke('archive_session', { hostId: 'local', sessionPath: chat.path, terminalIds: [], clientId: 'rename-owner' });
+    await daemon.invoke('archive_session', { hostId: 'local', sessionId: chat.id, terminalIds: [], clientId: 'rename-owner' });
     expect((await daemon.invoke('list_sessions')).filter((row: any) => row.id === chat.id)).toEqual([]);
     const report = await daemon.invoke('storage_report');
     expect(report.hosts.find((host: any) => host.hostId === 'local').archives.find((row: any) => row.id === chat.id).name).toBe('Renamed chat');

@@ -1,44 +1,38 @@
 import { z } from 'zod';
 import { join } from 'node:path';
-import * as SessionTables from '../resources/session-database.cjs';
+import * as SessionTables from '../resources/session-database.ts';
 import { STORAGE_DIRECTORY } from './config';
 import { homeDir } from './environment';
 import { DEFAULT_TIMEOUT, hostOperation, runHostOperation } from './host_operations';
-import type { Database } from './util/db';
 
 type RecordRequest = { root: string; sessionId: string; sessionPath: string | null; cwd: string; checkedAt: number };
 
 const recordOperation = hostOperation<RecordRequest, null>('record-session-directory', 'general', DEFAULT_TIMEOUT, z.null());
 
 export function ids(root: string): string[] {
-  return (connection(root).prepare('SELECT session_id FROM sessions').all() as Array<{ session_id: string }>).map(row => row.session_id);
+  return SessionTables.registeredSessionIds(root);
 }
 
 export function reserve(root: string): string {
-  return SessionTables.reserveId(connection(root));
+  return SessionTables.reserveId(root);
 }
 
 // Gives back an identity that was reserved and not used for a saved chat.
 export function releaseReservation(root: string, id: string): void {
-  connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
+  SessionTables.releaseReservedSession(root, id);
 }
 
-export function pending(root: string, work: 'transaction' | 'recovery' | 'retention'): boolean {
-  return SessionTables.pending(connection(root), work);
+// True when a deletion asked for cleanup that has not finished.
+export function cleanupPending(root: string): boolean {
+  return SessionTables.hasCleanupRequests(root);
 }
 
 export function setTaskRunning(root: string, id: string, running: boolean): void {
-  const database = connection(root);
-  if (running) database.prepare('INSERT OR IGNORE INTO running_tasks SELECT session_id FROM sessions WHERE session_id=?').run(id);
-  else database.prepare('DELETE FROM running_tasks WHERE session_id=?').run(id);
+  SessionTables.setRunningTask(root, id, running);
 }
 
 export function runningTasks(root: string): string[] {
-  return (connection(root).prepare('SELECT session_id FROM running_tasks').all() as Array<{ session_id: string }>).map(row => row.session_id);
-}
-
-export function requestCleanup(root: string, kind: 'goal'): void {
-  SessionTables.markCleanup(root, kind);
+  return SessionTables.runningTaskIds(root);
 }
 
 export function record(state: any, cwd: string | undefined | null): void {
@@ -63,8 +57,4 @@ async function writeRecords(): Promise<void> {
       catch (error: any) { console.error(`Session registry: ${error?.message ?? error}`); }
     }
   } finally { recording = false; }
-}
-
-export function connection(root: string): Database {
-  return SessionTables.connection(root);
 }

@@ -1,4 +1,4 @@
-import { defaultPluginSettings, parsePluginSettings } from './plugin_contributions';
+import { defaultPluginSettings, parsePluginSettings } from './plugins';
 import { z } from 'zod';
 import { appSettingsSchema, USAGE_INDICATORS, type AppSettings, type RemoteHost, type UsageIndicator } from '../../protocol/settings';
 import { capRangeError } from '../../pi-extensions/piop-context-window-cap/interface';

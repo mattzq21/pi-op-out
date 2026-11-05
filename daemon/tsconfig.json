@@ -16,11 +16,17 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "noUncheckedIndexedAccess": false,
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": true,
     "useUnknownInCatchVariables": false,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "@earendil-works/*": [
+        "../target/pi-modules/@earendil-works/*"
+      ]
+    }
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "resources/**/*.ts"
   ]
 }

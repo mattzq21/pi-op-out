@@ -1,8 +1,7 @@
 import { Key } from "@solid-primitives/keyed";
 import { Archive, ArchiveRestore,  RefreshCw, Search } from "lucide-solid";
 import { createMemo, createSignal, Show } from "solid-js";
-import { loadStorageReport, restoreArchivedConversation } from "../lib/nativeTransport";
-import { storageFailureText } from "../lib/storageFailure";
+import { loadStorageReport, restoreConversation } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import { IconButton } from "./IconButton";
 import type { StorageReport } from "../types";
@@ -41,14 +40,14 @@ export function ArchivedSessionPanel() {
 
   createDependencyEffect(() => { void refresh(); }, () => []);
 
-  const restore = async (hostId: string, path: string) => {
+  const restore = async (hostId: string, id: string) => {
     if (restoring()) return;
-    setRestoring(`${hostId}:${path}`); setError(undefined);
+    setRestoring(`${hostId}:${id}`); setError(undefined);
     let failure: string | undefined;
 
     try {
-      try { await restoreArchivedConversation(path, hostId); }
-      catch (reason) { failure = storageFailureText("restore", reason); }
+      try { await restoreConversation(id, hostId); }
+      catch (reason) { failure = `Could not restore conversation. ${reason instanceof Error ? reason.message : String(reason)}`; }
       await refresh();
 
       if (failure) setError(failure);
@@ -86,13 +85,13 @@ export function ArchivedSessionPanel() {
         <div class="project-label"><span>{host().hostName}</span></div>
         <Show when={host().error}><p class="group-error" role="alert">{host().error}</p></Show>
         <Key each={host().warnings} by={warning => warning}>{warning => <p class="group-error" role="status">{warning()}</p>}</Key>
-        <Key each={host().archives} by={archive => archive.path}>{archive => <div class="session-item" data-tooltip={archive().cwd}>
+        <Key each={host().archives} by={archive => archive.id}>{archive => <div class="session-item" data-tooltip={archive().cwd}>
           <div class="session-main"><div class="session-copy">
             <div class="session-title-row"><strong>{archive().name}</strong></div>
             <small class="archived-session-detail">{archive().cwd}</small>
             <small class="archived-session-detail">{formatDateTime(new Date(archive().modifiedAt * 1000))}</small>
           </div></div>
-          <Show when={archive().restorable}><IconButton label={`Restore ${archive().name} to active sessions`} disabled={Boolean(restoring())} onClick={() => void restore(host().hostId, archive().path)}>{restoring() === `${host().hostId}:${archive().path}` ? <RefreshCw size={15} class="spinning" /> : <ArchiveRestore size={15} />}</IconButton></Show>
+          <Show when={archive().restorable}><IconButton label={`Restore ${archive().name} to active sessions`} disabled={Boolean(restoring())} onClick={() => void restore(host().hostId, archive().id)}>{restoring() === `${host().hostId}:${archive().id}` ? <RefreshCw size={15} class="spinning" /> : <ArchiveRestore size={15} />}</IconButton></Show>
         </div>}</Key>
       </section>}</Key>
       <Show when={!loading() && !error() && hosts().every(host => !host.archives.length && !host.error)}><p class="empty-small">{query().trim() ? "No matching archived sessions." : "No archived sessions."}</p></Show>

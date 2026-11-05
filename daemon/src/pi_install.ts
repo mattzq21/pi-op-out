@@ -1,4 +1,4 @@
-import { installPi } from '../resources/pi-install.cjs';
+import { installPi } from '../resources/pi-install.ts';
 import manifest from '../resources/pi/package.json?raw' with { type: 'text' };
 import lockfile from '../resources/pi/bun.lock?raw' with { type: 'text' };
 import { homeDir } from './environment';

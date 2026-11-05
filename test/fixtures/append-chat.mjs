@@ -3,7 +3,6 @@ import { readFileSync, realpathSync, mkdtempSync, rmSync, existsSync } from 'nod
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
 import { testPi } from '../pi-install.mjs';
 
 const { home, path, message } = JSON.parse(readFileSync(0, 'utf8'));
@@ -15,7 +14,7 @@ try {
   const outfile = join(directory, 'storage.mjs');
   await build({
     entryPoints: ['test/session-storage-entry.mjs'], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22',
-    logLevel: 'silent', plugins: [storageSchemaImports()],
+    logLevel: 'silent',
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
   const { installSessionStorage, localTranscriptWrites } = await import(pathToFileURL(outfile));

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import * as SessionDatabase from '../../daemon/resources/session-database.cjs';
+import * as SessionDatabase from '../../daemon/resources/session-database.ts';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { startDaemon, waitForSessions, type TestDaemon } from './harness';
@@ -84,8 +84,7 @@ test('a chat in its own Piop worktree joins the group of the repository folder, 
   } finally { db.close(); }
   const path = join(root, 'sessions/groups', id + '.jsonl'); mkdirSync(join(root, 'sessions/groups'), { recursive: true });
   writeFileSync(path, JSON.stringify({ type: 'session', version: 3, id, cwd: worktree }) + '\n' + JSON.stringify({ type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Hello' } }) + '\n');
-  const registry = SessionDatabase.connection(root);
-  SessionDatabase.bind(registry, id, path);
+  SessionDatabase.bind(root, id, path);
   await waitForSessions(daemon, rows => rows.some(row => row.id === id));
   const state = await load();
   expect(state.assignments['local:' + id]).toBe(named);

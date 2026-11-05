@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { call } from "../storage-channel.cjs";
+import { call } from "../storage-channel.ts";
 import type { SubagentRun } from "../session-broker/subagent-identity.ts";
 
 export { resultNotificationId } from "../session-broker/subagent-identity.ts";

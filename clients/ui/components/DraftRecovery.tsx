@@ -54,9 +54,9 @@ export function DraftRecovery(props: Props) {
         </div>
         <Show when={preparedGoals().has(submission.id)}><div role="status">
           <Show when={preparedGoals().get(submission.id)} fallback={<p>No saved goal preparation was found for this submission.</p>}>{prepared => <>
-            <p>{prepared().sessionSaved ? "This objective was prepared and saved. Check its conversation before retrying the original input." : "The goal files are saved, but its conversation has not been published. Restore the original input to retry using these files."}</p>
+            <p>This submission set the goal of its conversation. Check that conversation before retrying the original input.</p>
             <pre style={{ "white-space": "pre-wrap" }}>{prepared().objective}</pre>
-            <Show when={prepared().sessionSaved}><button disabled={busy()} onClick={() => props.onSelect({ ...destinationSession(submission.destination), id: prepared().sessionId, path: prepared().sessionPath ?? "", cwd: prepared().cwd, isDraft: false, name: "Prepared goal", preview: prepared().objective })}>Open prepared conversation</button></Show>
+            <button disabled={busy()} onClick={() => props.onSelect({ ...destinationSession(submission.destination), id: prepared().sessionId, path: prepared().sessionPath, cwd: prepared().cwd, isDraft: false, name: "Prepared goal", preview: prepared().objective })}>Open prepared conversation</button>
           </>}</Show>
         </div></Show>
       </details></Show>}</For>

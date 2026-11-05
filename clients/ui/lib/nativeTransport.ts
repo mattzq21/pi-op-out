@@ -51,9 +51,9 @@ export const loadStorageReport = async (hostId?: string, archivesOnly = false, a
 };
 
 
-export const deleteArchivedConversations = (sessionPaths: string[], hostId = "local") => call("delete_archived_session", { sessionPath: sessionPaths[0], sessionPaths, hostId });
+export const deleteConversations = (sessionIds: string[], hostId = "local") => call("delete_sessions", { sessionIds, hostId });
 
-export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId });
+export const restoreConversation = (sessionId: string, hostId = "local") => call("restore_session", { sessionId, hostId });
 
 export class NativeTransport {
   readonly promptControls = new PromptControls();
@@ -619,7 +619,7 @@ export class NativeTransport {
 
   return () => this.listeners.delete(listener); }
   listSessions() { return call("list_sessions"); }
-  archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionPath, hostId, terminalIds }); }
+  archiveSession(sessionId: string, hostId = "local", terminalIds: string[] = []) { return call("archive_session", { sessionId, hostId, terminalIds }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call("relocate_session", { sessionPath, cwd, hostId }); }
   recoverMissingSession(sessionPath: string, hostId = "local") { return recoverSessionDirectory(sessionPath, hostId); }
   openProjectDirectory(cwd: string, hostId = "local") { return call("open_project_directory", { cwd, hostId }); }

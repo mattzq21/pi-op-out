@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { installDom, renderComponent, act, attributeBecomes, untilDom } from '../dom.mjs';
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
 import { daemonClient } from '../daemon-client.mjs';
@@ -48,7 +47,7 @@ async function archivedPanel(t, archives, { remotes, initial } = {}) {
     const home = await daemon.invoke('home_directory', { hostId });
     if (!publishers.has(home)) publishers.set(home, chatPublisher(t, { home }));
     chats[key] = await publishers.get(home)({ content: JSON.stringify({ type: 'message', id: 'question', parentId: null, message: { role: 'user', content: name } }) + '\n' + (kind ? JSON.stringify({ type: 'custom', id: 'parent-marker', parentId: 'question', customType: 'piop-auxiliary-parent', data: { kind, parentSessionId: 'root' } }) + '\n' : '') });
-    await daemon.invoke('archive_session', { hostId, sessionPath: chats[key].path, terminalIds: [], clientId: 'archived-panel-test' });
+    await daemon.invoke('archive_session', { hostId, sessionId: chats[key].id, terminalIds: [], clientId: 'archived-panel-test' });
   }
   const held = initial?.(gate);
   mockWindows('main');
@@ -88,7 +87,7 @@ async function assertRestoredOnce({ daemon, chats, button, view }, name) {
 test('restoring an archived chat blocks other restores until the reply arrives, then shows the chat once in active sessions', { timeout: 60000 }, async t => {
   const { daemon, view, chats, settle, gate, button } = await archivedPanel(t, ['Restore me', 'Keep archived']);
   await settle();
-  const restoreReply = gate('restore_archived_session');
+  const restoreReply = gate('restore_session');
   const restore = button('Restore me');
   const other = button('Keep archived');
   assert.ok(restore && other);
@@ -117,7 +116,7 @@ test('restoring a chat while a refresh is loading still removes it once the olde
   assert.ok(restore);
 
   const reports = holdComputedReports(gate);
-  const restoreCall = gate('restore_archived_session');
+  const restoreCall = gate('restore_session');
   restoreCall.release();
   await act(() => refreshButton().click());
   await reports.reached();
@@ -179,27 +178,6 @@ test('the archive of this machine shows while the full archive report is loading
   assert.equal(view.container.querySelector('[role="alert"]'), null);
 });
 
-test('a restore blocked by an occupied destination shows the error and keeps the chat archived, then a retry after the destination is freed restores it once', { timeout: 60000 }, async t => {
-  const panel = await archivedPanel(t, ['Restore after conflict']);
-  const { view, chats, settle, button } = panel;
-  await settle();
-  writeFileSync(chats['Restore after conflict'].path, 'occupant');
-  let occupied = true;
-  t.after(() => { if (occupied) unlinkSync(chats['Restore after conflict'].path); });
-
-  await act(() => button('Restore after conflict').click());
-  await settle();
-  assert.match(view.container.querySelector('[role="alert"]')?.textContent ?? '', /Restoration destination already exists/);
-  assert.equal(button('Restore after conflict')?.disabled, false);
-  assert.equal(readFileSync(chats['Restore after conflict'].path, 'utf8'), 'occupant');
-
-  unlinkSync(chats['Restore after conflict'].path);
-  occupied = false;
-  await act(() => button('Restore after conflict').click());
-  await settle();
-  await assertRestoredOnce(panel, 'Restore after conflict');
-});
-
 test('refreshing while a restore is pending still removes the chat once the archive report computed before the restore arrives', { timeout: 60000 }, async t => {
   const panel = await archivedPanel(t, ['Restore me', 'Keep archived']);
   const { settle, gate, button, refreshButton } = panel;
@@ -207,7 +185,7 @@ test('refreshing while a restore is pending still removes the chat once the arch
   const restore = button('Restore me');
   assert.ok(restore);
 
-  const restoreCall = gate('restore_archived_session', 'send');
+  const restoreCall = gate('restore_session', 'send');
   await act(() => restore.click());
   await restoreCall.reached();
 
@@ -234,5 +212,5 @@ for (const kind of ['subagent', 'review', 'btw']) test(`an archived ${kind} chat
   const report = await panel.daemon.invoke('storage_report');
   const auxiliary = report.hosts.flatMap(host => host.archives).find(archive => archive.id === panel.chats['Auxiliary chat'].id);
   assert.equal(auxiliary.restorable, false);
-  await assert.rejects(panel.daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: auxiliary.path, clientId: 'archived-panel-test' }), /Auxiliary sessions can only be restored with their root session/);
+  await assert.rejects(panel.daemon.invoke('restore_session', { hostId: 'local', sessionId: auxiliary.id, clientId: 'archived-panel-test' }), /Auxiliary sessions can only be restored with their root session/);
 });

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import * as Endpoint from '../daemon_endpoint';
-import * as Records from '../../resources/application-records.cjs';
-import * as Contributions from '../plugin_contributions';
-import { catalog } from '../plugin_catalog';
+import * as Endpoint from '../service';
+import * as Records from '../../resources/application-records.ts';
+import * as Contributions from '../plugins';
+import { catalog } from '../plugins';
 import type { PluginStatus } from '../../../protocol/plugins';
 import { RwLock, errorText } from '../util/sync';
 

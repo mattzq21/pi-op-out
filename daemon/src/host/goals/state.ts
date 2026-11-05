@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { restore as restoreSaved, write as writeSaved } from '../../../resources/piop-storage/goals.cjs';
+import { restore as restoreSaved, write as writeSaved } from '../../../resources/piop-storage/goals.ts';
 import { goalChangedPrompt, goalPrompt } from './prompts';
-import type { GoalPlace } from './files';
+import { agentObjective, type GoalPlace } from './files';
 
 export type GoalStatus = 'active' | 'complete';
-export type Goal = { id: string; sessionId: string; objective: string; status: GoalStatus };
+export type Goal = { id: string; sessionId: string; objective: string; status: GoalStatus; submissionId?: string };
 
 export const GOAL_PROMPT = 'piop-goal-context';
 
@@ -36,21 +36,26 @@ export class QueueGoal {
     return this.goal;
   }
 
-  create(place: GoalPlace, objective: string, id: string = randomUUID()): Goal {
-    return { id, sessionId: place.sessionId, objective, status: 'active' };
+  create(place: GoalPlace, objective: string, id: string = randomUUID(), submissionId?: string): Goal {
+    return { id, sessionId: place.sessionId, objective, status: 'active', ...submissionId ? { submissionId } : {} };
   }
 
   save(place: GoalPlace, next: Goal | null): void {
     if (next && next.sessionId !== place.sessionId) throw new Error('Goal belongs to another conversation');
     writeSaved(place.file, place.sessionId, next);
     this.goal = next && { ...next };
+    // The goal row owns the goal file now, so a cleanup that ran since the file was written keeps it from here on.
+    if (next) agentObjective(place, next.objective);
     if (!this.live()) this.waitingForInput = false;
   }
 
-  prompt(): ContextInsertion {
+  // The objective as the agent gets it.
+  shown(place: GoalPlace, goal: Goal): Goal { return { ...goal, objective: agentObjective(place, goal.objective) }; }
+
+  prompt(place: GoalPlace): ContextInsertion {
     const goal = this.require();
     this.seen = goal.objective;
-    return { customType: GOAL_PROMPT, content: goalPrompt(goal), display: true, details: { goalId: goal.id } };
+    return { customType: GOAL_PROMPT, content: goalPrompt(this.shown(place, goal)), display: true, details: { goalId: goal.id } };
   }
 
   notice(text: string): ContextInsertion {
@@ -67,9 +72,9 @@ export class QueueGoal {
     this.seen = objective;
   }
 
-  unseenEdit(): string | undefined {
+  unseenEdit(place: GoalPlace): string | undefined {
     if (!this.goal || this.seen === undefined || this.seen === this.goal.objective) return undefined;
-    return goalChangedPrompt(this.goal) ?? undefined;
+    return goalChangedPrompt(this.shown(place, this.goal)) ?? undefined;
   }
 
   markSeen(): void { if (this.goal) this.seen = this.goal.objective; }

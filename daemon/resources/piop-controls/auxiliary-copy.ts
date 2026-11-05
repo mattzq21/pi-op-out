@@ -2,11 +2,9 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { AUXILIARY_PARENT, canFork, isCurrent } from "../piop-storage/session-records.cjs";
-import { reserveSessionId, retainHistory, writeSessionFile, type SessionPublication } from "../piop-storage/session-file.ts";
-import { rootForDirectory } from "../piop-storage/goal-assets.cjs";
+import { AUXILIARY_PARENT, canFork, isCurrent } from "../piop-storage/session-records.ts";
+import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
 import { currentHost } from "../session-broker/client.ts";
-import { releaseForkAssets, retainedFork } from "./fork.ts";
 import type { AuxiliaryCopy } from "./interface.ts";
 
 type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
@@ -54,25 +52,9 @@ export async function copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy) 
 
   entries.push(
     { type: "custom", customType: "piop-input-hold", data: { held: true }, id: randomUUID(), parentId: null, timestamp },
-    { type: "custom", customType: AUXILIARY_PARENT, id: randomUUID(), parentId: history.at(-1)?.id ?? null, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId, parentHostId: host, parentSessionPath: source } },
+    { type: "custom", customType: AUXILIARY_PARENT, id: randomUUID(), parentId: history.at(-1)?.id ?? null, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId, parentHostId: host } },
   );
-  const root = rootForDirectory(ctx.sessionManager.getSessionDir());
-  let publication: SessionPublication | undefined;
-  let goalAssets: ReturnType<typeof retainHistory> | undefined;
-
-  try {
-    goalAssets = retainHistory(root, [{ ...header, parentSession: source }, ...entries], sessionId, sessionPath);
-    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource: undefined, goalAssets }, ...entries], {
-      name: copy.name,
-      dependencies: { workspace: { path: cwd, kind: "existing" } },
-    });
-  } catch (error) {
-    if (retainedFork(error instanceof Error ? error : undefined, publication)) {
-      throw new Error(`Side chat recovery is pending at ${sessionPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-    releaseForkAssets(ctx, goalAssets, sessionId, sessionPath);
-    throw error;
-  }
+  await createChat({ path: sessionPath, name: copy.name, entries: [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource: undefined }, ...entries] });
 
   return { hostId: host, sessionId, sessionPath, cwd, parentSessionId };
 }

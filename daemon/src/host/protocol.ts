@@ -2,7 +2,7 @@ import { closeSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { kind } from './json';
-import { pluginRequest } from '../plugin_contributions';
+import { pluginRequest } from '../plugins';
 
 export { kind, text, flag, array, messageText } from './json';
 

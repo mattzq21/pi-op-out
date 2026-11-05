@@ -67,7 +67,7 @@ test.concurrent('closing an unused temporary chat keeps the subfolder of an arch
         type: 'message', id: 'question', parentId: null, message: { role: 'user', content: 'Archived in a temporary folder', timestamp: 1 },
       }) + '\n' }),
     }));
-    await daemon.invoke('archive_session', { hostId: 'local', sessionPath: saved.path, terminalIds: [], clientId: 'archived-reference-test' });
+    await daemon.invoke('archive_session', { hostId: 'local', sessionId: saved.id, terminalIds: [], clientId: 'archived-reference-test' });
     await daemon.invoke('start_pi', { runtimeId, clientId: 'temporary-client', cwd: temporary.cwd, sessionId: temporary.sessionId });
     await daemon.waitEvent('pi://event', packet => packet.runtimeId === runtimeId
       && packet.event?.type === 'settings_pending' && packet.event.pending === false);
@@ -77,8 +77,8 @@ test.concurrent('closing an unused temporary chat keeps the subfolder of an arch
 
     const report = (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local');
     expect(report.warnings.some((line: string) => line.includes('Temporary folder cleanup'))).toBe(false);
-    const archives = report.archives;
-    await daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archives.find((row: any) => row.id === saved.id).path, clientId: 'archived-reference-test' });
+    expect(report.archives.some((row: any) => row.id === saved.id)).toBe(true);
+    await daemon.invoke('restore_session', { hostId: 'local', sessionId: saved.id, clientId: 'archived-reference-test' });
     expect((await daemon.invoke('list_sessions')).find((row: any) => row.id === saved.id))
       .toMatchObject({ cwd: project, cwdExists: true, preview: 'Archived in a temporary folder' });
     const reader = 'archived-reference-reader';
@@ -87,7 +87,7 @@ test.concurrent('closing an unused temporary chat keeps the subfolder of an arch
       expect((await daemon.invoke('pi_command', { runtimeId: reader, command: { type: 'get_entries' } })).entries)
         .toMatchObject([{ id: 'question', message: { role: 'user', content: 'Archived in a temporary folder' } }]);
     } finally { await daemon.invoke('stop_pi', { runtimeId: reader }); }
-    await daemon.invoke('delete_session', { hostId: 'local', sessionPath: saved.path, clientId: 'archived-reference-test' });
+    await daemon.invoke('delete_sessions', { hostId: 'local', sessionIds: [saved.id], clientId: 'archived-reference-test' });
     expect(existsSync(temporary.cwd)).toBe(false);
   } finally { await daemon.stop(); }
 }, 60_000);

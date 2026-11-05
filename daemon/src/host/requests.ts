@@ -26,7 +26,7 @@ export interface MutationRequest {
   operation: 'archive' | 'delete' | 'relocate' | 'restore';
 }
 
-export interface MutationEnd { token: string; success: boolean; restoredPath?: string }
+export interface MutationEnd { token: string; success: boolean }
 
 export type OrchestrationRequest = { sessionKey: string } & (
   | { action: 'locate' | 'preview' | 'branch_off' | 'read'; sessionPath?: string }

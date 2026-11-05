@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fakePi, fakeProgram, startDaemon, type TestDaemon } from './harness';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { recordTools } from '../../daemon/src/tool_inventory';
+import { recordTools } from '../../daemon/src/inventories/tools';
 
 let daemon: TestDaemon;
 let root: string;

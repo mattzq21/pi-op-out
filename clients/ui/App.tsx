@@ -87,7 +87,7 @@ export default function App(props: { suppressConnectionNotices?: boolean } = {})
 
         if (!location.archived) addNotice({ title: "Could not open the chat", message: "It is not in the chat list." });
         else if (location.auxiliary) addNotice({ title: "Could not open the chat", message: `“${name}” is archived and can not be restored.` });
-        else setArchivedLink({ hostId, sessionId, sessionPath: location.sessionPath, name, anchor });
+        else setArchivedLink({ hostId, sessionId, name, anchor });
       }, reason => { if (click === linkClick) addNotice({ title: "Could not open the chat", message: reason instanceof Error ? reason.message : String(reason) }); });
     },
   };

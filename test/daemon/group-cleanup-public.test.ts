@@ -30,7 +30,7 @@ test('group cleanup keeps assignments of an unreachable machine and removes dele
   await change({ type: 'assign', key: 'local:' + local.id, group });
 
   await useRemotes(daemon, [{ id: 'server', name: 'Server', target: 'server-unreachable', unreachable: true }]);
-  expect(await daemon.invoke('delete_session', { sessionPath: local.path, hostId: 'local', clientId: 'cleanup-test' })).toEqual([local.path]);
+  expect(await daemon.invoke('delete_sessions', { sessionIds: [local.id], hostId: 'local', clientId: 'cleanup-test' })).toEqual([local.id]);
   const state = await daemon.invoke('load_session_groups', { seeds: [] });
   expect(state.assignments).toEqual({ ['server:' + remote.id]: group });
 

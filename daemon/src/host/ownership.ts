@@ -1,17 +1,17 @@
-import * as SessionRecords from "../../resources/piop-storage/session-records.cjs";
-import { sessionName } from "../../resources/session-broker/session-names.cjs";
+import * as SessionRecords from "../../resources/piop-storage/session-records.ts";
+import { sessionName } from "../../resources/session-broker/session-names.ts";
 import { randomUUID } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
-import * as ConversationStorage from '../conversation_storage';
-import * as RestoreRecovery from '../restore_recovery';
-import * as Registry from '../session_registry';
-import * as ChildIndex from '../../resources/session-broker/session-child-index.cjs';
-import { getProjectRepository } from '../project_repositories';
-import * as StorageLocks from '../../resources/storage-locks.cjs';
+import * as ConversationStorage from '../storage';
+import * as SessionTables from '../../resources/session-database.ts';
+import * as ChildIndex from '../../resources/session-broker/session-child-index.ts';
+import { getProjectRepository } from '../projects';
+import * as StorageLocks from '../../resources/storage-locks.ts';
 import { flag } from './json';
 import { readHeaderLine } from './protocol';
 import { errorText } from '../util/sync';
+import * as SessionLifecycle from '../storage/lifecycle.ts';
 
 export function ownershipError(): string { return 'Take ownership of this conversation before changing it'; }
 
@@ -44,22 +44,17 @@ export class Guard {
     this.release(ownership, false);
   }
 
-  async restoreFinished(ownership: ConversationOwnership, path: string | null | undefined): Promise<void> {
-    try { await RestoreRecovery.recover(ownership.root); } catch (error) { this.drop(); throw error; }
+  restoreFinished(ownership: ConversationOwnership, path: string | null | undefined): void {
     let saved: SavedConversation | null;
     try { saved = ownership.locate(this.id, path, false, true); } catch (error) { this.drop(); throw error; }
     if (saved) return this.restored(ownership, saved.path);
     this.release(ownership, false);
   }
 
-  release(ownership: ConversationOwnership, deleted: boolean): void {
+  // An archived or deleted chat has no owner.
+  release(ownership: ConversationOwnership, removed: boolean): void {
     try {
-      if (deleted && this.owned && this.lock) ConversationStorage.remove(ownership.root, ConversationOwnership.key(this.id));
-      else if (this.archived && this.owned && this.lock) {
-        this.record.deleted = true;
-        this.record.client = null;
-        ownership.write(this.id, this.record);
-      }
+      if ((removed || this.archived) && this.owned && this.lock) ConversationStorage.remove(ownership.root, ConversationOwnership.key(this.id));
     } finally { this.drop(); }
   }
 
@@ -76,10 +71,8 @@ function optionalPath(path: string): string | null {
   }
 }
 
-export function registeredPath(root: string, id: string): string | null {
-  const database = Registry.connection(root);
-  const row: any = database.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id);
-  return typeof row?.session_path === 'string' ? row.session_path : null;
+function registered(root: string, id: string): { path: string; archived: boolean; revision: number } | null {
+  return SessionTables.savedSessionRevision(root, id);
 }
 
 export class ConversationOwnership {
@@ -94,7 +87,6 @@ export class ConversationOwnership {
   private constructor(readonly root: string, private revocation: Revocation) {}
 
   static async create(home: string, storage: string, revocation: Revocation): Promise<ConversationOwnership> {
-    await RestoreRecovery.recover(join(home, storage));
     return new ConversationOwnership(join(home, storage), revocation);
   }
 
@@ -124,7 +116,7 @@ export class ConversationOwnership {
     if (!record) return false;
     const released = allowReleased && (typeof record.client !== 'string' || record.client === '')
       && record.previousClient === client && record.token === this.token;
-    return client !== '' && !flag(record, 'deleted') && (record.client === client || released);
+    return client !== '' && (record.client === client || released);
   }
 
   read(id: string): any | null {
@@ -136,17 +128,17 @@ export class ConversationOwnership {
     ConversationStorage.write(this.root, ConversationOwnership.key(id), JSON.stringify(record));
   }
 
+  // The saved conversation id when it is archived, or not. path, when given, must be its transcript.
   locate(id: string, path: string | null | undefined, archived: boolean, metadataOnly: boolean): SavedConversation | null {
-    const root = optionalPath(join(this.root, archived ? 'archived' : 'sessions'));
-    if (root === null) return null;
-    let candidate: string;
-    if (path) candidate = path;
-    else {
-      const registered = registeredPath(this.root, id);
-      if (registered === null || !within(registered, root)) return null;
-      candidate = registered;
-    }
-    return readCandidate(id, candidate, root, metadataOnly);
+    const saved = registered(this.root, id);
+    if (saved === null || saved.archived !== archived) return null;
+    if (path && optionalPath(path) !== saved.path) return null;
+    return this.savedAt(id, saved, metadataOnly);
+  }
+
+  private savedAt(id: string, registration: { path: string; revision: number }, metadataOnly: boolean): SavedConversation | null {
+    const root = optionalPath(join(this.root, 'sessions'));
+    return root === null ? null : readCandidate(id, registration.path, root, 'saved:' + id + ':' + registration.revision, metadataOnly);
   }
 
   private async releasePrevious(id: string, record: any, intent: string): Promise<void> {
@@ -164,13 +156,13 @@ export class ConversationOwnership {
       for (const member of [id, ...members].sort()) locks.set(member, await this.lock(member, false));
       const record = this.read(id);
       const previous = record ?? null;
-      const saved = this.savedForClaim(id, previous, options);
-      const others = members.map(member => [member, this.read(member)] as const).filter(([, member]) => ownedByOther(member, client) && !flag(member, 'deleted'));
+      const saved = this.savedForClaim(id, options);
+      const others = members.map(member => [member, this.read(member)] as const).filter(([, member]) => ownedByOther(member, client));
       if (claimBlocked(previous, client, options) || (others.length && !flag(options, 'take'))) { for (const lock of locks.values()) lock.release(); return Guard.unowned(); }
       workerLock = await this.claimWorkerLock(id, record, client, options);
       for (const [member, previousMember] of others) await this.transferMember(member, previousMember);
-      for (const [member, previousMember] of others) this.write(member, { client, token: this.token, deleted: false, ...(typeof previousMember.path === 'string' ? { path: previousMember.path } : {}) });
-      const next = this.writeClaim(id, client, saved);
+      for (const [member] of others) this.write(member, { client, token: this.token });
+      const next = this.writeClaim(id, client);
       if (!exclusiveMutation(options)) { workerLock?.release(); workerLock = null; }
       releaseMembers();
       const guard = new Guard();
@@ -211,15 +203,14 @@ export class ConversationOwnership {
     return this.lock(id, true);
   }
 
-  private writeClaim(id: string, client: string, saved: SavedConversation | null): any {
-    const next: any = { client, token: this.token, deleted: false };
-    if (saved) next.path = saved.path;
+  private writeClaim(id: string, client: string): any {
+    const next = { client, token: this.token };
     this.write(id, next);
     return next;
   }
 
-  private savedForClaim(id: string, previous: any, options: any): SavedConversation | null {
-    const path = typeof options?.path === 'string' && options.path !== '' ? options.path : (typeof previous?.path === 'string' ? previous.path : null);
+  private savedForClaim(id: string, options: any): SavedConversation | null {
+    const path = typeof options?.path === 'string' && options.path !== '' ? options.path : null;
     const saved = this.locate(id, path, flag(options, 'archived'), false);
     if (!saved && !flag(options, 'create')) throw new Error('This conversation has been deleted or archived');
     return saved;
@@ -236,7 +227,7 @@ export class ConversationOwnership {
     try {
       const record = this.read(id);
       if (!record) return;
-      if (!unused() || record.client !== client || record.token !== this.token || flag(record, 'deleted')) return;
+      if (!unused() || record.client !== client || record.token !== this.token) return;
       record.client = null;
       record.previousClient = client;
       this.write(id, record);
@@ -296,8 +287,7 @@ export class ConversationOwnership {
   }
 
   removed(id: string): boolean {
-    const exists = Boolean((Registry.connection(this.root).prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?) AS found').get(id) as any).found);
-    return !exists || flag(this.read(id), 'deleted');
+    return !SessionTables.sessionRowExists(this.root, id);
   }
 
   lookup(id: string): any {
@@ -318,21 +308,15 @@ export class ConversationOwnership {
 
   lookupSaved(id: string, metadataOnly: boolean): [SavedConversation, boolean] | null {
     ConversationOwnership.key(id);
-    const path = registeredPath(this.root, id);
-    if (path === null) return null;
-    for (const archived of [false, true]) {
-      const root = optionalPath(join(this.root, archived ? 'archived' : 'sessions'));
-      if (root === null || !within(path, root)) continue;
-      const saved = readCandidate(id, path, root, metadataOnly);
-      if (saved && saved.header?.type === 'session' && typeof saved.header?.cwd === 'string') return [saved, archived];
-      return null;
-    }
-    return null;
+    const registration = registered(this.root, id);
+    if (registration === null) return null;
+    const saved = this.savedAt(id, registration, metadataOnly);
+    return saved && saved.header?.type === 'session' && typeof saved.header?.cwd === 'string' ? [saved, registration.archived] : null;
   }
 }
 
 function claimBlocked(previous: any, client: string, options: any): boolean {
-  return ownedByOther(previous, client) && !flag(options, 'take') && !flag(options, 'archive') && !(flag(options, 'archived') && flag(previous, 'deleted'));
+  return ownedByOther(previous, client) && !flag(options, 'take') && !flag(options, 'archive');
 }
 
 function ownedByOther(previous: any, client: string): boolean {
@@ -352,23 +336,12 @@ function validateSavedPath(path: string, root: string): void {
   if (!within(path, root) || path === root || extname(path) !== '.jsonl' || path.endsWith('/.jsonl')) throw new Error('Invalid conversation path');
 }
 
-export function savedConversationIn(rootPath: string, id: string): boolean {
-  const root = optionalPath(rootPath);
-  if (root === null) return false;
-  const profile = dirname(root);
-  const path = registeredPath(profile, id);
-  if (path === null || !within(path, root)) return false;
-  return readCandidate(id, path, root, true) !== null;
-}
-
-export function readCandidate(id: string, original: string, root: string, metadataOnly: boolean): SavedConversation | null {
+function readCandidate(id: string, original: string, root: string, revision: string, metadataOnly: boolean): SavedConversation | null {
   const path = optionalPath(original);
   if (path === null) return null;
   validateSavedPath(path, root);
-  const found = readSavedHeader(id, path);
-  if (!found) return null;
-  const [header, metadata] = found;
-  const revision = savedRevision(id, metadata) + ":" + SessionRecords.revision(path, id);
+  const header = readSavedHeader(id, path);
+  if (!header) return null;
   let lines: string[] = [];
   if (!metadataOnly) {
     const saved = readSavedLines(id, path);
@@ -393,22 +366,13 @@ function readSavedLines(id: string, path: string): string[] | null {
   return lines;
 }
 
-function readSavedHeader(id: string, path: string): [any, import('node:fs').BigIntStats] | null {
-  let metadata: import('node:fs').BigIntStats;
+function readSavedHeader(id: string, path: string): any {
   let line: string;
-  try {
-    metadata = statSync(path, { bigint: true });
-    line = readHeaderLine(path);
-  } catch (error: any) {
+  try { line = readHeaderLine(path); } catch (error: any) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
   let header: any;
   try { header = JSON.parse(line); } catch { return null; }
-  if (header?.id !== id) return null;
-  return [header, metadata];
-}
-
-function savedRevision(id: string, metadata: import('node:fs').BigIntStats): string {
-  return id + ':' + metadata.dev + ':' + metadata.ino + ':' + metadata.size + ':' + metadata.mtimeNs + ':' + metadata.ctimeNs;
+  return header?.id === id ? header : null;
 }

@@ -11,7 +11,7 @@ import { COMMANDS, isCommand, type CommandInput, type CommandName, type CommandR
 import { invokeWithBackpressure } from "./backpressure";
 import type { SettingsPublication } from "../types";
 import { clientIdentity } from "./clientIdentity";
-import { daemonError } from "./storageFailure";
+import { daemonError } from "./commandRejected";
 
 export type { UnlistenFn };
 

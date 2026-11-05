@@ -12,7 +12,7 @@ const dir = await mkdtemp(join(tmpdir(), 'piop-web-search-'));
 const home = join(dir, 'home');
 const previousHome = process.env.HOME;
 process.env.HOME = home;
-const records = createRequire(import.meta.url)('../../daemon/resources/application-records.cjs');
+const records = createRequire(import.meta.url)('../../daemon/resources/application-records.ts');
 const chooseModel = webSearchModel => records.save(join(home, '.piop'), 'settings', JSON.stringify(webSearchModel === undefined ? {} : { plugins: { 'web-search': { webSearchModel } } }));
 chooseModel(undefined);
 const outfile = join(dir, 'extension.mjs');

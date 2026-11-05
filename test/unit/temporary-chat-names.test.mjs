@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const { temporaryChat } = createRequire(import.meta.url)('../../daemon/resources/temporary-chat.cjs');
+const { temporaryChat } = createRequire(import.meta.url)('../../daemon/resources/temporary-chat.ts');
 
 test('a no-project chat folder is the shortest free start of the chat ID, kept on retry, and removed by its path', t => {
   const root = mkdtempSync(join(tmpdir(), 'piop-temporary-names-'));

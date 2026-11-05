@@ -1,7 +1,7 @@
-import { reserveSessionId } from "../piop-storage/session-file.ts";
+import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
 import type { SubagentLimitsRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
-import { Type } from "typebox";
+import { Type, type TOptional, type TString } from "typebox";
 import { Parse } from "typebox/value";
 import { agentProfilesTool, resolveAgentProfile, soleProfile, lastReadProfiles, SUBAGENT_TOOLS, PEER_TOOLS } from "./agent-profiles.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
@@ -9,7 +9,6 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { currentHost } from "./client.ts";
-import { writeSessionFile } from "../piop-storage/session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
 import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnapshot, snapshotStatus, subagentResponses } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
@@ -17,7 +16,7 @@ import { acceptedSubmission, cancelSubagent, finishRun, observeSubagent, subagen
 import { releaseLook, reserveLook } from "./subagent-looks.ts";
 import { steering, type SteerSource } from "./steering.ts";
 import { savedSubagentRuns } from "../piop-storage/subagent-results.ts";
-import { isAuxiliary } from "../piop-storage/session-records.cjs";
+import { isAuxiliary } from "../piop-storage/session-records.ts";
 
 const NICKNAME = "^[A-Z][a-z0-9]{0,7}$";
 
@@ -99,13 +98,13 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   return result; };
 
-  try { await writeSessionFile(sessionPath, [
+  try { await createChat({ path: sessionPath, name: `Subagent: ${task.name}`, entries: [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
-    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task } }),
+    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), toolCallId, task: task.task } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
-  ], { name: `Subagent: ${task.name}`, dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
-  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
+  ] }); }
+  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
 
   return run;
 }
@@ -135,7 +134,7 @@ async function deliverFollowup(pi: ExtensionAPI, ctx: ExtensionContext, run: Sub
     acceptedSubmission(observed, Parse(subagentReceiptSchema, data));
     saveRun(pi, ctx, observed);
 
-    return { content: [{ type: "text", text: JSON.stringify(data) }], details: { ...data, runs: iconRuns([observed]) } };
+    return { content: [{ type: "text", text: JSON.stringify(data) }], details: { ...data as object, runs: iconRuns([observed]) } };
   } finally { lifecycle.revision++; lifecycle.pendingDeliveries--; }
 }
 
@@ -515,7 +514,7 @@ export function registerSubagents(pi: ExtensionAPI) {
     name: "spawn_subagents", label: "Spawn subagents",
     exposure: "model-only" as const,
     description: "Start subagents in the background, each with its own task. A subagent starts with no context, so fill him in just enough to complete the handoff. Avoid giving two subagents overlapping edits." + (single ? "" : " Pick an agent profile from list_agent_profiles or omit it to use your own."),
-    parameters: Type.Object({ tasks: Type.Array(Type.Object({ nickname: Type.String({ pattern: NICKNAME, description: "Unique, used to address this subagent" }), task: Type.String({ minLength: 1 }), ...single ? {} : { agent: Type.Optional(Type.String({ minLength: 1 })) } }), { minItems: 1, maxItems: limit }) }),
+    parameters: Type.Object({ tasks: Type.Array(Type.Object({ nickname: Type.String({ pattern: NICKNAME, description: "Unique, used to address this subagent" }), task: Type.String({ minLength: 1 }), ...(single ? {} : { agent: Type.Optional(Type.String({ minLength: 1 })) }) as { agent: TOptional<TString> } }), { minItems: 1, maxItems: limit }) }),
     async execute(toolCallId: string, params: { tasks: Array<{ nickname: string; task: string; agent?: string }> }, signal: AbortSignal | undefined, onUpdate: ((update: AgentToolResult<unknown>) => void) | undefined, ctx: ExtensionContext) {
       signal?.throwIfAborted();
 

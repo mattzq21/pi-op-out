@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installConnectionEvents } from '../../daemon/resources/mcp-connections.cjs';
+import { installConnectionEvents } from '../../daemon/resources/mcp-connections.ts';
 
 class Connection { constructor(name) { this.name = name; this.state = 'connected'; } changed() {} }
 installConnectionEvents(Connection);

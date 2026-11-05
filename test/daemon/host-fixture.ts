@@ -7,13 +7,14 @@ import { startDaemon, temporaryDirectory } from './harness';
 
 let bundle: Promise<string> | undefined;
 function hostExecutable(): Promise<string> {
+  if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not start a Host');
   return bundle ??= (async () => {
     const root = resolve(import.meta.dir, '../..');
     const outfile = join(temporaryDirectory('piop-host-build-'), 'host.mjs');
     await build({
       stdin: { contents: `
 import { startHost } from './daemon/src/host/index';
-import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operation_worker';
+import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operations/worker';
 import { createInterface } from 'node:readline';
 if (isHostOperationWorker()) { runHostOperationWorker(); } else {
 const output = packet => process.stdout.write(JSON.stringify(packet) + '\\n');

@@ -12,7 +12,7 @@ const { ModelRuntime } = await sdk('model-runtime');
 const { createCodemodeExtension } = await import(pathToFileURL(join(root, 'dist/extensions/codemode/index.js')));
 const { installSessionStorage, localTranscriptWrites } = await import(pathToFileURL(storage));
 installSessionStorage(SessionManager, localTranscriptWrites());
-const { installConnectionEvents, subscribeConnections } = await import('../../daemon/resources/mcp-connections.cjs');
+const { installConnectionEvents, subscribeConnections } = await import('../../daemon/resources/mcp-connections.ts');
 const { McpServerConnection } = await import(pathToFileURL(join(root, 'dist/extensions/mcp/runtime.js')));
 installConnectionEvents(McpServerConnection);
 const { default: extension } = await import(pathToFileURL(bridge));

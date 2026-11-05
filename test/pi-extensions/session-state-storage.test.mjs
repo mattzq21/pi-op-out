@@ -6,9 +6,10 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import database from '../../daemon/resources/session-database.cjs';
-import sessionNames from '../../daemon/resources/session-broker/session-names.cjs';
-import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
+import * as database from '../../daemon/resources/session-database.ts';
+import { connection } from '../../daemon/resources/session-database/core.ts';
+import * as sessionNames from '../../daemon/resources/session-broker/session-names.ts';
+import * as newChats from '../../daemon/resources/piop-storage/new-chats.ts';
 import { testPi } from '../pi-install.mjs';
 import { localStorageChannel } from '../local-storage-channel.mjs';
 
@@ -29,14 +30,13 @@ async function fixture(t) {
     rmSync(home, { recursive: true, force: true });
   });
   const bundle = join(home, 'storage.mjs');
-  if (!installSessionStorage) await build({ entryPoints: ['test/session-storage-entry.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  if (!installSessionStorage) await build({ entryPoints: ['test/session-storage-entry.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   if (!installSessionStorage) ({ installSessionStorage, localTranscriptWrites } = await import(pathToFileURL(bundle)));
   const { SessionManager } = await import(pathToFileURL(join(sdk, 'dist/core/session-manager.js')));
   installSessionStorage(SessionManager, localTranscriptWrites());
   const id = database.reserve(root);
   const file = join(root, 'sessions', `2026-10-19T00-00-00-000Z_${id}.jsonl`);
-  const db = database.connection(root);
-  database.bind(db, id, file);
+  database.bind(root, id, file);
   writeFileSync(file, JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-10-19T00:00:00.000Z', cwd: home }) + '\n');
   return { home, root, id, file, SessionManager, manager: SessionManager.open(file), physical: () => readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse) };
 }
@@ -95,7 +95,7 @@ test('settings keep only their current value across navigation and restart', asy
     assert.equal(states[0].data.enabled, false);
   }
   assert.deepEqual(reopened.getEntries(), f.manager.getEntries());
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 1);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records').get().n, 0);
 });
@@ -105,7 +105,7 @@ test('failed SQL state writes do not advance the branch or change the transcript
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   const before = readFileSync(f.file, 'utf8');
   const leaf = f.manager.getLeafId();
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   db.exec("CREATE TRIGGER reject_state BEFORE INSERT ON session_extension_state BEGIN SELECT RAISE(ABORT, 'Write failed'); END");
   assert.throws(() => f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true }), /Write failed/);
   assert.equal(f.manager.getLeafId(), leaf);
@@ -121,25 +121,20 @@ test('SQL state follows archive and restore and is removed with the session', as
   f.manager.appendMessage({ role: 'user', content: 'Second', timestamp: 2 });
   f.manager.branch(selected);
   const saved = f.manager.getEntries();
-  mkdirSync(join(f.root, 'archived'));
-  const archived = join(f.root, 'archived', 'chat.jsonl');
-  renameSync(f.file, archived);
-  database.movePaths(f.root, [{ source: f.file, destination: archived }]);
-  assert.deepEqual(f.SessionManager.open(archived).getEntries(), saved);
-  assert.equal(f.SessionManager.open(archived).getLeafId(), selected);
-  assert.equal(sessionNames.sessionName(archived, f.id), 'Named chat');
-  renameSync(archived, f.file);
-  database.movePaths(f.root, [{ source: archived, destination: f.file }]);
+  const db = connection(f.root);
+  db.prepare('UPDATE sessions SET archived=1 WHERE session_id=?').run(f.id);
   assert.deepEqual(f.SessionManager.open(f.file).getEntries(), saved);
   assert.equal(f.SessionManager.open(f.file).getLeafId(), selected);
-  const db = database.connection(f.root);
+  assert.equal(sessionNames.sessionName(f.file, f.id), 'Named chat');
+  db.prepare('UPDATE sessions SET archived=0 WHERE session_id=?').run(f.id);
+  assert.deepEqual(f.SessionManager.open(f.file).getEntries(), saved);
   db.prepare('DELETE FROM sessions WHERE session_id=?').run(f.id);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state').get().n, 0);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_branch_selection').get().n, 0);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_names').get().n, 0);
 });
 
-test('fork publication copies current settings once, independent of the selected message', async t => {
+test('a new chat copies current settings once, independent of the selected message', async t => {
   const f = await fixture(t);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   const user = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
@@ -148,18 +143,15 @@ test('fork publication copies current settings once, independent of the selected
   f.manager.branch(user);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
-  const bundle = join(f.home, 'publish.mjs');
-  await build({ entryPoints: ['daemon/resources/piop-storage/publication-writes.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
-  const { writeSessionFile } = await import(pathToFileURL(bundle));
   const id = database.reserve(f.root);
   const target = join(f.root, 'sessions', `2026-10-19T01-00-00-000Z_${id}.jsonl`);
-  await writeSessionFile(f.root, target, [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)]);
+  newChats.create(f.root, { path: target, entries: [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)] });
   assert.equal(readFileSync(target, 'utf8').split('\n').filter(Boolean).map(JSON.parse).some(entry => entry.type === 'custom'), false);
   const fork = f.SessionManager.open(target);
   assert.deepEqual(fork.getBranch().filter(entry => entry.customType === 'piop-fast-mode-state').map(entry => entry.data), [{ enabled: false }]);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: true });
   assert.equal(f.SessionManager.open(target).getBranch().find(entry => entry.customType === 'piop-fast-mode-state').data.enabled, false);
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n, 1);
 });
 
@@ -169,7 +161,7 @@ test('a rename shows in the chat list, keeps the transcript, and a failed write 
   const first = f.manager.appendMessage({ role: 'user', content: 'First', timestamp: 1 });
   const body = readFileSync(f.file, 'utf8');
   const bundle = join(f.home, 'lists.mjs');
-  await build({ entryPoints: ['daemon/resources/sdk-session-list.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports(), localStorageChannel()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ entryPoints: ['daemon/resources/sdk-session-list.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [localStorageChannel()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   (await import(pathToFileURL(bundle))).installSessionLists(f.SessionManager);
   sessionNames.renameSession(f.root, f.id, 'First name');
   assert.equal((await f.SessionManager.listAll())[0].name, 'First name');
@@ -177,7 +169,7 @@ test('a rename shows in the chat list, keeps the transcript, and a failed write 
   assert.equal((await f.SessionManager.listAll())[0].name, 'Current name');
   assert.equal(f.manager.getLeafId(), first);
   assert.equal(readFileSync(f.file, 'utf8'), body);
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   db.exec("CREATE TRIGGER reject_name BEFORE UPDATE ON session_names BEGIN SELECT RAISE(ABORT, 'name write failed'); END;");
   assert.throws(() => sessionNames.renameSession(f.root, f.id, 'Lost name'), /name write failed/);
   assert.equal(sessionNames.sessionName(f.file, f.id), 'Current name');
@@ -205,7 +197,7 @@ test('model and thinking selections stay current across messages, navigation and
       assert.deepEqual(getBranchSelection(manager.getBranch(), () => undefined), { provider: 'provider', modelId: 'new-model' });
     }
   }
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(f.id).n, 2);
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_extension_records WHERE session_id=?').get(f.id).n, 0);
   db.exec("CREATE TRIGGER reject_selection BEFORE UPDATE ON session_extension_state BEGIN SELECT RAISE(ABORT, 'selection write failed'); END;");
@@ -234,7 +226,7 @@ test('current model settings preserve the history used for compaction', async t 
 test('the chat preview and reopened session follow a branch choice without a transcript write', async t => {
   const f = await fixture(t);
   const bundle = join(f.home, 'index.mjs');
-  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.cjs";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { indexSessions } = await import(pathToFileURL(bundle));
   const summary = async () => {
     const result = await indexSessions({ paths: [f.file] });
@@ -252,7 +244,7 @@ test('the chat preview and reopened session follow a branch choice without a tra
   assert.equal((await summary()).preview, 'First answer');
   assert.equal((await summary()).messageCount, 2);
   assert.equal(f.SessionManager.open(f.file).getLeafId(), answer);
-  const db = database.connection(f.root);
+  const db = connection(f.root);
   db.exec("CREATE TRIGGER reject_branch BEFORE UPDATE ON session_branch_selection BEGIN SELECT RAISE(ABORT, 'branch write failed'); END;");
   assert.throws(() => f.manager.branch(detour), /branch write failed/);
   assert.equal(f.manager.getLeafId(), answer);
@@ -271,11 +263,11 @@ test('the chat preview and reopened session follow a branch choice without a tra
 
 test('recovered queued-input chats keep their names in SQL when reopened', async t => {
   const f = await fixture(t);
-  const { createTranscript } = await import('../../daemon/resources/piop-storage/recovery.cjs');
+  const { createTranscript } = await import('../../daemon/resources/piop-storage/recovery.ts');
   const id = database.reserve(f.root);
   const file = join(f.root, 'sessions', `recovered_${id}.jsonl`);
-  const db = database.connection(f.root);
-  database.bind(db, id, file);
+  const db = connection(f.root);
+  database.bind(f.root, id, file);
   db.exec("CREATE TRIGGER reject_recovered_name BEFORE INSERT ON session_names BEGIN SELECT RAISE(ABORT, 'recovery name write failed'); END;");
   assert.throws(() => createTranscript(file, id, f.home, 'Important queued request'), /recovery name write failed/);
   assert.equal(existsSync(file), false);
@@ -292,7 +284,7 @@ test('recovered queued-input chats keep their names in SQL when reopened', async
 test('a skill prompt that names its skill gives the session name one skill reference', async t => {
   const f = await fixture(t);
   const bundle = join(f.home, 'index.mjs');
-  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.cjs";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
+  await build({ stdin: { contents: 'export { indexSessions } from "./daemon/resources/index-sessions.ts";', resolveDir: process.cwd() }, outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
   const { indexSessions } = await import(pathToFileURL(bundle));
   const skill = '<skill name="statechart" location="/skills/statechart/SKILL.md">\nReferences are relative to /skills/statechart.\n\nbody\n</skill>';
   f.manager.appendMessage({ role: 'user', content: `${skill}\n\n$statechart draw the simplest example.`, timestamp: 1 });

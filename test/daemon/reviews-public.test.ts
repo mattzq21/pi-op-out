@@ -40,11 +40,13 @@ test.concurrent('a review is named by its scope; reviews without a scope are num
   expect([scoped.name, (await openReview(chat, '/review')).name, (await openReview(chat, '/review')).name]).toEqual(['Review the lexer', 'Review 1', 'Review 2']);
 }, 60000);
 
-test.concurrent('a review opens a separate code review chat in the side pane, linked to the conversation and listed as its auxiliary chat', async () => {
+test.concurrent('a review opens a separate code review chat in the side pane, linked to the conversation without a change to its file, and listed as its auxiliary chat', async () => {
   agents.scripts.set('Implement the parser', () => ({ text: 'Parser done.' }));
   const chat = await agents.rootChat({ visible: true });
   await chat.command({ type: 'prompt', message: 'Implement the parser' });
   await chat.until(history => text(history.at(-1)) === 'Parser done.');
+  const parentFile = (await chat.command({ type: 'get_state' })).sessionFile;
+  const parentBody = readFileSync(parentFile, 'utf8');
   await chat.command({ type: 'follow_up', message: '/review src/parser.ts' });
   let open: any;
   for (let tries = 0; !open && tries < 100; tries++, await Bun.sleep(100)) open = uiRequests(chat.runtimeId, 'input').find(request => request.title === '__pi_desktop_auxiliary__');
@@ -68,7 +70,10 @@ test.concurrent('a review opens a separate code review chat in the side pane, li
     expect(db.query('SELECT name FROM session_names WHERE session_id=?').get(review.sessionId)).toEqual({ name: 'Review src/parser.ts' });
     const records = db.query('SELECT entry_json FROM session_extension_records WHERE session_id=?').all(review.sessionId) as { entry_json: string }[];
     expect(records.map(row => JSON.parse(row.entry_json)).find(entry => entry.customType === 'piop-auxiliary-parent')?.data).toMatchObject({ kind: 'review', parentSessionId: chat.sessionId, sessionId: review.sessionId });
+    const parentRecords = db.query('SELECT entry_json FROM session_extension_records WHERE session_id=?').all(chat.sessionId) as { entry_json: string }[];
+    expect(parentRecords.map(row => JSON.parse(row.entry_json)).find(entry => entry.customType === 'piop-review-link')?.details).toMatchObject({ sessionId: review.sessionId, parentSessionId: chat.sessionId });
   } finally { db.close(); }
+  expect(readFileSync(parentFile, 'utf8')).toBe(parentBody);
   expect(saved.some(entry => entry.type === 'session_info')).toBe(false);
   expect((await agents.daemon.invoke('list_sessions')).find((session: any) => session.id === review.sessionId)).toMatchObject({ auxiliaryParentId: chat.sessionId, auxiliaryKind: 'review' });
   const entries = (await chat.command({ type: 'get_entries' })).entries;

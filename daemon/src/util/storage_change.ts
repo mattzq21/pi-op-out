@@ -1,32 +1,35 @@
 import { mkdirSync, watch, type FSWatcher } from 'node:fs';
 
-// Runs check now and after each change of the storage database in directory, until check gives a value or ms pass.
-// The kernel tells of each change (inotify), so nothing is read again and again. When also settles, check runs again
-// too: it is for a change that the database does not show, such as the end of a process. Gives undefined when the
-// time is up.
-export async function untilStorageChange<T>(directory: string, check: () => Promise<T | undefined> | T | undefined, ms: number, also?: Promise<unknown>): Promise<T | undefined> {
+// Runs check now, after each change of the file signal in directory, and when a promise of also settles, until check
+// gives a value or ms pass. Writers change the signal file after they commit, so check then sees the commit. Gives
+// undefined when the time is up; throws when a promise of also or the watcher fails.
+export async function untilSignal<T>(directory: string, signal: string, check: () => Promise<T | undefined> | T | undefined, ms: number, also: Promise<unknown>[] = []): Promise<T | undefined> {
   let wake: (() => void) | undefined;
   let changed = true;
+  let failure: { error: unknown } | undefined;
   let watcher: FSWatcher | undefined;
   let timer: NodeJS.Timeout | undefined;
   let timedOut = false;
+  const fail = (error: unknown) => { failure ??= { error }; wake?.(); };
   try {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     watcher = watch(directory, (_event, name) => {
-      if (name !== null && !String(name).startsWith('sessions.sqlite')) return;
+      if (name !== null && String(name) !== signal) return;
       changed = true;
       wake?.();
     });
+    watcher.on('error', fail);
     timer = setTimeout(() => { timedOut = true; wake?.(); }, Math.max(ms, 0));
-    void also?.finally(() => { changed = true; wake?.(); });
+    for (const promise of also) promise.then(() => { changed = true; wake?.(); }, fail);
     for (;;) {
+      if (failure) throw failure.error;
       if (changed) {
         changed = false;
         const value = await check();
         if (value !== undefined) return value;
       }
       if (timedOut) return undefined;
-      if (!changed) await new Promise<void>(resolve => { wake = resolve; });
+      if (!changed && !failure) await new Promise<void>(resolve => { wake = resolve; });
       wake = undefined;
     }
   } finally {

@@ -248,14 +248,13 @@ test('archiving releases ownership so other clients can restore and delete the a
   const session = publicSession(daemon.home);
   const first = await open(session.path, 'archive-first');
   expect(first.owned).toBe(true);
-  await daemon.invoke('archive_session', { sessionPath: session.path, hostId: 'local', clientId: 'archive-first', terminalIds: [] });
+  await daemon.invoke('archive_session', { sessionId: session.id, hostId: 'local', clientId: 'archive-first', terminalIds: [] });
   const report = await daemon.invoke('storage_report');
-  const archive = report.hosts[0].archives.find((item: any) => item.id === session.id);
-  expect(archive).toBeDefined();
-  await daemon.invoke('restore_archived_session', { sessionPath: archive.path, hostId: 'local', clientId: 'archive-second' });
+  expect(report.hosts[0].archives.find((item: any) => item.id === session.id)).toBeDefined();
+  await daemon.invoke('restore_session', { sessionId: session.id, hostId: 'local', clientId: 'archive-second' });
   expect((await daemon.invoke('list_sessions')).some((item: any) => item.id === session.id)).toBe(true);
-  await daemon.invoke('archive_session', { sessionPath: session.path, hostId: 'local', clientId: 'archive-second', terminalIds: [] });
-  await daemon.invoke('delete_archived_session', { sessionPath: archive.path, hostId: 'local', clientId: 'archive-third' });
+  await daemon.invoke('archive_session', { sessionId: session.id, hostId: 'local', clientId: 'archive-second', terminalIds: [] });
+  await daemon.invoke('delete_sessions', { sessionIds: [session.id], hostId: 'local', clientId: 'archive-third' });
   expect((await daemon.invoke('storage_report')).hosts[0].archives.some((item: any) => item.id === session.id)).toBe(false);
 });
 

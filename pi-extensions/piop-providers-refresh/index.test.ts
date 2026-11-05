@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { createRequire } from "node:module";
 import providersRefresh from "./index.ts";
 
-const { runtimeRequest } = createRequire(import.meta.url)("../../daemon/resources/runtime-configuration.cjs");
+const { runtimeRequest } = createRequire(import.meta.url)("../../daemon/resources/runtime-configuration.ts");
 const bridgeKey = Symbol.for("piop.runtime-bridge");
 const previousBridge = Object.getOwnPropertyDescriptor(globalThis, bridgeKey);
 

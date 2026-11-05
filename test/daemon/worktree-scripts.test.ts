@@ -5,10 +5,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startDaemon, type TestDaemon } from './harness';
 import { agentDaemon, gitRepository, text } from './agent-chats';
-import * as Git from '../../daemon/src/chat_worktrees';
-import * as Records from '../../daemon/src/chat_worktree_records';
-import { setupView, watchSetup } from '../../daemon/src/worktree_scripts';
-import { rememberProjectRepository } from '../../daemon/src/project_repositories';
+import * as Git from '../../daemon/src/worktrees';
+import * as Records from '../../daemon/src/worktrees/records';
+import { setupView, watchSetup } from '../../daemon/src/worktrees';
+import { rememberProjectRepository } from '../../daemon/src/projects';
 
 const daemons: TestDaemon[] = [];
 afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.stop(); }, 60000);
@@ -75,7 +75,7 @@ test('archive runs cleanup before its snapshot, a failed cleanup keeps the chat 
   writeFileSync(join(worktree, 'cache.txt'), 'made by setup');
   writeFileSync(join(worktree, 'notes.txt'), 'user work');
   writeFileSync(join(worktree, 'block'), '');
-  const archive = () => daemon.invoke('archive_session', { hostId: 'local', sessionPath: chat.path, terminalIds: [], clientId: 'scripts-test' });
+  const archive = () => daemon.invoke('archive_session', { hostId: 'local', sessionId: chat.id, terminalIds: [], clientId: 'scripts-test' });
 
   await expect(archive()).rejects.toThrow('Worktree cleanup failed in script 10-release (exit code 1)');
   expect(existsSync(join(worktree, 'cache.txt'))).toBe(true);
@@ -89,9 +89,7 @@ test('archive runs cleanup before its snapshot, a failed cleanup keeps the chat 
   expect(git(repo, 'show', snapshot + ':notes.txt')).toBe('user work');
   expect(() => git(repo, 'show', snapshot + ':cache.txt')).toThrow();
 
-  const report = await daemon.invoke('storage_report');
-  const archived = report.hosts.find((host: any) => host.hostId === 'local').archives.find((row: any) => row.id === chat.id).path;
-  await daemon.invoke('restore_archived_session', { hostId: 'local', sessionPath: archived, clientId: 'scripts-test' });
+  await daemon.invoke('restore_session', { hostId: 'local', sessionId: chat.id, clientId: 'scripts-test' });
   for (let tries = 0; !existsSync(join(worktree, 'prepared.txt')) && tries < 100; tries++) await Bun.sleep(100);
   expect(readFileSync(join(worktree, 'prepared.txt'), 'utf8')).toBe('prepared\n');
 }, 120000);

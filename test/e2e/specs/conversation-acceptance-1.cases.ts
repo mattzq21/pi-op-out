@@ -273,7 +273,7 @@ describe("Conversation acceptance", () => {
       await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
-      expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toMatchObject({ sessionPath: indexed.path, hostId: "local", terminalIds: [] });
+      expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toMatchObject({ sessionId: indexed.id, hostId: "local", terminalIds: [] });
     } finally {
       await app.conversationSearch.clearValue();
       await resetApp();

@@ -14,8 +14,8 @@ const publishChat = (): { id: string; path: string } => JSON.parse(execFileSync(
 
 test('the session ids another machine reads list saved and archived chats, but not deleted ones', async () => {
   const [kept, archived, deleted] = [publishChat(), publishChat(), publishChat()];
-  await daemon.invoke('archive_session', { sessionPath: archived.path, hostId: 'local', terminalIds: [], clientId: 'ids-test' });
-  await daemon.invoke('delete_session', { sessionPath: deleted.path, hostId: 'local', clientId: 'ids-test' });
+  await daemon.invoke('archive_session', { sessionId: archived.id, hostId: 'local', terminalIds: [], clientId: 'ids-test' });
+  await daemon.invoke('delete_sessions', { sessionIds: [deleted.id], hostId: 'local', clientId: 'ids-test' });
   const ids = await daemon.invoke('session_ids', {});
   expect(ids).toContain(kept.id);
   expect(ids).toContain(archived.id);

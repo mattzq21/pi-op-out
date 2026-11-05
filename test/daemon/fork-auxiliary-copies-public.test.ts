@@ -37,7 +37,7 @@ for (const mode of ['copy_after', 'fork_after'] as const) test.concurrent(`${mod
   await chat.until(history => history.filter(message => text(message) === 'First answer.').length >= 2);
   const kept = await sideChat(chat, 'prompt', '/btw');
   const archived = await sideChat(chat, 'prompt', '/btw');
-  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: archived.sessionPath, terminalIds: [], clientId: 'fork-test' });
+  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionId: archived.sessionId, terminalIds: [], clientId: 'fork-test' });
   const review = await sideChat(chat, 'follow_up', '/review the lexer');
   await chat.command({ type: 'prompt', message: 'Second task' });
   await chat.until(history => text(history.at(-1)) === 'Second answer.');
@@ -70,7 +70,7 @@ for (const mode of ['copy_after', 'fork_after'] as const) test.concurrent(`${mod
   const second = (await sessions()).filter((session: any) => session.auxiliaryParentId === again.state.sessionId);
   expect(second.map((session: any) => session.auxiliaryKind).sort()).toEqual(['btw', 'review', 'subagent']);
 
-  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionPath: listed.find((session: any) => session.id === forkId).path, terminalIds: [], clientId: 'fork-test' });
+  await agents.daemon.invoke('archive_session', { hostId: 'local', sessionId: forkId, terminalIds: [], clientId: 'fork-test' });
   const left = (await sessions()).map((session: any) => session.id);
   expect(copies.filter((copy: any) => left.includes(copy.id))).toEqual([]);
 }, 120000);
