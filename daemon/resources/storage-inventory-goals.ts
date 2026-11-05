@@ -65,7 +65,7 @@ async function recordClaims(profile, record, discovery) {
 
   try {
     record.identity = await directoryIdentity(record.path);
-    const file = path.join(profile, 'sessions.sqlite');
+    const file = 'the storage database of ' + profile;
     const claims = GoalOwnership.read(profile, record.path);
 
     if (claims === undefined) return;

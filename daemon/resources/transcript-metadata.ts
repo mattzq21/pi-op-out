@@ -9,24 +9,10 @@ const invalidate = onMainThread('transcript-metadata.invalidate', (file: string)
   try { root = database.storageRoot(file); }
   catch { return; }
 
-  const db = database.connection(root);
-
-  database.transaction(db, 'IMMEDIATE', () => {
-    db.prepare('DELETE FROM session_file_metadata WHERE session_path=?').run(file);
-    db.prepare('INSERT INTO session_file_writes SELECT session_id FROM sessions WHERE session_path=? ON CONFLICT DO NOTHING').run(file);
-  });
+  database.forgetSessionFileMetadata(root, file);
 });
 
-const saveMetadata = onMainThread('transcript-metadata.saveMetadata', (root: string, file: string, modified: string, size: number | bigint) => {
-  const db = database.connection(root);
-
-  database.transaction(db, 'IMMEDIATE', () => {
-    db.prepare(`INSERT INTO session_file_metadata SELECT session_id, session_path, ?, ? FROM sessions WHERE session_path=?
-      ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path, modified_ns=excluded.modified_ns, size=excluded.size`)
-      .run(modified, size, file);
-    db.prepare("DELETE FROM session_file_writes WHERE session_id IN (SELECT session_id FROM sessions WHERE session_path=?)").run(file);
-  });
-});
+const saveMetadata = onMainThread('transcript-metadata.saveMetadata', database.saveSessionFileMetadata);
 
 function remember(file) {
   let root;

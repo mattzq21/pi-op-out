@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { daemonExecutable, fakePi, fakeProgram, startDaemon, synchronizationFinished, temporaryDirectory, type TestDaemon } from './harness';
-import { runLimited } from '../../daemon/src/process_io';
+import { runLimited } from '../../daemon/src/process/io';
 import { startHost } from './host-fixture';
 
 function publicSession(home: string, options: { cwd: string; folder: string }): { id: string; path: string } {

@@ -40,11 +40,7 @@ function parsePreparation(text: string): GoalPreparation {
   return preparation;
 }
 
-function withDatabase(root, operation) {
-  return operation(database.connection(root));
-}
-
-function identity(directory) {
+function identity(directory: string): string {
   const info = fs.lstatSync(directory, { bigint: true });
 
   if (!info.isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Goal preparation directory changed');
@@ -53,50 +49,44 @@ function identity(directory) {
 }
 
 function read(root: string, directory: string): GoalPreparation | undefined {
-  let expected;
+  let expected: string;
 
   try { expected = identity(directory); }
   catch (error) { if (error.code === 'ENOENT') return missingDirectoryRecord(root, directory); throw error; }
 
-  return withDatabase(root, db => {
-    const query = db.prepare('SELECT record_json FROM goal_preparations WHERE directory=? AND identity=?');
-    const row = query.get(directory, expected);
+  const row = database.goalPreparation(root, directory, expected);
 
-    if (!row) {
-      if (db.prepare('SELECT 1 FROM goal_preparations WHERE directory=? AND identity<>? AND record_json IS NOT NULL').get(directory, expected)) throw new Error('Saved goal preparation directory was replaced');
+  if (!row) {
+    if (database.goalPreparationReplaced(root, directory, expected)) throw new Error('Saved goal preparation directory was replaced');
 
-      return undefined;
-    }
+    return undefined;
+  }
 
-    return row.record_json === null ? undefined : parsePreparation(row.record_json);
-  });
+  return row.record_json === null ? undefined : parsePreparation(row.record_json);
 }
 
-function missingDirectoryRecord(root, directory) {
-  return withDatabase(root, db => {
-    const rows = db.prepare('SELECT record_json FROM goal_preparations WHERE directory=? AND record_json IS NOT NULL').all(directory);
+function missingDirectoryRecord(root: string, directory: string): GoalPreparation | undefined {
+  const rows = database.goalPreparationsOf(root, directory);
 
-    if (rows.length > 1) throw new Error('More than one saved goal preparation refers to the missing directory');
+  if (rows.length > 1) throw new Error('More than one saved goal preparation refers to the missing directory');
 
-    return rows.length ? parsePreparation(rows[0].record_json) : undefined;
-  });
+  return rows.length ? parsePreparation(rows[0].record_json) : undefined;
 }
 
 const save = onMainThread('goal-preparations.save', (root: string, directory: string, record: GoalPreparation, destination: string = directory): string => {
   if (!Check(preparationSchema, record)) throw new Error('Invalid goal preparation');
   const expected = identity(directory);
-  withDatabase(root, db => db.prepare('INSERT INTO goal_preparations VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json')
-    .run(destination, expected, JSON.stringify(record)));
+  database.saveGoalPreparation(root, destination, expected, JSON.stringify(record));
 
   return expected;
 });
 
 function retained(root: string, directory: string, expected: string): boolean {
-  return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_preparations WHERE directory=? AND identity=? AND record_json IS NOT NULL').get(directory, expected)));
+  return database.goalPreparationRetained(root, directory, expected);
 }
 
 const remove = onMainThread('goal-preparations.remove', (root: string, directory: string, expected: string): void => {
-  withDatabase(root, db => db.prepare('DELETE FROM goal_preparations WHERE directory=? AND identity=?').run(directory, expected));
+  database.removeGoalPreparation(root, directory, expected);
 });
 
 export { draftSchema, parsePreparation, read, save, retained, remove };

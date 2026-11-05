@@ -1,6 +1,6 @@
 **Plugins** - piop-wide extensions. A plugin is a folder with `plugin.json`, and its built Pi extension and app part. The built-in ones are in `plugins/`; a user adds others in `~/.piop/plugins/`.  
 **Pi extension** - code that uses Pi's extension API. piop's core ones are in `pi-extensions/` and `daemon/resources/`; a plugin's is in its folder.  
-**Client server** - the daemon's WebSocket server (`client_server.ts`), which all clients use: the desktop app, the Android app and other daemons.  
+**Client server** - the daemon's WebSocket server (`daemon/src/clients/`), which all clients use: the desktop app, the Android app and other daemons.  
 **Debug mode** - the mode toggled in piop's UI.  
 **Orchestration** - root agents messaging each other. Not to confuse with subagents.  
 **Paired agent** - the agent that the voice agent talks to, also a root agent.  

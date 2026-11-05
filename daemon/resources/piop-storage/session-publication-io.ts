@@ -217,11 +217,11 @@ function locate(root, id, nonce?) {
 }
 
 function unregistered(root, id, target) {
-  const file = path.join(root, 'sessions.sqlite');
+  const tables = SessionDatabase;
 
-  if (!exists(file)) return false;
+  if (!tables.databaseExists(root)) return false;
 
-  return !SessionDatabase.connection(root).prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path=?').get(id, target);
+  return !tables.isRegistered(root, id, target);
 }
 
 export { uuid, headerSchema, exists, identity, fingerprint, hash, inside, canonical, sync, mkdir, read, proof, header, canonicalRoot, rootForTarget, claim, locked, lockedAsync, holdsTransactionLock, lockName, journalPath, matches, verified, locate, unregistered };

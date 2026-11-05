@@ -4,16 +4,15 @@ import { flag, text } from './json';
 import { ownershipError } from './ownership';
 import { isUuid } from './protocol';
 import { attach } from './attachment';
-import { queueCommand } from './session_commands';
-import * as storageTransactions from '../storage_transactions';
-import * as Worktrees from '../chat_worktree_records';
+import { queueCommand } from './session';
+import * as storageTransactions from '../storage';
+import * as Worktrees from '../worktrees';
 import * as Registry from '../session_registry';
-import { detectRepository } from '../chat_worktrees';
-import { publishBranchHistory } from '../chat_branch_operations';
-import { rememberProjectRepository } from '../project_repositories';
+import { mailboxHasDelivery } from '../../resources/session-database.ts';
+import { detectRepository, publishBranchHistory } from '../worktrees';
+import { rememberProjectRepository } from '../projects';
 import { recentHistory } from './history_window';
-import { QueueStorage } from './queue_storage';
-import { QueueState } from './queue_state';
+import { QueueStorage, QueueState } from './queue';
 import { renameSession } from '../../resources/session-broker/session-names.ts';
 import type { Host } from './controller';
 import type { Session } from './session';
@@ -234,8 +233,7 @@ export class Orchestration {
   }
 
   private stored(id: string, path: string, delivery: string): boolean {
-    const database = Registry.connection(this.host.storageRoot());
-    if (database.prepare('SELECT 1 FROM session_mailbox WHERE session_id=? AND delivery_id=?').get(id, delivery)) return true;
+    if (mailboxHasDelivery(this.host.storageRoot(), id, delivery)) return true;
     if (!path || !existsSync(path)) return false;
     return readFileSync(path, 'utf8').split('\n').some(line => {
       if (!line.includes(delivery)) return false;

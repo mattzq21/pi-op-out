@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import * as database from './session-database.ts';
-import type { ChatWorktreeRecord, NewChatWorktree } from '../src/chat_worktree_records';
+import type { ChatWorktreeRecord, NewChatWorktree } from '../src/worktrees/records';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const CHAT_ID = new RegExp('^' + UUID + '$');
@@ -67,20 +67,14 @@ function check(value: unknown): ChatWorktreeRecord {
   return record;
 }
 
-function withDatabase(root, operation) {
-  return operation(database.connection(root));
-}
-
-function selectBody(db, chatId) { return db.prepare('SELECT record_json FROM chat_worktrees WHERE chat_id=?').get(chatIdOf(chatId))?.record_json ?? null; }
-
 function read(root: string, chatId: string): ChatWorktreeRecord | null {
-  const text = withDatabase(root, db => selectBody(db, chatId));
+  const text = database.chatWorktreeBody(root, chatIdOf(chatId));
 
   return text === null ? null : check(JSON.parse(text));
 }
 
 function list(root: string): ChatWorktreeRecord[] {
-  return withDatabase(root, db => db.prepare('SELECT record_json FROM chat_worktrees ORDER BY chat_id').all()).map(row => check(JSON.parse(row.record_json)));
+  return database.chatWorktreeBodies(root).map(body => check(JSON.parse(body)));
 }
 
 function replace<After extends ChatWorktreeRecord | null>(root: string, chatId: string, before: ChatWorktreeRecord | null, after: After): After {
@@ -89,13 +83,10 @@ function replace<After extends ChatWorktreeRecord | null>(root: string, chatId: 
   const next = after === null ? null : JSON.stringify(check(after));
 
   if (after !== null && after.chatId !== chatId) throw new Error('Chat worktree record belongs to another chat');
-  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
-    if (selectBody(db, chatId) !== expected) throw new Error('Chat worktree record changed: ' + chatId);
-
-    if (next === null) db.prepare('DELETE FROM chat_worktrees WHERE chat_id=?').run(chatId);
-    else if (expected === null) db.prepare('INSERT INTO chat_worktrees VALUES (?, ?)').run(chatId, next);
-    else db.prepare('UPDATE chat_worktrees SET record_json=? WHERE chat_id=?').run(next, chatId);
-  }));
+  database.transaction(root, 'IMMEDIATE', () => {
+    if (database.chatWorktreeBody(root, chatId) !== expected) throw new Error('Chat worktree record changed: ' + chatId);
+    database.writeChatWorktreeBody(root, chatId, expected, next);
+  });
 
   return after;
 }

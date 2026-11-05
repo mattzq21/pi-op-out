@@ -2,6 +2,7 @@ import { createReadStream, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import * as database from './session-database.ts';
+import type { SdkSessionListRow } from './session-database.ts';
 import { sessionName } from './session-broker/session-names.ts';
 import { sessionHeaderMatches } from './piop-storage/transcript-file.ts';
 import { patchMethod, requireMethods } from './pi-patch.ts';
@@ -23,17 +24,8 @@ function managedDirectory(directory, root) {
   return ["sessions", "archived"].some(area => canonical === join(root, area) || canonical.startsWith(join(root, area) + sep)) ? canonical : undefined;
 }
 
-function candidates(db, directory, recursive) {
-  const prefix = directory + sep;
-
-  const rows = db.prepare(`SELECT s.session_id, s.session_path, m.modified_ns, m.size, c.fingerprint, c.body
-    FROM sessions s LEFT JOIN session_file_metadata m ON m.session_id=s.session_id AND m.session_path=s.session_path
-    LEFT JOIN sdk_session_summaries c ON c.session_id=s.session_id AND c.session_path=s.session_path
-    WHERE substr(s.session_path, 1, length(?))=?
-    AND (? OR instr(substr(s.session_path, length(?) + 1), ?)=0)`)
-    .all(prefix, prefix, Number(recursive), prefix, sep);
-
-  return rows.sort((a, b) => basename(b.session_path).localeCompare(basename(a.session_path)));
+function candidates(directory, recursive) {
+  return database.sdkSessionListRows(rootDirectory(), directory, recursive).sort((a, b) => basename(b.session_path).localeCompare(basename(a.session_path)));
 }
 
 function fingerprint(row) {
@@ -146,7 +138,7 @@ async function readSummary(row, signal) {
   return summaryValue(row, state);
 }
 
-async function summary(db, row, signal) {
+async function summary(row, signal) {
   const stamp = fingerprint(row);
   const previous = cached.get(row.session_path);
 
@@ -175,10 +167,10 @@ function sorted(values) {
   return values.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 }
 
-async function availableSummary(db, row, signal) {
+async function availableSummary(row, signal) {
   try {
-    const value = await summary(db, row, signal);
-    return value ? { ...value, name: sessionName(row.session_path, row.session_id, db) } : undefined;
+    const value = await summary(row, signal);
+    return value ? { ...value, name: sessionName(row.session_path, row.session_id) } : undefined;
   }
   catch (error) {
     signal?.throwIfAborted();
@@ -198,11 +190,7 @@ function reportProgress(progress, loaded, total, values) {
   progress?.(loaded, total, publish ? sorted([...values]) : undefined);
 }
 
-function openListDatabase() {
-  return database.connection(rootDirectory());
-}
-
-function recentTime(row) {
+function recentTime(row: SdkSessionListRow): bigint | undefined {
   try { return row.modified_ns === null ? statSync(row.session_path, { bigint: true }).mtimeNs : BigInt(row.modified_ns); }
   catch (error) {
     if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
@@ -212,8 +200,7 @@ function recentTime(row) {
 }
 
 function recentSession(directory, cwd) {
-  const db = openListDatabase();
-  const rows = candidates(db, directory, false).map(row => ({ row, time: recentTime(row) })).filter(value => value.time !== undefined);
+  const rows = candidates(directory, false).map(row => ({ row, time: recentTime(row) })).filter((value): value is { row: SdkSessionListRow; time: bigint } => value.time !== undefined);
   rows.sort((a, b) => a.time === b.time ? 0 : a.time > b.time ? -1 : 1);
 
   return rows.find(({ row }) => sessionHeaderMatches(row.session_path, row.session_id, cwd))?.row.session_path;
@@ -232,14 +219,13 @@ function installRecentSession(SessionManager) {
 
 async function list(directory, cwd, recursive, progress, signal) {
   signal?.throwIfAborted();
-  const db = openListDatabase();
-  const rows = candidates(db, directory, recursive);
+  const rows = candidates(directory, recursive);
   const values: NonNullable<ReturnType<typeof summaryValue>>[] = [];
   let loaded = 0;
 
   for (const row of rows) {
     signal?.throwIfAborted();
-    const value = await availableSummary(db, row, signal);
+    const value = await availableSummary(row, signal);
 
     if (value && matchesCwd(value, cwd)) values.push(value);
     reportProgress(progress, ++loaded, rows.length, values);

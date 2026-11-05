@@ -10,7 +10,7 @@ import { parsePreparation, read as readPreparation, save as savePreparation, typ
 import { allocate as allocateGoalDirectory } from "../../../resources/piop-storage/goal-ownership.ts";
 import { acquire as acquireGoalAssets, exists as goalDirectoryExists, claim, directReferences, validPath, discardPreparation, rootForDirectory } from "../../../resources/piop-storage/goal-assets.ts";
 import { acquireReferencePublicationLockAsync } from "../../../resources/piop-storage/reference-publication-lock.ts";
-import { requestRetention } from "../../retention_requests";
+import { requestRetention } from "../../storage";
 
 export interface GoalPlace { file: string; sessionId: string; cwd: string }
 

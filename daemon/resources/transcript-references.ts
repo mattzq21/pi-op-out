@@ -2,7 +2,6 @@ import * as stateRecords from './piop-storage/session-records.ts';
 import fs from 'node:fs';
 import * as database from './session-database.ts';
 import { onMainThread } from './main-thread.ts';
-import Path from 'node:path';
 
 // The last saved summary of each transcript that this process saved, by path.
 const cache = new Map<string, { root: string; record: any[]; stamp: string }>();
@@ -21,18 +20,14 @@ function summarize(entries, root) {
   return JSON.parse(JSON.stringify([entries[0], ...entries.slice(1).filter(entry => relevant(entry, root))]));
 }
 
-function save(db, file, stamp, entries) {
-  db.prepare('INSERT INTO transcript_references VALUES (?, ?, ?, ?, 2) ON CONFLICT(session_path) DO UPDATE SET session_id=excluded.session_id, fingerprint=excluded.fingerprint, entries_json=excluded.entries_json, format_version=2')
-    .run(file, entries[0]?.id?.constructor === String ? entries[0].id.toLowerCase() : null, stamp, JSON.stringify(entries));
+function save(root, file, stamp, entries) {
+  database.saveTranscriptReference(root, file, entries[0]?.id?.constructor === String ? entries[0].id.toLowerCase() : null, stamp, JSON.stringify(entries));
 }
 
-function appendSaved(db, file, previous, stamp, entry) {
+function appendSaved(root, file, previous, stamp, entry) {
   if (!previous) return false;
 
-  if (entry) return Boolean(db.prepare("UPDATE transcript_references SET fingerprint=?, entries_json=json_insert(entries_json, '$[#]', json(?)) WHERE session_path=? AND fingerprint=? AND format_version=2")
-    .run(stamp, JSON.stringify(entry), file, previous).changes);
-
-  return Boolean(db.prepare('UPDATE transcript_references SET fingerprint=? WHERE session_path=? AND fingerprint=? AND format_version=2').run(stamp, file, previous).changes);
+  return database.appendTranscriptReference(root, file, previous, stamp, entry ? JSON.stringify(entry) : undefined);
 }
 
 function messageDetails(entry) {
@@ -57,12 +52,12 @@ function receiptFingerprint(stamp) {
   return `${parts[3]}:${parts[2]}`;
 }
 
-function publishReceipts(db, file, stamp, previous, id, entries, entry?) {
+function publishReceipts(root, file, stamp, previous, id, entries, entry?) {
   const fingerprint = receiptFingerprint(stamp);
   const addition = delivery(entry, id);
 
-  if (previous && appendReceipts(db, file, id, receiptFingerprint(previous), fingerprint, addition)) return;
-  const saved = new Map<string, string>();
+  if (previous && database.appendMailboxReceipts(root, id, file, receiptFingerprint(previous), fingerprint, addition ? JSON.stringify(addition) : undefined)) return;
+  const saved = new Map();
 
   for (const current of entries()) {
     const receipt = delivery(current, id);
@@ -70,23 +65,11 @@ function publishReceipts(db, file, stamp, previous, id, entries, entry?) {
     if (receipt) saved.set(...receipt);
   }
 
-  db.prepare(`INSERT INTO session_mailbox_receipt_cache
-    SELECT session_id, session_path, ?, ? FROM sessions WHERE session_id=? AND session_path=?
-    ON CONFLICT(session_id) DO UPDATE SET session_path=excluded.session_path,
-      fingerprint=excluded.fingerprint, deliveries_json=excluded.deliveries_json`)
-    .run(fingerprint, JSON.stringify([...saved]), id, file);
+  database.saveMailboxReceipts(root, id, file, fingerprint, JSON.stringify([...saved]));
 }
 
-function appendReceipts(db, file, id, previous, fingerprint, addition) {
-  const update = addition ? "json_insert(deliveries_json, '$[#]', json(?))" : 'deliveries_json';
-  const values = addition ? [fingerprint, JSON.stringify(addition)] : [fingerprint];
-
-  return Boolean(db.prepare(`UPDATE session_mailbox_receipt_cache SET fingerprint=?, deliveries_json=${update}
-    WHERE session_id=? AND session_path=? AND fingerprint=?`).run(...values, id, file, previous).changes);
-}
-
-function savedEntries(db, file) {
-  return stateRecords.merge(file, fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line)), db);
+function savedEntries(file) {
+  return stateRecords.merge(file, fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line)));
 }
 
 // Saves the summary of the whole transcript, which has just been saved.
@@ -94,11 +77,9 @@ const publish = onMainThread('transcript-references.publish', (root: string, fil
   root = fs.realpathSync(root);
   const record = summarize(entries, root);
   const stamp = fingerprint(fs.lstatSync(file, { bigint: true }));
-  const db = database.connection(root);
-
-  database.transaction(db, 'IMMEDIATE', () => {
-    save(db, file, stamp, record);
-    publishReceipts(db, file, stamp, undefined, entries[0]?.id, () => entries);
+  database.transaction(root, 'IMMEDIATE', () => {
+    save(root, file, stamp, record);
+    publishReceipts(root, file, stamp, undefined, entries[0]?.id, () => entries);
   });
 
   cache.set(file, { root, record, stamp });
@@ -109,15 +90,14 @@ const append = onMainThread('transcript-references.append', (root: string, file:
   root = fs.realpathSync(root);
   const previous = cache.get(file);
   const stamp = fingerprint(fs.lstatSync(file, { bigint: true }));
-  const db = database.connection(root);
 
   if (previous?.root !== root || previous.stamp !== fingerprint(before)) {
-    const entries = savedEntries(db, file);
+    const entries = savedEntries(file);
     const record = summarize(entries, root);
 
-    database.transaction(db, 'IMMEDIATE', () => {
-      save(db, file, stamp, record);
-      publishReceipts(db, file, stamp, undefined, entries[0]?.id, () => entries);
+    database.transaction(root, 'IMMEDIATE', () => {
+      save(root, file, stamp, record);
+      publishReceipts(root, file, stamp, undefined, entries[0]?.id, () => entries);
     });
     cache.set(file, { root, record, stamp });
 
@@ -127,26 +107,25 @@ const append = onMainThread('transcript-references.append', (root: string, file:
   const record = addition ? [...previous.record, addition] : previous.record;
   const id = previous.record[0]?.id;
 
-  database.transaction(db, 'IMMEDIATE', () => {
-    if (!appendSaved(db, file, previous.stamp, stamp, addition)) save(db, file, stamp, record);
-    publishReceipts(db, file, stamp, previous.stamp, id, () => savedEntries(db, file), entry);
+  database.transaction(root, 'IMMEDIATE', () => {
+    if (!appendSaved(root, file, previous.stamp, stamp, addition)) save(root, file, stamp, record);
+    publishReceipts(root, file, stamp, previous.stamp, id, () => savedEntries(file), entry);
   });
 
   cache.set(file, { root, record, stamp });
 });
 
-function read(root, file, connection?) {
+function read(root, file) {
   root = fs.realpathSync(root);
 
   if (fs.realpathSync(file) !== file) throw new Error('Transcript reference source has ambiguous ownership');
   const before = fingerprint(fs.lstatSync(file, { bigint: true }));
-  const db = connection ?? database.connection(root);
-  const row = db.prepare('SELECT entries_json FROM transcript_references WHERE session_path=? AND fingerprint=? AND format_version=2').get(file, before) as { entries_json: string } | undefined;
+  const saved = database.transcriptReferenceEntries(root, file, before);
 
-  if (row) {
+  if (saved !== undefined) {
     if (fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error('Transcript changed while reading saved references');
 
-    return stateRecords.merge(file, JSON.parse(row.entries_json), db);
+    return stateRecords.merge(file, JSON.parse(saved));
   }
 
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -159,20 +138,12 @@ function read(root, file, connection?) {
   } finally { fs.closeSync(descriptor); }
 
   if (fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error('Transcript changed during reference import');
-  const saved = summarize(stateRecords.merge(file, entries, db), root);
-  saveSummary(root, file, before, saved);
+  const summary = summarize(stateRecords.merge(file, entries), root);
+  saveSummary(root, file, before, summary);
 
-  return saved;
+  return summary;
 }
 
-const saveSummary = onMainThread('transcript-references.saveSummary', (root: string, file: string, stamp: string, entries: any[]) => save(database.connection(root), file, stamp, entries));
+const saveSummary = onMainThread('transcript-references.saveSummary', save);
 
-function removeDirectory(db, directory) {
-  const prefix = directory + Path.sep;
-
-  for (const table of ['transcript_references', 'storage_transcript_summaries']) {
-    db.prepare(`DELETE FROM ${table} WHERE substr(session_path, 1, length(?))=?`).run(prefix, prefix);
-  }
-}
-
-export { read, publish, append, removeDirectory };
+export { read, publish, append };

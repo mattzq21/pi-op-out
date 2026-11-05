@@ -1,6 +1,7 @@
 import * as stateRecords from '../daemon/resources/piop-storage/session-records.ts';
 import * as sessionNames from '../daemon/resources/session-broker/session-names.ts';
-import { reserve, bind, connection } from "../daemon/resources/session-database.ts";
+import { reserve, bind } from "../daemon/resources/session-database.ts";
+import { connection } from "../daemon/resources/session-database/core.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,7 @@ import { installBroker } from './runtime-events-fixture.mjs';
 import { localStorageChannel } from './local-storage-channel.mjs';
 
 export async function buildTraceControls(outfile) {
+  if (process.env.PIOP_TEST_DAEMON_UNIT) throw new Error('A daemon unit test must not build the Pi controls');
   await build({ entryPoints: [fileURLToPath(new URL('../daemon/resources/piop-controls/index.ts', import.meta.url))], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: ['@earendil-works/*'], plugins: [localStorageChannel()],
     banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   });
@@ -35,7 +37,7 @@ export async function publishedTrace(t, content, { folder = '', home: existingHo
   const header = { type: 'session', version: 3, id, cwd: cwd ?? home };
   const user = { type: 'message', id: 'user', parentId: null, message: { role: 'user', content: 'Start' } };
   await writeFile(source, JSON.stringify(header) + '\n' + JSON.stringify(user) + '\n');
-  bind(connection(join(home, '.piop')), id, source);
+  bind(join(home, '.piop'), id, source);
   const outfile = controlsBundle ?? join(buildDirectory, 'operations.mjs');
   if (!controlsBundle) await buildTraceControls(outfile);
   installBroker(t, (path, { count }) => {

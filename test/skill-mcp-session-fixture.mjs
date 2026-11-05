@@ -34,7 +34,7 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
   await build({ entryPoints: ['daemon/resources/mcp-bridge.ts'], outfile: bridge, bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'sdk', setup(b) { b.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: shim, external: true })); } }] });
   const area = join(dir, '.piop'); mkdirSync(join(area, 'sessions'), { recursive: true });
   const id = database.reserve(area), file = join(area, 'sessions', `test_${id}.jsonl`);
-  const db = database.connection(area); database.bind(db, id, file);
+  database.bind(area, id, file);
   writeFileSync(file, JSON.stringify({ type: 'session', version: 3, id, timestamp: new Date().toISOString(), cwd: dir }) + '\n'); writeFileSync(join(dir, 'session-path'), file);
   const start = async () => {
     const child = fork('test/fixtures/skill-mcp-agent.mjs', [root, dir, bridge, storage], { env: { ...process.env, HOME: dir, PIOP_STORAGE_DIRECTORY: '.piop' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] }); children.add(child);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import * as database from '../../daemon/resources/session-database.ts';
+import { connection } from '../../daemon/resources/session-database/core.ts';
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -53,8 +54,7 @@ async function fixture(t) {
   const sourcePath = join(sessions, 'source.jsonl');
   const sourceText = [header, ...entries].map(JSON.stringify).join('\n') + '\n';
   await writeFile(sourcePath, sourceText);
-  const db = database.connection(dir);
-  database.bind(db, header.id, sourcePath);
+  database.bind(dir, header.id, sourcePath);
   const notices = [], operations = [], listeners = [];
   const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getEntry: id => entries.find(entry => entry.id === id), getHeader: () => header, getSessionId: () => header.id, getSessionFile: () => sourcePath, getSessionDir: () => sessions }, ui: { notify: (...args) => notices.push(args) } };
   module.controls({ on: () => undefined, events: { on: (name, handler) => { if (name === 'piop:rpc') listeners.push(handler); }, emit: (name, request) => { if (name === "hooks-extended") request.hooks = { on: () => () => {} }; } }, appendEntry: (customType, data) => operations.push({ customType, data }) });
@@ -81,9 +81,8 @@ test('fork retains completed history, unique identity, permissions, and untouche
   assert.equal(entries[0].parentSession, f.sourcePath);
   assert.deepEqual(entries[0].piopForkSource, { sessionId: f.ctx.sessionManager.getSessionId(), sessionPath: f.sourcePath, entryId: 'a1' });
   assert.notEqual(entries[0].id, f.ctx.sessionManager.getSessionId());
-  const db = database.connection(f.dir);
-  assert.equal(db.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(entries[0].id).session_path, result.sessionPath);
-  const hold = db.prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-input-hold'").get(entries[0].id);
+  assert.equal(database.lookup(f.dir, entries[0].id), result.sessionPath);
+  const hold = connection(f.dir).prepare("SELECT entry_json FROM session_extension_state WHERE session_id=? AND state_key='piop-input-hold'").get(entries[0].id);
   assert.equal(JSON.parse(hold.entry_json).data.held, true);
   assert.equal(entries[0].cwd, f.dir);
   assert.deepEqual(entries.slice(1), [

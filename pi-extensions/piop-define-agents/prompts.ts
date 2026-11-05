@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import fs from "node:fs";
 import * as storageDatabase from "../../daemon/resources/session-database.ts";
 import { call } from "../../daemon/resources/storage-channel.ts";
 import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "../../daemon/resources/agent-definitions-writes.ts";
@@ -43,22 +42,15 @@ export const storageRoot = process.env.PIOP_STORAGE_ROOT || dirname(dirname(file
 
 export const agentDirectory = join(storageRoot, "piop-define-agents");
 
-function readRow(root: string, sql: string, key: string): Record<string, unknown> | undefined {
-  const path = join(root, "sessions.sqlite");
-  let metadata;
-
-  try { metadata = fs.lstatSync(path); }
-  catch (error) { if (hasErrorCode(error, "ENOENT")) return undefined; throw error; }
-
-  if (!metadata.isFile()) throw new Error("Settings database is not a regular file");
-
-  return storageDatabase.connection(root).prepare(sql).get(key) as Record<string, unknown> | undefined;
+// read's result, or undefined when the storage database of root does not exist.
+function stored<T>(root: string, read: () => T): T | undefined {
+  return storageDatabase.databaseExists(root) ? read() : undefined;
 }
 
 export { isNamedAgent };
 
 export async function readConfigDocument() {
-  const body = bodyText(readRow(storageRoot, "SELECT body FROM application_settings WHERE name=?", DEFINITIONS));
+  const body = bodyText(stored(storageRoot, () => storageDatabase.applicationSetting(storageRoot, DEFINITIONS)));
 
   if (body === undefined) throw Object.assign(new Error("Agent definitions are unavailable"), { code: "ENOENT" });
 
@@ -77,7 +69,7 @@ export type ProjectDocument = { agents: unknown[]; defaultAgent?: string };
 export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
 
 export function readProjectDocument(directory: string): ProjectDocument & { revision: string } {
-  const body = bodyText(readRow(storageRoot, "SELECT body FROM project_agent_definitions WHERE directory=?", directory));
+  const body = bodyText(stored(storageRoot, () => storageDatabase.projectAgentDefinition(storageRoot, directory)));
 
   if (body === undefined) return { agents: [], revision: "missing" };
   const { agents, defaultAgent } = JSON.parse(body);
@@ -214,8 +206,9 @@ export async function readPrompt(path: string): Promise<string> {
   const digest = basename(path, ".md");
 
   if (basename(dirname(path)) !== "prompt-snapshots" || !/^[a-f0-9]{64}\.md$/.test(basename(path))) return readFile(path, "utf8");
-  const row = readRow(snapshotRoot(path), "SELECT contents FROM agent_prompt_snapshots WHERE digest=?", digest);
-  const contents = row && row.contents !== null ? verifiedPrompt(String(row.contents), digest) : null;
+  const root = snapshotRoot(path);
+  const saved = stored(root, () => storageDatabase.agentPromptSnapshot(root, digest));
+  const contents = saved === undefined ? null : verifiedPrompt(String(saved), digest);
 
   if (contents === null) throw Object.assign(new Error(`Saved agent prompt is unavailable: ${path}`), { code: "ENOENT" });
 

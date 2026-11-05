@@ -1,4 +1,5 @@
 import { mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { isDatabaseChange } from '../../resources/session-database.ts';
 
 // Runs check now and after each change of the storage database in directory, until check gives a value or ms pass.
 // The kernel tells of each change (inotify), so nothing is read again and again. When also settles, check runs again
@@ -13,7 +14,7 @@ export async function untilStorageChange<T>(directory: string, check: () => Prom
   try {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     watcher = watch(directory, (_event, name) => {
-      if (name !== null && !String(name).startsWith('sessions.sqlite')) return;
+      if (name !== null && !isDatabaseChange(String(name))) return;
       changed = true;
       wake?.();
     });

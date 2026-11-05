@@ -14,7 +14,7 @@ function ownsFolder(root, id, directory) {
 }
 
 function list(root) {
-  const rows = database.connection(root).prepare('SELECT session_id, original_path FROM temporary_chat_allocations ORDER BY session_id').all();
+  const rows = database.temporaryChatAllocations(root);
 
   for (const row of rows) {
     if (!ownsFolder(root, row.session_id, row.original_path)) throw new Error('Invalid saved temporary chat directory');

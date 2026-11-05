@@ -28,8 +28,8 @@ await build({
   stdin: { contents: `
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { hostOperation, runHostOperation, shutdownHostOperations } from './daemon/src/host_operations';
-import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operation_worker';
+import { hostOperation, runHostOperation, shutdownHostOperations } from './daemon/src/host_operations/operations';
+import { isHostOperationWorker, runHostOperationWorker } from './daemon/src/host_operations/worker';
 if (isHostOperationWorker()) runHostOperationWorker();
 else {
   const request = JSON.parse(readFileSync(0, 'utf8'));

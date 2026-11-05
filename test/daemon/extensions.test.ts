@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
 import { daemonDirectory, fakePi, fakeProgram, refreshedUsage, startDaemon, temporaryDirectory, type Client, type TestDaemon } from './harness';
-import { recordTools } from '../../daemon/src/tool_inventory';
+import { recordTools } from '../../daemon/src/inventories/tools';
 
 const root = join(import.meta.dir, '../..');
 const CORE_FILES = [

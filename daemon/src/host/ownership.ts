@@ -3,11 +3,11 @@ import { sessionName } from "../../resources/session-broker/session-names.ts";
 import { randomUUID } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, dirname, sep } from 'node:path';
-import * as ConversationStorage from '../conversation_storage';
-import * as RestoreRecovery from '../restore_recovery';
-import * as Registry from '../session_registry';
+import * as ConversationStorage from '../storage';
+import { recoverPending } from '../storage';
+import * as SessionTables from '../../resources/session-database.ts';
 import * as ChildIndex from '../../resources/session-broker/session-child-index.ts';
-import { getProjectRepository } from '../project_repositories';
+import { getProjectRepository } from '../projects';
 import * as StorageLocks from '../../resources/storage-locks.ts';
 import { flag } from './json';
 import { readHeaderLine } from './protocol';
@@ -45,7 +45,7 @@ export class Guard {
   }
 
   async restoreFinished(ownership: ConversationOwnership, path: string | null | undefined): Promise<void> {
-    try { await RestoreRecovery.recover(ownership.root); } catch (error) { this.drop(); throw error; }
+    try { await recoverPending(ownership.root); } catch (error) { this.drop(); throw error; }
     let saved: SavedConversation | null;
     try { saved = ownership.locate(this.id, path, false, true); } catch (error) { this.drop(); throw error; }
     if (saved) return this.restored(ownership, saved.path);
@@ -77,9 +77,7 @@ function optionalPath(path: string): string | null {
 }
 
 export function registeredPath(root: string, id: string): string | null {
-  const database = Registry.connection(root);
-  const row: any = database.prepare('SELECT session_path FROM sessions WHERE session_id=?').get(id);
-  return typeof row?.session_path === 'string' ? row.session_path : null;
+  return SessionTables.lookup(root, id) ?? null;
 }
 
 export class ConversationOwnership {
@@ -94,7 +92,7 @@ export class ConversationOwnership {
   private constructor(readonly root: string, private revocation: Revocation) {}
 
   static async create(home: string, storage: string, revocation: Revocation): Promise<ConversationOwnership> {
-    await RestoreRecovery.recover(join(home, storage));
+    await recoverPending(join(home, storage));
     return new ConversationOwnership(join(home, storage), revocation);
   }
 
@@ -296,8 +294,7 @@ export class ConversationOwnership {
   }
 
   removed(id: string): boolean {
-    const exists = Boolean((Registry.connection(this.root).prepare('SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id=?) AS found').get(id) as any).found);
-    return !exists || flag(this.read(id), 'deleted');
+    return !SessionTables.sessionRowExists(this.root, id) || flag(this.read(id), 'deleted');
   }
 
   lookup(id: string): any {

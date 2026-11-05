@@ -149,10 +149,6 @@ function journals(root, sessionId) {
   return database.publications(root).map(id => database.publication(root, id)).filter(journal => journal?.sessionId === sessionId);
 }
 
-function registeredPath(root, sessionId): { session_path: string | null } | undefined {
-  return database.connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId) as { session_path: string | null } | undefined;
-}
-
 function removeFile(file) {
   fs.unlinkSync(file);
   io.sync(path.dirname(file));
@@ -191,17 +187,17 @@ function releaseClaims(root, sessionId) {
 }
 
 const releaseReservation = onMainThread('chat-branch-history.releaseReservation', (root: string, sessionId: string) => {
-  database.connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(sessionId);
+  database.releaseReservedSession(root, sessionId);
 });
 
 function forget(root, sessionId, target) {
-  const row = registeredPath(root, sessionId);
-  if (!row) return;
-  if (row.session_path === null) {
+  const registered = database.lookup(root, sessionId);
+  if (registered === undefined) return;
+  if (registered === null) {
     releaseReservation(root, sessionId);
     return;
   }
-  if (row.session_path !== target) throw new Error('This branch identity belongs to another conversation: ' + row.session_path);
+  if (registered !== target) throw new Error('This branch identity belongs to another conversation: ' + registered);
   RegistryDeletion.forget(root, [{ sessionId, path: target }]);
 }
 
@@ -217,7 +213,7 @@ async function discardBranchHistory(root: string, sessionId: string, sessionPath
     const release = acquireReferencePublicationLock(root, true);
     try {
       const pending = journals(root, sessionId);
-      const target = sessionPath ?? pending[0]?.target ?? registeredPath(root, sessionId)?.session_path ?? null;
+      const target = sessionPath ?? pending[0]?.target ?? database.lookup(root, sessionId) ?? null;
       if (target !== null && !io.inside(path.join(root, 'sessions'), target)) throw new Error('The branch is outside active conversation storage');
       const failures: string[] = [];
       const step = operation => { try { operation(); } catch (error) { failures.push(message(error)); } };

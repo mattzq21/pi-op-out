@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Type } from 'typebox';
+import type { Static } from 'typebox';
+import type { GoalOwnershipRecord } from './goal-ownership.ts';
 import { Check } from 'typebox/value';
 import * as database from '../session-database.ts';
 import { onMainThread } from '../main-thread.ts';
@@ -11,10 +13,12 @@ const contractSchema = Type.Object({
   directories: Type.Array(Type.Object({ path: Type.String(), identity: Type.String({ pattern: '^\\d+:\\d+$' }) })),
 });
 
-function validContract(value) { return Check(contractSchema, value); }
+export type GoalContract = Static<typeof contractSchema>;
+
+function validContract(value: unknown): value is GoalContract { return Check(contractSchema, value); }
 
 // The saved contract text as a contract.
-function parseContract(text) {
+function parseContract(text: string): GoalContract {
   const contract = JSON.parse(text);
 
   if (!validContract(contract)) throw new Error('Invalid goal asset dependency contract');
@@ -22,11 +26,7 @@ function parseContract(text) {
   return contract;
 }
 
-function withDatabase(root, operation) {
-  return operation(database.connection(root));
-}
-
-function identity(directory) {
+function identity(directory: string): string {
   const info = fs.lstatSync(directory, { bigint: true });
 
   if (!info.isDirectory() || fs.realpathSync(directory) !== directory) throw new Error('Goal dependency directory changed');
@@ -34,64 +34,49 @@ function identity(directory) {
   return `${info.dev}:${info.ino}`;
 }
 
-function value(row) { return row && row.record_json !== null ? parseContract(row.record_json) : undefined; }
+function value(row: database.GoalRecordRow | undefined): GoalContract | undefined { return row && row.record_json !== null ? parseContract(row.record_json) : undefined; }
 
 function read(root: string, directory: string): { directories: Array<{ path: string; identity: string }> } | undefined {
   const expected = identity(directory);
 
-  return withDatabase(root, db => {
-    const query = db.prepare('SELECT record_json FROM goal_asset_dependencies WHERE directory=? AND identity=?');
-    const row = query.get(directory, expected);
-
-    if (row) return value(row);
-
-    return undefined;
-  });
+  return value(database.goalDependency(root, directory, expected));
 }
 
-const save = onMainThread('goal-dependencies.save', (root, directory, record) => {
+const save = onMainThread('goal-dependencies.save', (root: string, directory: string, record: GoalContract): void => {
   if (!validContract(record)) throw new Error('Invalid goal asset dependency contract');
   const expected = identity(directory);
 
-  withDatabase(root, db => db.prepare('INSERT INTO goal_asset_dependencies VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json')
-    .run(directory, expected, JSON.stringify(record)));
+  database.saveGoalDependency(root, directory, expected, JSON.stringify(record));
 });
 
-function retained(root, directory, expected) {
-  return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_asset_dependencies WHERE directory=? AND identity=? AND record_json IS NOT NULL').get(directory, expected)));
+function retained(root: string, directory: string, expected: string): boolean {
+  return database.goalDependencyRetained(root, directory, expected);
 }
 
 const remove = onMainThread('goal-dependencies.remove', (root: string, directory: string, expected: string) => {
   removeTextFiles(root, directory, expected);
-  withDatabase(root, db => db.prepare('DELETE FROM goal_asset_dependencies WHERE directory=? AND identity=?').run(directory, expected));
+  database.removeGoalDependency(root, directory, expected);
 });
 
-function validNames(names) {
+function validNames(names: unknown): string[] {
   if (!Array.isArray(names) || names.some(name => !/^[^/\\]+\.(md|txt)$/.test(name) || path.basename(name) !== name)) throw new Error('Invalid goal text file list');
 
   return names;
 }
 
-function unpublished(db, directory, expected) {
-  return Boolean(db.prepare("SELECT 1 FROM goal_ownership WHERE directory=? AND identity IN (?, '') AND record_json IS NULL").get(directory, expected));
-}
-
-function textFiles(root, directory) {
+function textFiles(root: string, directory: string): string[] {
   const expected = identity(directory);
 
-  return withDatabase(root, db => {
-    const query = db.prepare('SELECT names_json FROM goal_text_files WHERE directory=? AND identity=?');
-    const row = query.get(directory, expected);
+  const names = database.goalTextFileNames(root, directory, expected);
 
-    if (!row && unpublished(db, directory, expected)) return [];
+  if (names === undefined && database.goalDirectoryUnpublished(root, directory, expected)) return [];
 
-    if (!row) throw new Error('Goal text files are not registered');
+  if (names === undefined) throw new Error('Goal text files are not registered');
 
-    return validNames(JSON.parse(row.names_json));
-  });
+  return validNames(JSON.parse(names));
 }
 
-function readContents(directory, names) {
+function readContents(directory: string, names: string[]): Array<{ name: string; text: string }> {
   return validNames(names).map(name => {
     const file = path.join(directory, name);
     const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -113,16 +98,13 @@ function readContents(directory, names) {
 function textContents(root: string, directory: string): Array<{ name: string; text: string }> {
   const expected = identity(directory);
 
-  return withDatabase(root, db => {
-    const query = db.prepare('SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?');
-    const row = query.get(directory, expected);
+  const contents = database.goalTextContents(root, directory, expected);
 
-    if (!row && unpublished(db, directory, expected)) return [];
+  if (contents === undefined && database.goalDirectoryUnpublished(root, directory, expected)) return [];
 
-    if (!row) throw new Error('Goal text contents are not registered');
+  if (contents === undefined) throw new Error('Goal text contents are not registered');
 
-    return JSON.parse(row.contents_json);
-  });
+  return JSON.parse(contents);
 }
 
 function saveTextFiles(root: string, directory: string, names: string[], destination: string = directory): string {
@@ -131,12 +113,12 @@ function saveTextFiles(root: string, directory: string, names: string[], destina
 
 function savePreparedText(root: string, directory: string, names: string[], preparation: string, destination: string = directory): string {
   const input = JSON.parse(preparation);
-  const ownership = { version: 1, kind: "goal-assets", owners: [{ sessionId: input.sessionId, sessionPath: input.sessionPath }] };
+  const ownership: GoalOwnershipRecord = { version: 1, kind: "goal-assets", owners: [{ sessionId: input.sessionId, sessionPath: input.sessionPath }] };
 
   return publishText(root, directory, names, destination, preparation, ownership);
 }
 
-function publishText(root, directory, names, destination, preparation?, ownership?) {
+function publishText(root: string, directory: string, names: string[], destination: string, preparation?: string, ownership?: GoalOwnershipRecord): string {
   const expected = identity(directory);
   const contents = readContents(directory, names);
 
@@ -146,39 +128,33 @@ function publishText(root, directory, names, destination, preparation?, ownershi
   return expected;
 }
 
-const saveText = onMainThread('goal-dependencies.saveText', (root, destination, expected, names, contents, preparation, ownership) => {
-  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
+const saveText = onMainThread('goal-dependencies.saveText', (root: string, destination: string, expected: string, names: string[], contents: Array<{ name: string; text: string }>, preparation: string | undefined, ownership: GoalOwnershipRecord | undefined): void => {
+  database.transaction(root, 'IMMEDIATE', () => {
     if (preparation !== undefined) {
-      db.prepare('INSERT INTO goal_ownership VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json').run(destination, expected, JSON.stringify(ownership));
-      db.prepare('INSERT INTO goal_preparations VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET record_json=excluded.record_json').run(destination, expected, preparation);
+      database.saveGoalOwnership(root, destination, expected, JSON.stringify(ownership));
+      database.saveGoalPreparation(root, destination, expected, preparation);
     }
 
-    db.prepare('INSERT INTO goal_text_files VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET names_json=excluded.names_json')
-      .run(destination, expected, JSON.stringify(names));
-    db.prepare('INSERT INTO goal_text_contents VALUES (?, ?, ?) ON CONFLICT(directory, identity) DO UPDATE SET contents_json=excluded.contents_json')
-      .run(destination, expected, JSON.stringify(contents));
-  }));
+    database.saveGoalTexts(root, destination, expected, names, contents);
+  });
 });
 
 const removeTextFiles = onMainThread('goal-dependencies.removeTextFiles', (root: string, directory: string, expected: string): void => {
-  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
-    db.prepare('DELETE FROM goal_text_files WHERE directory=? AND identity=?').run(directory, expected);
-    db.prepare('DELETE FROM goal_text_contents WHERE directory=? AND identity=?').run(directory, expected);
-    db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
-  }));
+  database.removeGoalTexts(root, directory, expected);
 });
 
 const removePreparedText = onMainThread('goal-dependencies.removePreparedText', (root: string, directory: string, expected: string): void => {
-  withDatabase(root, db => database.transaction(db, 'IMMEDIATE', () => {
-    for (const table of ['goal_preparations', 'goal_text_files', 'goal_text_contents', 'goal_ownership']) db.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(directory, expected);
-    db.prepare('DELETE FROM goal_directory_history WHERE directory=? AND current_identity=?').run(directory, expected);
-  }));
+  database.transaction(root, 'IMMEDIATE', () => {
+    database.removeGoalPreparation(root, directory, expected);
+    database.removeGoalTexts(root, directory, expected);
+    database.removeGoalOwnership(root, directory, expected);
+  });
 });
 
-function matchesDirectory(root, directory, previous, current) {
+function matchesDirectory(root: string, directory: string, previous: string, current: string): boolean {
   if (previous === current) return true;
 
-  return withDatabase(root, db => Boolean(db.prepare('SELECT 1 FROM goal_directory_history WHERE directory=? AND previous_identity=? AND current_identity=?').get(directory, previous, current)));
+  return database.goalDirectoryRemade(root, directory, previous, current);
 }
 
 export { contractSchema, validContract, parseContract, read, save, retained, remove, textFiles, textContents, saveTextFiles, savePreparedText, removeTextFiles, removePreparedText, matchesDirectory };

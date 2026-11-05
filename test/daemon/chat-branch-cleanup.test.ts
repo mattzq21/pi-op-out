@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { startDaemon, type TestDaemon } from './harness';
 import { gitRepository } from './agent-chats';
-import * as Git from '../../daemon/src/chat_worktrees';
-import * as Records from '../../daemon/src/chat_worktree_records';
-import * as History from '../../daemon/src/chat_branch_history';
-import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/project_repositories';
+import * as Git from '../../daemon/src/worktrees/worktrees';
+import * as Records from '../../daemon/src/worktrees/records';
+import * as History from '../../daemon/src/host_operations/branch_history';
+import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/projects/repositories';
 
 const database = require('../../daemon/resources/session-database.ts');
 const publication = require('../../daemon/resources/piop-storage/session-publication.ts');

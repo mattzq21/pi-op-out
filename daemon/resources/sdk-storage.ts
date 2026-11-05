@@ -187,7 +187,7 @@ function withStoredSettings(path, operation) {
   const key = storagePath.resolve(path);
 
   for (let attempt = 1; ; attempt++) {
-    const current = storageDatabase.connection(sessionReferenceRoot()).prepare("SELECT body FROM sdk_settings WHERE path=?").get(key)?.body ?? undefined;
+    const current = storageDatabase.sdkSettingsText(sessionReferenceRoot(), key);
     const next = operation(current);
 
     if (next === undefined || call("settings.replace", { path: key, previous: current ?? null, next })) return;

@@ -168,7 +168,7 @@ function queuedReferences(root, excluded, candidates, found, inventory) {
   }
 }
 
-function survivingSession(root, file, id, excluded, connection?) {
+function survivingSession(root: string, file: string, id: string, excluded: Set<string>): boolean {
   if (excluded.has(file)) return false;
   let info;
 
@@ -178,7 +178,7 @@ function survivingSession(root, file, id, excluded, connection?) {
   if (!info.isFile()) return false;
   let header;
 
-  try { header = transcriptRecords.read(root, file, connection)[0]; }
+  try { header = transcriptRecords.read(root, file)[0]; }
   catch (error) { if (error instanceof SyntaxError) return false; throw error; }
 
   return validSessionHeader(header) && header.id === id;
@@ -233,29 +233,11 @@ function retainPublications(root, candidates, retained, inventory) {
 
 function cleanupRegistry(root, sessionIds) {
   if (!sessionIds.length) return [];
-  const database = path.join(root, 'sessions.sqlite');
-  const info = metadata(database);
+  const tables = SessionDatabase;
 
-  if (!info) return [...sessionIds];
+  if (!tables.databaseExists(root)) return [...sessionIds];
 
-  if (!info.isFile()) throw new Error('Invalid session directory registry');
-
-  return removeRegistryRows(SessionDatabase.connection(root), sessionIds);
-}
-
-function removeRegistryRows(db, sessionIds) {
-
-  const read = db.prepare('SELECT session_id, session_path FROM sessions WHERE lower(session_id) = ?');
-  const completed: string[] = [];
-
-  for (const id of sessionIds) {
-    const record = read.get(id.toLowerCase());
-
-    if (record) continue;
-    completed.push(id);
-  }
-
-  return completed;
+  return tables.unregisteredSessionIds(root, sessionIds);
 }
 
 export { collectRetention, cleanupRegistry, survivingSession };

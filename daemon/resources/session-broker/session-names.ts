@@ -5,7 +5,7 @@ const MAX_NAME_LENGTH = 50;
 
 function capSessionName(name: string): string { return Array.from(name.replace(/\s+/g, ' ').trim()).slice(0, MAX_NAME_LENGTH).join('').trimEnd(); }
 
-function promptName(prompt) { return capSessionName(prompt.replace(/\[((?:\\.|[^\]\\])*)\]\([^)\s]*\)/g, (_link, label) => label.replace(/\\(.)/g, '$1'))); }
+function promptName(prompt: string): string { return capSessionName(prompt.replace(/\[((?:\\.|[^\]\\])*)\]\([^)\s]*\)/g, (_link, label: string) => label.replace(/\\(.)/g, '$1'))); }
 
 function validName(name: unknown): string {
   if (typeof name !== 'string') throw new Error('A conversation name must be text');
@@ -16,36 +16,25 @@ function validName(name: unknown): string {
   return capped;
 }
 
-function nameOf(db: database.Connection, sessionId: string): string | undefined { return db.prepare('SELECT name FROM session_names WHERE session_id=?').get(sessionId)?.name as string | undefined; }
+function sessionName(file: string, sessionId: string): string | undefined { return database.sessionNameOf(database.storageRoot(file), sessionId); }
 
-function write(db, sessionId, name, replace) {
-  db.prepare(`INSERT INTO session_names (session_id, name) VALUES (?, ?) ON CONFLICT(session_id) DO ${replace ? 'UPDATE SET name=excluded.name' : 'NOTHING'}`).run(sessionId, validName(name));
-}
+const nameSession = onMainThread('session-names.nameSession', (file: string, sessionId: string, name: unknown, replace: boolean = true): void => {
+  const root = database.storageRoot(file);
 
-function transaction(root, work) {
-  const db = database.connection(root);
-
-  return database.transaction(db, 'IMMEDIATE', () => work(db));
-}
-
-function sessionName(file: string, sessionId: string, connection?: database.Connection): string | undefined {
-  return nameOf(connection ?? database.connection(database.storageRoot(file)), sessionId);
-}
-
-const nameSession = onMainThread('session-names.nameSession', (file: string, sessionId: string, name: string, replace = true): void => {
-  transaction(database.storageRoot(file), db => {
-    database.register(db, sessionId, file);
-    write(db, sessionId, name, replace);
+  database.transaction(root, 'IMMEDIATE', () => {
+    database.register(root, sessionId, file);
+    database.saveSessionName(root, sessionId, validName(name), replace);
   });
 });
 
-const renameSession = onMainThread('session-names.renameSession', (root: string, sessionId: string, name: string): string => {
-  return transaction(root, db => {
-    if (!db.prepare('SELECT 1 FROM sessions WHERE session_id=? AND session_path IS NOT NULL').get(sessionId)) throw new Error('Conversation not found');
-    write(db, sessionId, name, true);
+const renameSession = onMainThread('session-names.renameSession', (root: string, sessionId: string, name: unknown): string => {
+  return database.transaction(root, 'IMMEDIATE', () => {
+    if (!database.isSavedSession(root, sessionId)) throw new Error('Conversation not found');
+    database.saveSessionName(root, sessionId, validName(name), true);
 
-    return nameOf(db, sessionId);
+    // The name was saved just above in this transaction.
+    return database.sessionNameOf(root, sessionId) as string;
   });
 });
 
-export { capSessionName, promptName, validName, sessionName, nameSession, renameSession, nameOf };
+export { capSessionName, promptName, validName, sessionName, nameSession, renameSession };

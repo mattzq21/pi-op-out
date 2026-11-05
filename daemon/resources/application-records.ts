@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import * as database from './session-database.ts';
 import { onMainThread } from './main-thread.ts';
 
@@ -16,23 +14,18 @@ export type RecordName = 'settings' | 'agent-definitions' | 'daemon' | 'daemon-i
 //   plugins: the plugins that are on, and those the daemon has offered.
 const NAMES = new Set(['settings', 'agent-definitions', 'daemon', 'daemon-id', 'debug-mobile', 'debug-mobile-identity', 'plugins']);
 
-function checked(name) {
+function checked(name: string): string {
   if (!NAMES.has(name)) throw new Error('Unknown application record: ' + name);
   return name;
 }
 
-function body(value) {
-  if (value === null || value === undefined) return undefined;
-  return Buffer.from(value);
-}
-
-function get(db, name) { return body(db.prepare('SELECT body FROM application_settings WHERE name=?').get(checked(name))?.body); }
+function get(root: string, name: string): Buffer | undefined { return database.applicationSetting(root, checked(name)); }
 
 // The record name of root, or undefined when it or the storage database does not exist.
 function read(root: string, name: RecordName): Buffer | undefined {
   checked(name);
-  if (!fs.existsSync(path.join(root, 'sessions.sqlite'))) return undefined;
-  return get(database.connection(root), name);
+  if (!database.databaseExists(root)) return undefined;
+  return get(root, name);
 }
 
 // The record name of root as JSON, or undefined when it does not exist.
@@ -42,28 +35,25 @@ function readJson(root: string, name: RecordName): any {
 }
 
 const save = onMainThread('application-records.save', (root: string, name: RecordName, value: Buffer | string): void => {
-  database.connection(root).prepare('INSERT INTO application_settings (name, body) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET body=excluded.body')
-    .run(checked(name), Buffer.from(value));
+  database.saveApplicationSetting(root, checked(name), Buffer.from(value));
 });
 
 // Removes the record only if it still has the value expected. True when it was removed.
 const removeIfEqual = onMainThread('application-records.removeIfEqual', (root: string, name: RecordName, expected: Buffer | string): boolean => {
-  const db = database.connection(root);
-  return database.transaction(db, 'IMMEDIATE', () => {
-    const current = get(db, name);
+  return database.transaction(root, 'IMMEDIATE', () => {
+    const current = get(root, name);
     if (!current || !current.equals(Buffer.from(expected))) return false;
-    db.prepare('DELETE FROM application_settings WHERE name=?').run(name);
+    database.removeApplicationSetting(root, name);
     return true;
   });
 });
 
 // The record, saved first with the value initial when it does not exist.
-const created = onMainThread('application-records.readOrCreate', (root: string, name: RecordName, initial: Buffer | string) => {
-  const db = database.connection(root);
-  return database.transaction(db, 'IMMEDIATE', () => {
-    const saved = get(db, name);
+const created = onMainThread('application-records.readOrCreate', (root: string, name: RecordName, initial: Buffer | string): Buffer => {
+  return database.transaction(root, 'IMMEDIATE', () => {
+    const saved = get(root, name);
     if (saved) return saved;
-    db.prepare('INSERT INTO application_settings (name, body) VALUES (?, ?)').run(name, Buffer.from(initial));
+    database.createApplicationSetting(root, name, Buffer.from(initial));
     return Buffer.from(initial);
   });
 });

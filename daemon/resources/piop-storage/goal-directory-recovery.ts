@@ -14,11 +14,11 @@ const identitySchema = Type.String({ pattern: '^\\d+:\\d+$' });
 // the old and the new folder, and the saved preparation text.
 const recordSchema = Type.Object({ staging: Type.String(), previous: identitySchema, current: identitySchema, preparation: Type.String() });
 
-function saved(db, directory) {
-  const row = db.prepare('SELECT record_json FROM goal_directory_recoveries WHERE directory=?').get(directory);
+function saved(root, directory) {
+  const text = database.goalDirectoryRecovery(root, directory);
 
-  if (!row) return undefined;
-  const record = JSON.parse(row.record_json);
+  if (text === undefined) return undefined;
+  const record = JSON.parse(text);
 
   if (!Check(recordSchema, record)) throw new Error('Damaged goal folder recovery retained: ' + directory);
 
@@ -29,29 +29,13 @@ function validate(root, directory, record) {
   if (!assets.validPath(root, directory) || !assets.validPath(root, record.staging) || path.dirname(record.staging) !== path.dirname(directory) || record.staging === directory) throw new Error('Invalid goal folder recovery');
 }
 
-function checkPreparation(db, directory, record) {
+function checkPreparation(root, directory, record) {
   const key = createHash('sha256').update(directory).digest('hex');
 
-  if (db.prepare('SELECT 1 FROM goal_asset_reclamations WHERE record_id=?').get(key)) throw new Error('Goal folder deletion must finish before recovery');
-  const row = db.prepare('SELECT record_json FROM goal_preparations WHERE directory=? AND identity=?').get(directory, record.previous);
+  if (database.goalReclamation(root, key) !== undefined) throw new Error('Goal folder deletion must finish before recovery');
+  const row = database.goalPreparation(root, directory, record.previous);
 
   if (row?.record_json !== record.preparation) throw new Error('Saved goal preparation changed during recovery');
-}
-
-function moveRecords(db, directory, record) {
-  checkPreparation(db, directory, record);
-
-  for (const table of ['goal_preparations', 'goal_ownership', 'goal_asset_dependencies', 'goal_text_files', 'goal_text_contents']) {
-    db.prepare(`UPDATE ${table} SET identity=? WHERE directory=? AND identity=?`).run(record.current, directory, record.previous);
-  }
-
-  db.prepare('UPDATE goal_directory_history SET current_identity=? WHERE directory=? AND current_identity=?').run(record.current, directory, record.previous);
-  db.prepare('INSERT INTO goal_directory_history VALUES (?, ?, ?) ON CONFLICT(directory, previous_identity) DO UPDATE SET current_identity=excluded.current_identity')
-    .run(directory, record.previous, record.current);
-  db.prepare('DELETE FROM goal_ownership WHERE directory=? AND identity=?').run(record.staging, record.current);
-
-  for (const table of ['goal_text_files', 'goal_text_contents']) db.prepare(`DELETE FROM ${table} WHERE directory=? AND identity=?`).run(record.staging, record.current);
-  db.prepare('DELETE FROM goal_directory_recoveries WHERE directory=?').run(directory);
 }
 
 function sync(directory) {
@@ -62,22 +46,21 @@ function sync(directory) {
 }
 
 function finish(root, directory) {
-  const db = database.connection(root);
-
-  database.transaction(db, 'IMMEDIATE', () => {
-    const record = saved(db, directory);
+  database.transaction(root, 'IMMEDIATE', () => {
+    const record = saved(root, directory);
 
     if (!record) return;
     validate(root, directory, record);
 
     if (assets.identity(directory) !== record.current) throw new Error('Recovered goal folder was replaced');
     sync(directory); sync(path.dirname(directory));
-    moveRecords(db, directory, record);
+    checkPreparation(root, directory, record);
+    database.moveGoalDirectoryRecords(root, directory, record);
   });
 }
 
 function recoverPublished(root, directory) {
-  const record = saved(database.connection(root), directory);
+  const record = saved(root, directory);
 
   if (!record || !assets.exists(directory)) return;
   const release = assets.acquire(root);
@@ -88,23 +71,22 @@ function recoverPublished(root, directory) {
 
 function begin(root, directory) {
   if (!assets.validPath(root, directory)) throw new Error('Invalid goal recovery destination');
-  const db = database.connection(root);
-  const pending = saved(db, directory);
+  const pending = saved(root, directory);
 
   if (pending) {
     validate(root, directory, pending);
-    checkPreparation(db, directory, pending);
+    checkPreparation(root, directory, pending);
 
     if (assets.identity(pending.staging) !== pending.current) throw new Error('Goal recovery staging folder was replaced');
 
     return pending;
   }
 
-  return prepare(root, db, directory);
+  return prepare(root, directory);
 }
 
-function prepare(root, db, directory) {
-  const rows = db.prepare('SELECT identity, record_json FROM goal_preparations WHERE directory=? AND record_json IS NOT NULL').all(directory);
+function prepare(root, directory) {
+  const rows = database.goalPreparationsOf(root, directory);
 
   if (rows.length !== 1) throw new Error('Goal folder recovery requires one saved preparation');
   const preparation = preparations.parsePreparation(rows[0].record_json);
@@ -113,9 +95,9 @@ function prepare(root, db, directory) {
   const allocation = ownership.allocate(root, path.dirname(directory));
   ownership.save(root, allocation.directory, { version: 1, kind: 'goal-assets', owners: [{ sessionId: preparation.sessionId, sessionPath: preparation.sessionPath }] });
   const record = { staging: allocation.directory, previous: rows[0].identity, current: allocation.identity, preparation: rows[0].record_json };
-  checkPreparation(db, directory, record);
+  checkPreparation(root, directory, record);
   sync(record.staging); sync(path.dirname(directory));
-  db.prepare('INSERT INTO goal_directory_recoveries VALUES (?, ?)').run(directory, JSON.stringify(record));
+  database.saveGoalDirectoryRecovery(root, directory, record);
 
   return record;
 }
