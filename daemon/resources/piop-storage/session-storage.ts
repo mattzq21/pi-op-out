@@ -7,25 +7,42 @@ import * as storagePath from "node:path";
 import { storageTarget } from "./storage-file.ts";
 import { patchMethod, requireMethods } from "../pi/index.ts";
 import { readTranscript, sessionHeaderMatches, sessionReferenceRoot } from "./transcript-file.ts";
+import type { FileEntry, SessionEntry, SessionManager as PiSessionManager } from "@earendil-works/pi-coding-agent";
 
+type SessionManagerClass = typeof PiSessionManager;
+type TranscriptWrites = Record<"publish" | "append" | "selectBranch" | "copyGoal", (request: unknown) => unknown>;
+// A setting entry of a chat (selected model, thinking level, plugin state). Only its latest value counts.
+type CurrentEntry = { type: string; id: string; parentId: null; [field: string]: unknown };
 
-const installedStorageClasses = new WeakSet();
-const currentSessionState = new WeakMap();
+// The fields that Pi's SessionManager keeps private, and that the storage reads and changes.
+interface SessionInternals {
+  persist: boolean;
+  flushed: boolean;
+  sessionFile: string | undefined;
+  fileEntries: FileEntry[];
+  byId: Map<string, SessionEntry>;
+  leafId: string | null;
+  getSessionId(): string;
+  _hasConversation(): boolean;
+}
 
-function takeCurrentState(manager, entries) {
+const installedStorageClasses = new WeakSet<SessionManagerClass>();
+const currentSessionState = new WeakMap<object, Map<string, CurrentEntry>>();
+
+function takeCurrentState(manager: object, entries: FileEntry[]) {
   currentSessionState.set(manager, new Map(entries.filter(stateRecords.isCurrent).map(entry => [stateRecords.stateKey(entry), { ...entry, parentId: null }])));
   return stateRecords.history(entries);
 }
 
-function currentEntries(manager) { return [...(currentSessionState.get(manager)?.values() ?? [])].sort((a, b) => stateRecords.stateKey(a).localeCompare(stateRecords.stateKey(b))); }
+function currentEntries(manager: object): CurrentEntry[] { return [...(currentSessionState.get(manager)?.values() ?? [])].sort((a, b) => stateRecords.stateKey(a).localeCompare(stateRecords.stateKey(b))); }
 
-const failedSessionStorage = new WeakSet();
+const failedSessionStorage = new WeakSet<object>();
 
 
 // The daemon writes all saved chats. Pi asks it through these calls; see transcript-writes.ts.
-const installedWrites = new WeakMap();
+const installedWrites = new WeakMap<object, TranscriptWrites>();
 
-function writesFor(prototype) {
+function writesFor(prototype: object | null): TranscriptWrites {
   for (let current = prototype; current; current = Object.getPrototypeOf(current)) {
     const found = installedWrites.get(current);
     if (found) return found;
@@ -33,9 +50,9 @@ function writesFor(prototype) {
   throw new Error("Session storage is not installed");
 }
 
-function writes(manager) { return writesFor(Object.getPrototypeOf(manager)); }
+function writes(manager: object): TranscriptWrites { return writesFor(Object.getPrototypeOf(manager)); }
 
-function installSessionCreation(SessionManager) {
+function installSessionCreation(SessionManager: SessionManagerClass): void {
   const prototype = SessionManager.prototype;
 
   patchMethod(prototype, "_setSessionFile", setFile => function (this: any, path, entries) {
@@ -78,7 +95,7 @@ function installSessionCreation(SessionManager) {
   installSessionBranching(prototype);
 }
 
-function installSessionBranching(prototype) {
+function installSessionBranching(prototype: PiSessionManager): void {
   patchMethod(prototype, "createBranchedSession", branch => function (this: any, ...args) {
     if (!this.persist) return branch.apply(this, args);
     const parent = this.sessionFile;
@@ -103,25 +120,25 @@ function installSessionBranching(prototype) {
   });
 }
 
-function sessionStorageState(manager) {
+function sessionStorageState(manager: SessionInternals): void {
   if (failedSessionStorage.has(manager)) throw new Error("Session storage could not be rolled back safely. Reopen the conversation before continuing.");
 
   if (!Array.isArray(manager.fileEntries) || !(manager.byId instanceof Map)) throw new Error("This Pi SDK changed its session storage format. Update Piop before continuing.");
 }
 
 // `exclusive` creates the transcript, and saves its path for its reserved ID.
-function sessionStoragePublish(manager, entries, exclusive) {
+function sessionStoragePublish(manager: SessionInternals, entries: FileEntry[], exclusive: boolean): void {
   try { writes(manager).publish({ path: manager.sessionFile, entries, exclusive }); }
   catch (error) { if (error.damaged) failedSessionStorage.add(manager); throw error; }
 }
 
-function sessionStorageAppend(manager, entry) {
+function sessionStorageAppend(manager: SessionInternals, entry: FileEntry | CurrentEntry): void {
   const after = stateRecords.isRecord(entry) || stateRecords.isCurrent(entry) ? manager.fileEntries.findLast(item => item.type !== "session" && !stateRecords.isRecord(item))?.id ?? null : null;
   try { writes(manager).append({ path: manager.sessionFile, sessionId: manager.getSessionId(), entry, after }); }
   catch (error) { if (error.damaged) failedSessionStorage.add(manager); throw error; }
 }
 
-function persistSessionEntry(manager, entry) {
+function persistSessionEntry(manager: SessionInternals, entry: SessionEntry): void {
   if (!manager.persist || !manager.sessionFile) return;
 
   if (manager.flushed) { sessionStorageAppend(manager, entry);
@@ -135,12 +152,12 @@ function persistSessionEntry(manager, entry) {
   manager.flushed = true;
 }
 
-function registeredSessionPath(id, directory) {
+function registeredSessionPath(id: string, directory: string): string | undefined {
   const file = lookup(sessionReferenceRoot(), id);
   return file && storageTarget(storagePath.dirname(file)) === directory ? file : undefined;
 }
 
-function installSessionLookup(SessionManager) {
+function installSessionLookup(SessionManager: SessionManagerClass): void {
   patchMethod(SessionManager, "findById", find => function (this: any, cwd, id, sessionDir) {
     const root = storageTarget(sessionReferenceRoot());
     const directory = storageTarget(sessionDir ? storagePath.resolve(sessionDir) : storagePath.join(root, "sessions"));
@@ -155,7 +172,7 @@ function installSessionLookup(SessionManager) {
 }
 
 // `transcriptWrites` runs each write: the daemon's storage channel in Pi, or local writes in tests.
-export function installSessionStorage(SessionManager, transcriptWrites) {
+export function installSessionStorage(SessionManager: SessionManagerClass, transcriptWrites: TranscriptWrites): void {
   if (installedStorageClasses.has(SessionManager)) return;
   const prototype = SessionManager.prototype;
   requireMethods(prototype, ["newSession", "_loadEntries", "_setSessionFile", "createBranchedSession", "_appendEntry", "_persist", "_rewriteFile", "_hasConversation",
@@ -164,19 +181,19 @@ export function installSessionStorage(SessionManager, transcriptWrites) {
   installSessionLookup(SessionManager);
   installSessionCreation(SessionManager);
 
-  if (["publish", "append", "selectBranch", "copyGoal"].some(name => typeof transcriptWrites?.[name] !== "function")) throw new Error("Session storage needs its transcript writes");
+  if ((["publish", "append", "selectBranch", "copyGoal"] as const).some(name => typeof transcriptWrites?.[name] !== "function")) throw new Error("Session storage needs its transcript writes");
   installedWrites.set(prototype, transcriptWrites);
 
   patchMethod(prototype, "_buildIndex", buildIndex => function (this: any) {
     buildIndex.call(this);
     if (!this.persist || !this.sessionFile) return;
-    const tip = this.fileEntries.findLast(entry => entry.type !== "session" && !stateRecords.isCurrent(entry))?.id ?? null;
+    const tip = this.fileEntries.findLast((entry: FileEntry) => entry.type !== "session" && !stateRecords.isCurrent(entry))?.id ?? null;
     const leaf = stateRecords.selectedLeaf(this.sessionFile, this.getSessionId(), tip);
     if (leaf !== null && !this.byId.has(leaf)) throw new Error("The saved branch points to a missing entry");
     this.leafId = leaf;
   });
 
-  const selectBranch = (manager, leaf) => {
+  const selectBranch = (manager: SessionInternals, leaf: string | null) => {
     sessionStorageState(manager);
     if (leaf !== null && !manager.byId.has(leaf)) throw new Error(`Entry ${leaf} not found`);
     const tip = manager.fileEntries.findLast(entry => entry.type !== "session" && !stateRecords.isCurrent(entry))?.id ?? null;
@@ -190,7 +207,7 @@ export function installSessionStorage(SessionManager, transcriptWrites) {
   patchMethod(prototype, "getEntries", getEntries => function (this: any) { return [...currentEntries(this), ...getEntries.call(this)]; });
   patchMethod(prototype, "getBranch", getBranch => function (this: any, ...args) {
     const current = currentEntries(this);
-    const selection = entry => ["model_change", "thinking_level_change"].includes(entry.type);
+    const selection = (entry: CurrentEntry) => ["model_change", "thinking_level_change"].includes(entry.type);
     const branch = [...current.filter(entry => !selection(entry)), ...getBranch.apply(this, args)];
     for (const entry of current.filter(selection)) branch.push({ ...entry, parentId: branch.at(-1)?.id ?? null });
     return branch;

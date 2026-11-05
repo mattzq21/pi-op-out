@@ -3,7 +3,7 @@ import { Type as Schema } from "typebox";
 import { Parse } from "typebox/value";
 import { isAuxiliary, sessionName } from "../../../daemon/resources/piop-storage/index.ts";
 import { sessionControls } from "../../../daemon/resources/piop-controls/index.ts";
-import { openAuxiliaryChat } from "../../../daemon/resources/session-broker/index.ts";
+import { openAuxiliaryChat, slashCommand } from "../../../daemon/resources/session-broker/index.ts";
 
 const queuedRequestSchema = Schema.Object({ command: Schema.Literal("btw"), args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
 
@@ -36,7 +36,7 @@ async function startBtw(pi: ExtensionAPI, args: string, ctx: ExtensionCommandCon
 export default function btw(pi: ExtensionAPI) {
   const unsubscribe = pi.events.on("piop:auxiliary:kind", request => { if (request.kind === "btw") request.sendToMain = "Send results to the main chat. Use only when user explicitly asks to communicate with the other chat"; });
   const unsubscribeQueued = pi.events.on("piop:rpc", request => {
-    if (request.command !== "run_command" || request.payload?.command !== "btw") return;
+    if (slashCommand(request) !== "btw") return;
     request.ready = (async () => {
       const payload = Parse(queuedRequestSchema, request.payload);
       await startBtw(pi, payload.args, request.ctx, payload.images);

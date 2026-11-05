@@ -48,7 +48,7 @@ function checkedRelocation(request: any) {
 
 // Gives a chat whose working folder is missing a new empty folder, <profile>/recovery/<chat ID>, and writes that folder
 // into the transcript header. A repeat after a stop between the two steps uses the same folder.
-function recoverMissingSession(request) {
+function recoverMissingSession(request: { action: string; profile: string; sessionPath: string }) {
   if (request.action !== 'empty') throw new Error('Unknown recovery action');
   if (typeof request.profile !== 'string' || typeof request.sessionPath !== 'string') throw new Error('Invalid recovery request');
   const header = readSessionHeader(request.sessionPath);

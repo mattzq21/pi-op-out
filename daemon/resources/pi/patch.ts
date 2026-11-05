@@ -1,13 +1,13 @@
 
 type Method = (...args: any[]) => any;
 
-function ownerName(target) {
+function ownerName(target: unknown): string {
   if (typeof target === 'function') return target.name || 'class';
 
-  return target?.constructor?.name || 'object';
+  return (target as object | null | undefined)?.constructor?.name || 'object';
 }
 
-function missing(owner, name, kind) {
+function missing(owner: string, name: string, kind: 'method' | 'property'): Error {
   return new Error(`Pi has no ${kind} ${owner}.${name}, which piop uses. Update piop's Pi changes for this Pi version.`);
 }
 

@@ -1,11 +1,11 @@
 import { createHash as fastModelHash } from 'node:crypto';
+import type { Api, Model, ModelAuth } from '@earendil-works/pi-ai';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 
 const FAST_CATALOG_CLIENT_VERSION = '0.159.3';
 const FAST_MODEL_PROVIDERS = new Set(['openai', 'openai-codex']);
 
-type FastAuth = { apiKey?: string; headers?: Record<string, string | null>; baseUrl?: string };
-
-function fastCatalogUrl(model, auth) {
+function fastCatalogUrl(model: Model<Api>, auth: ModelAuth) {
   const url = new URL(auth.baseUrl ?? model.baseUrl);
   let path = url.pathname.replace(/\/+$/, '').replace(/\/responses$/, '');
 
@@ -16,7 +16,7 @@ function fastCatalogUrl(model, auth) {
   return url;
 }
 
-function fastAccountId(key) {
+function fastAccountId(key: string): string | undefined {
   try {
     const claims = JSON.parse(Buffer.from(key.split('.')[1], 'base64url').toString('utf8'));
 
@@ -24,7 +24,7 @@ function fastAccountId(key) {
   } catch { return undefined; }
 }
 
-function fastCatalogHeaders(model, auth: FastAuth) {
+function fastCatalogHeaders(model: Model<Api>, auth: ModelAuth) {
   const headers = new Headers(model.headers);
 
   for (const [key, value] of Object.entries(auth.headers ?? {})) {
@@ -45,11 +45,14 @@ function fastCatalogHeaders(model, auth: FastAuth) {
   return headers;
 }
 
-function fastCatalogField(entry, keys) {
-  return keys.map(key => entry?.[key]).find(value => value != null);
+function fastCatalogField(entry: unknown, keys: string[]): unknown {
+  if (entry === null || typeof entry !== 'object') return undefined;
+  const record = entry as Record<string, unknown>;
+
+  return keys.map(key => record[key]).find(value => value != null);
 }
 
-function fastSupport(entry) {
+function fastSupport(entry: unknown): boolean | undefined {
   const tiers = fastCatalogField(entry, ['service_tiers', 'serviceTiers']);
   const speeds = fastCatalogField(entry, ['additional_speed_tiers', 'additionalSpeedTiers']);
 
@@ -58,7 +61,9 @@ function fastSupport(entry) {
   return (Array.isArray(tiers) && tiers.some(tier => tier?.id === 'priority')) || (Array.isArray(speeds) && speeds.includes('fast'));
 }
 
-async function fetchFastCatalog(model, auth) {
+type FastProviderScan = { provider: string; status: 'ok'; supportedModelIds: string[]; context: string } | { provider: string; status: 'error'; message: string; context?: string };
+
+async function fetchFastCatalog(model: Model<Api>, auth: ModelAuth) {
   const response = await fetch(fastCatalogUrl(model, auth), { headers: fastCatalogHeaders(model, auth), signal: AbortSignal.timeout(5_000), redirect: 'error' });
 
   if (!response.ok) throw new Error('model list request failed with HTTP ' + response.status);
@@ -66,7 +71,7 @@ async function fetchFastCatalog(model, auth) {
   const catalog = body?.models ?? body?.data;
 
   if (!Array.isArray(catalog)) throw new Error('model list has an invalid format');
-  const support = new Map();
+  const support = new Map<string, boolean>();
 
   for (const entry of catalog) {
     const id = fastCatalogField(entry, ['slug', 'id', 'model']);
@@ -78,14 +83,14 @@ async function fetchFastCatalog(model, auth) {
   return support;
 }
 
-function fastLoginIdentity(auth) {
+function fastLoginIdentity(auth: ModelAuth) {
   if (!auth.apiKey) return null;
 
   return fastAccountId(auth.apiKey) ?? fastModelHash('sha256').update(auth.apiKey).digest('hex');
 }
 
-async function fastProviderState(runtime, provider) {
-  const groups = new Map();
+async function fastProviderState(runtime: ModelRuntime, provider: string) {
+  const groups = new Map<string, Model<Api>[]>();
 
   for (const model of runtime.getModels(provider)) {
     const key = JSON.stringify([model.baseUrl, model.api]);
@@ -99,7 +104,7 @@ async function fastProviderState(runtime, provider) {
   return { endpoints, context };
 }
 
-async function scanFastProvider(runtime, provider) {
+async function scanFastProvider(runtime: ModelRuntime, provider: string): Promise<FastProviderScan> {
   let state;
 
   try {
@@ -126,9 +131,9 @@ async function scanFastProvider(runtime, provider) {
   }
 }
 
-export function createFastModelDiscovery(runtime) {
+export function createFastModelDiscovery(runtime: ModelRuntime) {
   return {
-    async scan(provider) {
+    async scan(provider?: string): Promise<FastProviderScan[]> {
       await runtime.refresh({ allowNetwork: false });
       const registered = runtime.getProviders().map(item => item.id);
 

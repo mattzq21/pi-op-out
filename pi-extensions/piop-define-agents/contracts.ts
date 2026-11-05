@@ -1,8 +1,6 @@
 import type { AgentResources } from "./resources.ts";
 import type { McpServers } from "./mcp-config.ts";
-import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-
-export interface AppRequest { command: string; payload: unknown; ctx: ExtensionCommandContext; ready?: Promise<unknown> }
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[]; withheldTools: string[]; availableTools?: string[] }
 
@@ -36,8 +34,6 @@ export interface AgentSelectedEvent { ctx: ExtensionContext }
 
 declare module "@earendil-works/pi-coding-agent" {
   interface EventBus {
-    on(channel: "piop:rpc", handler: (request: AppRequest) => void): () => void;
-    emit(channel: "piop:rpc", request: AppRequest): void;
     on(channel: "piop:agents:context-cap", handler: (request: AgentContextCapRequest) => void): () => void;
     emit(channel: "piop:agents:context-cap", request: AgentContextCapRequest): void;
     on(channel: "piop:agents:selected", handler: (event: AgentSelectedEvent) => void): () => void;

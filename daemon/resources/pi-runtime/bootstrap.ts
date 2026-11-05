@@ -4,7 +4,7 @@ import { installSessionLists, installSessionStorage, withSessionIds } from '../p
 import { storageChannel } from '../session-database/index.ts';
 import { patchMethod } from '../pi/index.ts';
 
-export async function installStorage(runtimeRoot) {
+export async function installStorage(runtimeRoot: string) {
   const { SessionManager } = await import(pathToFileURL(join(runtimeRoot, "dist/core/session-manager.js")).href);
   installSessionStorage(SessionManager, storageChannel.transcriptWrites);
   installSessionLists(SessionManager);

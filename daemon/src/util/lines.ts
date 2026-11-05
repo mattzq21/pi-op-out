@@ -31,7 +31,7 @@ function splitter(emit: (line: string) => void) {
 function readLines(input: Readable, onLine: (line: string) => void, onEnd?: () => void): () => void {
   const split = splitter(onLine);
   let ended = false;
-  const finish = complete => {
+  const finish = (complete: boolean) => {
     if (ended) return;
     ended = true;
     input.off('data', split.write);

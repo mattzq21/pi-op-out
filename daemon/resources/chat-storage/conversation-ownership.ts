@@ -12,13 +12,13 @@ const recordSchema = Type.Object({
 
 function key(sessionId: string): string { return createHash('sha256').update(sessionId.toLowerCase()).digest('hex').slice(0, 40); }
 
-function validKey(value) {
+function validKey(value: string): string {
   if (!/^[a-f0-9]{40}$/.test(value)) throw new Error('Invalid conversation ownership key');
 
   return value;
 }
 
-function checked(body) {
+function checked(body: string): string {
   if (!Check(recordSchema, JSON.parse(body))) throw new Error('Invalid conversation ownership record');
 
   return body;
@@ -45,8 +45,8 @@ const removeRecord = onMainThread('conversation-storage.removeRecord', (root: st
 function forget(root: string, sessionId: string): void { database.removeConversationOwnership(root, key(sessionId)); }
 
 // The ownership record of the conversation sessionId, or null.
-function read(root, sessionId) { return readRecord(root, key(sessionId)); }
+function read(root: string, sessionId: string): string | null { return readRecord(root, key(sessionId)); }
 
-function write(root, sessionId, body) { writeRecord(root, key(sessionId), body); }
+function write(root: string, sessionId: string, body: string): void { writeRecord(root, key(sessionId), body); }
 
 export { key, readRecord, writeRecord, removeRecord, forget, read, write };

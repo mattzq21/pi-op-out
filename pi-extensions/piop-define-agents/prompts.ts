@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import * as storageDatabase from "../../daemon/resources/session-database/index.ts";
 import { storageChannel } from "../../daemon/resources/session-database/index.ts";
-import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "./definitions-storage.ts";
+import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject, type ProjectChange } from "./definitions-storage.ts";
 import { execFile } from "node:child_process";
 import { link, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -66,7 +66,7 @@ export async function writeConfig(value: Config, createOnly = false): Promise<{ 
 
 export type ProjectDocument = { agents: unknown[]; defaultAgent?: string };
 
-export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
+export type { ProjectChange };
 
 export function readProjectDocument(directory: string): ProjectDocument & { revision: string } {
   const body = bodyText(stored(storageRoot, () => storageDatabase.projectAgentDefinition(storageRoot, directory)));

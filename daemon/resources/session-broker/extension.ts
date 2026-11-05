@@ -1,4 +1,4 @@
-import type { AppRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
+import type { AppRequest } from "./app-requests.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSubagents } from "./subagents.ts";
 import { registerConversationClient } from "./client.ts";

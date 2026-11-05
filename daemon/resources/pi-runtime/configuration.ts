@@ -1,11 +1,12 @@
+import type { AgentSession as PiAgentSession } from '@earendil-works/pi-coding-agent';
 import { patchMethod } from '../pi/index.ts';
-import type { AppRequest } from '../../../pi-extensions/piop-define-agents/contracts.ts';
+import type { AppRequest } from '../session-broker/index.ts';
 
-const reloadOperations = new WeakMap();
+const reloadOperations = new WeakMap<object, Promise<void>>();
 
-const configurationOperations = new WeakMap();
+const configurationOperations = new WeakMap<object, Promise<void>>();
 
-function installReloadLifecycle(AgentSession) {
+function installReloadLifecycle(AgentSession: typeof PiAgentSession) {
   patchMethod(AgentSession.prototype, "reload", reload => function (this: any, ...args) {
     const previous = reloadOperations.get(this) ?? Promise.resolve();
     const operation = previous.then(() => reload.apply(this, args));
@@ -17,13 +18,13 @@ function installReloadLifecycle(AgentSession) {
   });
 }
 
-async function afterReload(session, work) {
-  while (reloadOperations.has(session)) await reloadOperations.get(session);
+async function afterReload<T>(session: object | undefined, work: () => T | PromiseLike<T>): Promise<T> {
+  while (session && reloadOperations.has(session)) await reloadOperations.get(session);
 
   return work();
 }
 
-function serializeConfiguration(session, work) {
+function serializeConfiguration<T>(session: object, work: () => T | PromiseLike<T>): Promise<T> {
   const previous = configurationOperations.get(session) ?? Promise.resolve();
   const operation = previous.then(work);
   const settled = operation.then(() => undefined, () => undefined);
@@ -33,9 +34,9 @@ function serializeConfiguration(session, work) {
   return operation;
 }
 
-function runtimeRequest(session, command, payload) {
+function runtimeRequest(session: Pick<PiAgentSession, 'extensionRunner'>, command: string, payload: unknown): Promise<unknown> {
   return afterReload(session, () => {
-    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value;
+    const emit = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"))?.value as ((request: AppRequest) => void) | undefined;
 
     if (!emit) throw new Error("Piop app requests are unavailable");
     const request: AppRequest = { command, payload, ctx: session.extensionRunner.createCommandContext() };

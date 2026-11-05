@@ -15,16 +15,19 @@ function holdTransaction(): () => void {
   return () => { if (held) { held = false; openTransactions--; } };
 }
 
-function operations() {
-  if (!Object.hasOwn(globalThis, OPERATIONS)) Object.defineProperty(globalThis, OPERATIONS, { value: new Map() });
-  return globalThis[OPERATIONS];
+type Operation = (...args: unknown[]) => unknown;
+
+function operations(): Map<string, Operation> {
+  const shared = globalThis as typeof globalThis & { [OPERATIONS]?: Map<string, Operation> };
+  if (!Object.hasOwn(shared, OPERATIONS)) Object.defineProperty(shared, OPERATIONS, { value: new Map<string, Operation>() });
+  return shared[OPERATIONS]!;
 }
 
 // Names a database change. Called on the main thread, it runs at once. Called on a worker thread, the worker sends
 // the name and the arguments to the main thread and waits for the result. Arguments and results must be plain data.
 // A request that changes no data (inTransaction) may also be sent from inside a transaction.
 function onMainThread<Args extends unknown[], Result>(name: string, operation: (...args: Args) => Result, { inTransaction = false }: { inTransaction?: boolean } = {}): (...args: Args) => Result {
-  operations().set(name, operation);
+  operations().set(name, (...args) => operation(...args as Args));
   if (inTransaction) anywhere.add(name);
   return (...args) => {
     const link = Object.getOwnPropertyDescriptor(globalThis, LINK)?.value;
@@ -32,19 +35,21 @@ function onMainThread<Args extends unknown[], Result>(name: string, operation: (
   };
 }
 
-const anywhere = new Set();
+const anywhere = new Set<string>();
 
 // The worker whose request the main thread runs now, while the request starts; undefined for the main thread's own calls.
-let caller;
+interface Caller { ended: boolean; end: Set<() => void> }
 
-function currentCaller(): { ended: boolean; end: Set<() => void> } | undefined { return caller; }
+let caller: Caller | undefined;
+
+function currentCaller(): Caller | undefined { return caller; }
 
 const FAILURE_FIELDS = ['code', 'damaged'];
 
 // In a worker thread: sends each change on port, and waits on signal until the main thread has answered.
 function connectWorker(port: import('node:worker_threads').MessagePort, signal: SharedArrayBuffer): void {
   const flag = new Int32Array(signal);
-  Object.defineProperty(globalThis, LINK, { value: (name, args) => {
+  Object.defineProperty(globalThis, LINK, { value: (name: string, args: unknown[]) => {
     if (openTransactions && !anywhere.has(name)) throw new Error('A worker thread asked for the database change ' + name + ' inside a transaction');
     Atomics.store(flag, 0, 0);
     port.postMessage({ name, args });
@@ -64,7 +69,7 @@ let serving = false;
 function serveWorker(port: import('node:worker_threads').MessagePort, signal: SharedArrayBuffer): void {
   serving = true;
   const flag = new Int32Array(signal);
-  const worker = { ended: false, end: new Set<() => void>() };
+  const worker: Caller = { ended: false, end: new Set<() => void>() };
   port.on('close', () => {
     worker.ended = true;
     for (const finish of [...worker.end]) { try { finish(); } catch (error) { console.error('Could not give back what a stopped worker held: ' + (error?.message ?? error)); } }

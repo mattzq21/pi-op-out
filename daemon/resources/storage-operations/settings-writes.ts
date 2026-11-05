@@ -8,17 +8,17 @@ import { storagePublish, storageTarget } from '../piop-storage/index.ts';
 // Pi's own files in the storage folder: sign-in records, model settings and MCP sign-in records.
 const FILES = new Set(["auth.json", "models.json", "models-store.json", "mcp-auth.json"]);
 
-function absolutePath(value) {
+function absolutePath(value: unknown): string {
   if (typeof value !== "string" || !isAbsolute(value) || value.includes("\0") || resolve(value) !== value) throw new Error("Invalid settings path");
   return value;
 }
 
-function text(value, name) {
+function text(value: unknown, name: string): string {
   if (typeof value !== "string") throw new Error(`Invalid ${name}`);
   return value;
 }
 
-function piFile(root, value) {
+function piFile(root: string, value: unknown): string {
   const path = absolutePath(value);
   if (!FILES.has(basename(path)) || storageTarget(dirname(path)) !== storageTarget(root)) throw new Error("Pi cannot write " + path);
   return join(storageTarget(root), basename(path));
@@ -26,7 +26,7 @@ function piFile(root, value) {
 
 export const OPERATIONS = {
   // Saves one of Pi's settings when it still has the value that Pi read. Returns false when it changed, so Pi can try again.
-  replace: (root, request) => {
+  replace: (root: string, request: { path: unknown; next: unknown; previous: unknown }) => {
     const path = absolutePath(request?.path);
     const next = text(request.next, "settings");
     const previous = request.previous === null ? null : text(request.previous, "settings");
@@ -37,13 +37,13 @@ export const OPERATIONS = {
     });
   },
   // Replaces one of Pi's files. Pi holds its own lock on the file while it asks.
-  publishFile: (root, request) => {
+  publishFile: (root: string, request: { path: unknown; body: unknown }) => {
     const path = piFile(root, request?.path);
     storagePublish(path, join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`), text(request.body, "file contents"), false);
     return null;
   },
   // Keeps the text of an agent prompt by its SHA-256, so a saved chat can show the prompt it ran with.
-  promptSnapshot: (root, request) => {
+  promptSnapshot: (root: string, request: { contents: unknown; digest: unknown }) => {
     const contents = text(request?.contents, "prompt");
     const digest = createHash("sha256").update(contents).digest("hex");
     if (request.digest !== digest) throw new Error("Saved agent prompt contents changed");

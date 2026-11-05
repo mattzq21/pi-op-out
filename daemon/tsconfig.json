@@ -11,7 +11,7 @@
       "bun"
     ],
     "strict": true,
-    "noImplicitAny": false,
+    "noImplicitAny": true,
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
@@ -27,6 +27,11 @@
   },
   "include": [
     "src/**/*.ts",
-    "resources/**/*.ts"
+    "resources/**/*.ts",
+    "../pi-extensions/**/*.ts",
+    "../plugins/*/extension/**/*.ts"
+  ],
+  "exclude": [
+    "../**/*.test.ts"
   ]
 }

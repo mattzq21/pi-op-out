@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type as Schema } from "typebox";
 import { Parse } from "typebox/value";
+import { slashCommand } from "../../../daemon/resources/session-broker/index.ts";
 import type { ReviewImage, ReviewSession } from "./interface.ts";
 
 const reviewRequestSchema = Schema.Object({ command: Schema.Optional(Schema.Literal("review")), args: Schema.String(), images: Schema.Array(Schema.Object({ type: Schema.Literal("image"), data: Schema.String(), mimeType: Schema.String(), name: Schema.Optional(Schema.String()) })) });
@@ -17,7 +18,7 @@ export function registerReviewCommands(pi: ExtensionAPI, reviews: ReviewSession)
     handler: (args, ctx) => start(args, ctx),
   });
   pi.events.on("piop:rpc", request => {
-    if (request.command !== "run_command" || request.payload?.command !== "review") return;
+    if (slashCommand(request) !== "review") return;
     request.ready = (async () => {
       const payload = Parse(reviewRequestSchema, request.payload);
       await start(payload.args, request.ctx, payload.images);

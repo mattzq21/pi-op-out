@@ -235,7 +235,7 @@ export default function contextBar(pi: ExtensionAPI) {
     const codemode = activeTools.has("codemode");
     const inCodemode = (tool: { name: string; exposure?: string }) => tool.name !== "codemode" && tool.exposure !== "model-only";
     const activeInfo = pi.getAllTools().filter((tool) => activeTools.has(tool.name));
-    const tools = activeInfo.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, ...codemode && tool.name !== "codemode" ? { codemode: inCodemode(tool) } : {} }));
+    const tools: Array<RequestTool & { codemode?: boolean }> = activeInfo.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters, ...codemode && tool.name !== "codemode" ? { codemode: inCodemode(tool) } : {} }));
     const codemodeFlags = new Map(tools.map(tool => [tool.name.toLowerCase(), tool.codemode]));
     const estimate = (value: string) => Math.ceil(value.length / 4);
     const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };

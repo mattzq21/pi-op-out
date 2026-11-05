@@ -12,25 +12,25 @@ function archiveRef(chatId: string): string { return 'refs/piop/archives/' + cha
 
 const BRANCH = new RegExp(`^piop/([0-9a-f]{4,32}|${UUID}(-${UUID})?)$`);
 
-function chatIdOf(value) {
+function chatIdOf(value: unknown): string {
   if (typeof value !== 'string' || !CHAT_ID.test(value)) throw new Error('Invalid chat ID: ' + value);
 
   return value;
 }
 
-function absolute(value, label) {
+function absolute(value: unknown, label: string): string {
   if (typeof value !== 'string' || !path.isAbsolute(value) || path.normalize(value) !== value) throw new Error(`Invalid ${label} path: ${value}`);
 
   return value;
 }
 
-function branchOf(chatId, value) {
+function branchOf(chatId: string, value: string): string {
   if (!BRANCH.test(value ?? '')) throw new Error('Invalid chat branch: ' + value);
 
   return value;
 }
 
-function checkArchive(chatId, archive) {
+function checkArchive(chatId: string, archive: ChatWorktreeRecord['archive']): void {
   if (archive?.ref !== archiveRef(chatId) || !COMMIT.test(archive?.commit ?? '')) throw new Error('Invalid chat archive');
   if (archive.base !== undefined && (!COMMIT.test(archive.base) || archive.base === archive.commit)) throw new Error('Invalid chat archive base');
 }

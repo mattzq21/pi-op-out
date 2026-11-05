@@ -1,16 +1,8 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-
-interface AppRequest { command: string; payload: unknown; ctx: ExtensionCommandContext; ready?: Promise<unknown> }
-
-declare module "@earendil-works/pi-coding-agent" {
-  interface EventBus {
-    on(channel: "piop:rpc", handler: (request: AppRequest) => void): () => void;
-    emit(channel: "piop:rpc", request: AppRequest): void;
-  }
-}
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AppRequest } from "../../daemon/resources/session-broker/index.ts";
 
 export default function providersRefresh(pi: ExtensionAPI) {
-  pi.events.on("piop:rpc", request => {
+  pi.events.on("piop:rpc", (request: AppRequest) => {
     if (request.command !== "provider_auth_refresh") return;
     const ctx = request.ctx;
     request.ready = (async () => {

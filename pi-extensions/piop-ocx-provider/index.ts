@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
-import { OCX_PROVIDER_ID, ocxProviderConfig } from "./ocx-provider.mjs";
+import { OCX_PROVIDER_ID, ocxProviderConfig } from "./ocx-provider.ts";
 
 export default async function ocxProvider(pi: ExtensionAPI) {
   let failure: string | undefined;

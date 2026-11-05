@@ -8,20 +8,20 @@ const SUPPORTED_PI_VERSION = '1.5.0';
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 const PENDING = /^\.install-(\d+)-(\d+)-[0-9a-f-]{36}$/;
 
-function missing(error) {
+function missing(error: NodeJS.ErrnoException | undefined): boolean {
   return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
 }
 
-function unreachable(error) {
+function unreachable(error: NodeJS.ErrnoException | undefined): boolean {
   return missing(error) || error?.code === 'EACCES';
 }
 
-function executablePath(executable) {
+function executablePath(executable: string): string {
   try { return realpathSync(executable); }
   catch (error) { if (unreachable(error)) throw new Error(`Pi was not found at ${executable}`); throw error; }
 }
 
-function packageAt(directory) {
+function packageAt(directory: string) {
   const file = join(directory, 'package.json');
   let body;
 
@@ -32,7 +32,7 @@ function packageAt(directory) {
   catch (error) { throw new Error(`Could not read ${file}: ${error.message}`); }
 }
 
-function piInstallation(executable) {
+function piInstallation(executable: string): { root: string; version: string } {
   const entry = executablePath(executable);
 
   for (let directory = dirname(entry); ; directory = dirname(directory)) {
@@ -63,7 +63,7 @@ function installName(manifest: string, lockfile: string): string {
   return SUPPORTED_PI_VERSION + '-' + createHash('sha256').update(manifest).update('\0').update(lockfile).digest('hex').slice(0, 12);
 }
 
-function startTime(pid) {
+function startTime(pid: number): string | undefined {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
     return stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)[19];
@@ -71,7 +71,7 @@ function startTime(pid) {
 }
 
 // Pi in a finished install folder, after its version is checked.
-function piIn(directory) {
+function piIn(directory: string): { root: string; cli: string } {
   const manifestFile = join(directory, 'node_modules', ...PI_PACKAGE.split('/'), 'package.json');
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
   const program = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.pi;
@@ -81,19 +81,19 @@ function piIn(directory) {
 }
 
 // Removes the install folders of processes that stopped before they finished.
-function removeAbandoned(installs) {
+function removeAbandoned(installs: string): void {
   for (const name of readdirSync(installs)) {
     const owner = PENDING.exec(name);
     if (owner && startTime(Number(owner[1])) !== owner[2]) rmSync(join(installs, name), { recursive: true, force: true });
   }
 }
 
-function run(bun, cwd, env) {
+function run(bun: string, cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
   const args = ['install', '--frozen-lockfile', '--production', '--ignore-scripts', '--no-progress', '--no-summary'];
   return new Promise<void>((resolve, reject) => {
     const child = spawn(bun, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
-    const keep = chunk => { output = (output + chunk).slice(-4000); };
+    const keep = (chunk: Buffer) => { output = (output + chunk).slice(-4000); };
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
     const timer = setTimeout(() => child.kill('SIGKILL'), INSTALL_TIMEOUT_MS);

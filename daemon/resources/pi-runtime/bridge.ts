@@ -5,9 +5,45 @@ import { PassThrough } from 'node:stream';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import type { AppRequest } from '../../../pi-extensions/piop-define-agents/contracts.ts';
+import type { AssistantMessage, ImageContent, Message, SystemMessage, TextContent, ToolCall, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
+import type { ExtensionRunner, PromptOptions, ResolvedCommand } from '@earendil-works/pi-coding-agent';
+import type { PromptDisposition } from '@earendil-works/pi-coding-agent/dist/core/agent-session.js';
+import type { CustomMessage } from '@earendil-works/pi-coding-agent/dist/core/messages.js';
+import type * as TypeBox from 'typebox';
+import type * as TypeBoxValue from 'typebox/value';
+import type { AppRequest } from '../session-broker/index.ts';
+import type { PiSession, PiopMessage } from './pi-session.ts';
+import type { CustomInsertion, QueueItem, QueueOffer } from './queue-pull.ts';
 
-type QueuePromptScope = { session; queueId?: string; submissionId?: string; tagged: boolean };
+type QueuePromptScope = { session: BridgeSession; queueId?: string; submissionId?: string; tagged: boolean };
+
+type BridgePromptOptions = Omit<PromptOptions, 'preflightResult'> & { preflightResult?: (disposition: PromptDisposition, submittedText?: string) => void; [queuePromptScope]?: QueuePromptScope };
+
+type ReachedCompaction = { text: string; message: PiopMessage };
+
+interface BridgeSession extends PiSession {
+  prompt(text: string, options?: BridgePromptOptions): Promise<void>;
+  [reachedCompaction]?: ReachedCompaction;
+  [runningCompaction]?: Promise<void>;
+}
+
+type BridgeCommand = { id?: string; type?: string; command: string; payload?: unknown };
+
+type PromptCommand = BridgeCommand & { message: string; images?: ImageContent[]; streamingBehavior?: 'steer' | 'followUp'; goalSubmissionId?: unknown };
+
+type BridgeCommands = { prompt: PromptCommand; retry_response: BridgeCommand & { payload?: { entryId?: unknown } }; queue_offer: BridgeCommand & { payload?: QueueOffer } };
+
+type Output = (value: object) => void;
+
+type RuntimeEventResult = { id: string; error?: unknown; data?: unknown };
+
+type RuntimeEvents = ReturnType<typeof runtimeEvents>;
+
+type PreviewCapture = { model: string; messages: Message[]; payload: unknown };
+
+function isCommand<K extends keyof BridgeCommands>(command: BridgeCommand, name: K): command is BridgeCommands[K] {
+  return command.command === name;
+}
 
 const queuePromptContext = new AsyncLocalStorage<QueuePromptScope | undefined>();
 
@@ -34,32 +70,32 @@ StorageChannel.claim();
 
 const configurationCommands = new Set(["context_cap_settings", "provider_auth_refresh", "select_agent", "set_chat_agent", "fork_after", "rewind_message", "prepare_fork"]);
 
-let queueValidation;
+let queueValidation: Awaited<ReturnType<typeof queueContracts>>;
 
-function promptError(command, error, output) {
+function promptError(command: BridgeCommand, error: unknown, output: Output) {
   output({ type: "response", id: command.id, command: command.command, success: false, error: error instanceof Error ? error.message : String(error) });
 }
 
-function acceptedPromptError(session, error, output) {
+function acceptedPromptError(session: PiSession, error: unknown, output: Output) {
   output({ type: "extension_error", error: error instanceof Error ? error.message : String(error) });
 
   if (!session.isStreaming) output({ type: "agent_settled", aborted: false });
 }
 
-function syncPath(path, flags) {
+function syncPath(path: string, flags: string) {
   const fd = openSync(path, flags);
 
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
-function isQueuedUserMessage(message) {
+function isQueuedUserMessage(message: unknown) {
   return queueValidation.check(message);
 }
 
-async function queueContracts(root) {
+async function queueContracts(root: string) {
   const runtimeRequire = createRequire(join(root, "package.json"));
 
-  const [{ Type }, { Check, Parse }] = await Promise.all([
+  const [{ Type }, { Check, Parse }]: [typeof TypeBox, typeof TypeBoxValue] = await Promise.all([
     import(pathToFileURL(runtimeRequire.resolve("typebox")).href),
     import(pathToFileURL(runtimeRequire.resolve("typebox/value")).href),
   ]);
@@ -67,10 +103,10 @@ async function queueContracts(root) {
   const prompt = Type.Object({ queueId: Type.String({ minLength: 1 }), message: Type.String(), streamingBehavior: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]), images: Type.Optional(Type.Array(Type.Unknown())), goalSubmissionId: Type.Optional(Type.String()) });
   const user = Type.Object({ role: Type.Literal("user"), piopQueueId: Type.String({ minLength: 1 }) });
 
-  return { parse: payload => Parse(prompt, payload), check: message => Check(user, message) };
+  return { parse: (payload: unknown) => Parse(prompt, payload), check: (message: unknown): message is TypeBox.Static<typeof user> => Check(user, message) };
 }
 
-function installQueueProtocol(session, output) {
+function installQueueProtocol(session: BridgeSession, output: Output) {
   if (!wrappedSessions.has(session)) {
     for (const name of ["prompt", "steer", "followUp"]) {
       patchMethod(session, name, submit => function (this: any, ...args) {
@@ -111,7 +147,7 @@ function installQueueProtocol(session, output) {
   const manager = session.sessionManager;
 
   if (!wrappedManagers.has(manager)) {
-    const newSessionFiles = new Set();
+    const newSessionFiles = new Set<string>();
     patchMethod(manager, "appendMessage", appendMessage => function (this: any, message, ...args) {
       const file = this.isPersisted() ? this.getSessionFile() : undefined;
 
@@ -143,10 +179,10 @@ function installQueueProtocol(session, output) {
   }
 }
 
-function runtimeEvents(output) {
-  const pending = new Map();
+function runtimeEvents(output: Output) {
+  const pending = new Map<string, { resolve: (data: unknown) => void; reject: (error: unknown) => void }>();
 
-  const send = (name, data) => new Promise((resolve, reject) => {
+  const send = (name: string, data: unknown) => new Promise<unknown>((resolve, reject) => {
     if (typeof name !== "string" || !name) throw new Error("A runtime event needs a name");
     const id = randomUUID();
     pending.set(id, { resolve, reject });
@@ -155,7 +191,7 @@ function runtimeEvents(output) {
     catch (error) { pending.delete(id); reject(error); }
   });
 
-  const answer = result => {
+  const answer = (result: RuntimeEventResult) => {
     const waiter = pending.get(result.id);
 
     if (!waiter) { console.error(`Piop answered unknown runtime event ${String(result.id)}`); return; }
@@ -175,7 +211,7 @@ function runtimeEvents(output) {
   return { answer, close, send };
 }
 
-function appInput(dispatch, events) {
+function appInput(dispatch: (command: BridgeCommand) => Promise<void>, events: RuntimeEvents) {
   const stdin = process.stdin;
   const input = new PassThrough();
   Object.defineProperty(process, "stdin", { value: input });
@@ -202,7 +238,7 @@ function appInput(dispatch, events) {
   stdin.on("end", () => { events.close(); if (pending) input.write(pending); input.end(); });
 }
 
-async function dispatchQueuedPrompt(command, session, output) {
+async function dispatchQueuedPrompt(command: BridgeCommand, session: BridgeSession, output: Output) {
   const payload = queueValidation.parse(command.payload);
 
   let preflightSucceeded = false;
@@ -211,7 +247,7 @@ async function dispatchQueuedPrompt(command, session, output) {
     streamingBehavior: payload.streamingBehavior,
     source: "rpc",
     [queuePromptScope]: { session, queueId: payload.queueId, submissionId: payload.goalSubmissionId, tagged: false },
-    preflightResult: (disposition, submittedText) => {
+    preflightResult: (disposition: PromptDisposition, submittedText?: string) => {
       preflightSucceeded = true;
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
     },
@@ -221,14 +257,14 @@ async function dispatchQueuedPrompt(command, session, output) {
   });
 }
 
-function bindQueuePull(session, output) {
+function bindQueuePull(session: BridgeSession, output: Output) {
   const ask = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))?.value;
 
   if (!ask) throw new Error("Piop runtime events are unavailable");
 
   return queuePull(session, {
     ask,
-    prompt: (target, item) => promptTaken(target, item, output),
+    prompt: (target: BridgeSession, item) => promptTaken(target, item, output),
     insert: (target, message) => insertTaken(target, message, output),
     tools: state => {
       const bridge = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-bridge"));
@@ -243,7 +279,7 @@ function bindQueuePull(session, output) {
   });
 }
 
-function insertTaken(session, message, output) {
+function insertTaken(session: PiSession, message: CustomInsertion, output: Output) {
   const streaming = session.isStreaming;
   const run = session.sendCustomMessage(message, { triggerTurn: true, deliverAs: "followUp" });
 
@@ -252,8 +288,8 @@ function insertTaken(session, message, output) {
   return run;
 }
 
-function promptTaken(session, item, output) {
-  return new Promise((resolve, reject) => {
+function promptTaken(session: BridgeSession, item: Extract<QueueItem, { message: string }>, output: Output) {
+  return new Promise<PromptDisposition>((resolve, reject) => {
     let preflightSucceeded = false;
     void session.prompt(item.message, {
       images: item.images,
@@ -268,12 +304,12 @@ function promptTaken(session, item, output) {
   });
 }
 
-function dispatchPrompt(command, session, output) {
+function dispatchPrompt(command: PromptCommand, session: BridgeSession, output: Output) {
   let preflightSucceeded = false;
   void session.prompt(command.message, {
     images: command.images, streamingBehavior: command.streamingBehavior, source: "rpc",
     ...(typeof command.goalSubmissionId === "string" && command.goalSubmissionId ? { [queuePromptScope]: { session, submissionId: command.goalSubmissionId, tagged: false } } : {}),
-    preflightResult: (disposition, submittedText) => {
+    preflightResult: (disposition: PromptDisposition, submittedText?: string) => {
       preflightSucceeded = true;
       output({ type: "response", id: command.id, command: command.command, success: true, data: { disposition, submittedText } });
     },
@@ -283,7 +319,7 @@ function dispatchPrompt(command, session, output) {
   });
 }
 
-function dispatchRetry(command, session, output) {
+function dispatchRetry(command: BridgeCommands['retry_response'], session: PiSession, output: Output) {
   const entryId = command.payload?.entryId;
 
   if (typeof entryId !== "string" || !entryId) throw new Error("Select a response to retry");
@@ -308,14 +344,14 @@ function dispatchRetry(command, session, output) {
   void continueRun(session, failed).catch(error => acceptedPromptError(session, error, output));
 }
 
-async function prepareRetriedRun(session, failed) {
+async function prepareRetriedRun(session: PiSession, failed: AssistantMessage | undefined) {
   const messages = session.agent.state.messages;
-  const end = messages.indexOf(failed);
-  const start = (end < 0 ? messages : messages.slice(0, end)).findLast(message => message.role === "user" || message.role === "custom");
+  const end = failed ? messages.indexOf(failed) : -1;
+  const start = (end < 0 ? messages : messages.slice(0, end)).findLast((message): message is UserMessage | CustomMessage => message.role === "user" || message.role === "custom");
   if (!start) throw new Error("The retried response has no message that started it");
-  const trigger = start.role === "custom" ? { messageType: "custom", message: start } : typeof start.content === "string"
+  const trigger: Parameters<ExtensionRunner["emitBeforeAgentStart"]>[0] = start.role === "custom" ? { messageType: "custom", message: start } : typeof start.content === "string"
     ? { messageType: "user", prompt: start.content }
-    : { messageType: "user", prompt: start.content.filter(part => part.type === "text").map(part => part.text).join("\n"), images: start.content.filter(part => part.type === "image") };
+    : { messageType: "user", prompt: start.content.filter((part): part is TextContent => part.type === "text").map(part => part.text).join("\n"), images: start.content.filter((part): part is ImageContent => part.type === "image") };
   const base = session._baseSystemPromptOptions;
   const toolsBefore = base.selectedTools;
   const result = await session._extensionRunner.emitBeforeAgentStart(trigger, base);
@@ -328,7 +364,7 @@ async function prepareRetriedRun(session, failed) {
   session._refreshFinalizedContext();
 }
 
-async function continueRun(session, failed) {
+async function continueRun(session: PiSession, failed: AssistantMessage | undefined) {
   session._failedResponse = failed;
   session._pendingToolNames.clear();
 
@@ -359,13 +395,14 @@ async function continueRun(session, failed) {
 
 const INTERRUPTED_TOOL = "The Piop daemon stopped before this tool call finished. Its result is unknown; check its effects before you repeat it.";
 
-function dispatchResume(command, session, output) {
-  const respond = state => output({ type: "response", id: command.id, command: command.command, success: true, data: { state } });
+function dispatchResume(command: BridgeCommand, session: PiSession, output: Output) {
+  const respond = (state: string) => output({ type: "response", id: command.id, command: command.command, success: true, data: { state } });
   if (session.isStreaming || session.isCompacting) return respond("running");
   const messages = session.agent.state.messages;
   const index = messages.findLastIndex(message => message.role === "assistant");
-  const calls = index < 0 ? [] : messages[index].content.filter(part => part.type === "toolCall");
-  const answered = new Set(messages.slice(index + 1).filter(message => message.role === "toolResult").map(message => message.toolCallId));
+  const found = messages[index];
+  const calls = found?.role === "assistant" ? found.content.filter((part): part is ToolCall => part.type === "toolCall") : [];
+  const answered = new Set(messages.slice(index + 1).filter((message): message is ToolResultMessage => message.role === "toolResult").map(message => message.toolCallId));
   const last = messages.at(-1);
   if (!last || last.role === "system" || (last.role === "assistant" && !calls.length)) return respond("finished");
   session._isAgentRunActive = true;
@@ -385,7 +422,7 @@ function dispatchResume(command, session, output) {
   void continueRun(session, undefined).catch(error => acceptedPromptError(session, error, output));
 }
 
-async function dispatch(command, currentSession, sessionReady, output) {
+async function dispatch(command: BridgeCommand, currentSession: () => BridgeSession | undefined, sessionReady: Promise<void>, output: Output) {
   try {
     if (!currentSession()) await sessionReady;
     const session = currentSession();
@@ -396,17 +433,17 @@ async function dispatch(command, currentSession, sessionReady, output) {
   } catch (error) { promptError(command, error, output); }
 }
 
-async function dispatchReady(command, session, output) {
+async function dispatchReady(command: BridgeCommand, session: BridgeSession | undefined, output: Output) {
   try {
     if (!session) throw new Error("Piop app requests are unavailable");
 
-    if (command.command === "prompt") {
+    if (isCommand(command, "prompt")) {
       dispatchPrompt(command, session, output);
 
       return;
     }
 
-    if (command.command === "retry_response") {
+    if (isCommand(command, "retry_response")) {
       dispatchRetry(command, session, output);
 
       return;
@@ -424,7 +461,7 @@ async function dispatchReady(command, session, output) {
       return;
     }
 
-    if (command.command === "queue_offer") {
+    if (isCommand(command, "queue_offer")) {
       bindQueuePull(session, output).setOffer(command.payload);
       output({ type: "response", id: command.id, command: command.command, success: true, data: null });
 
@@ -450,13 +487,13 @@ async function dispatchReady(command, session, output) {
   }
 }
 
-function previewText(content) {
+function previewText(content: Message["content"]): string {
   if (typeof content === "string") return content;
 
   return content.map(part => part.type === "text" ? part.text : `[${part.type}]`).join("\n");
 }
 
-function previewSystemText(message, leading) {
+function previewSystemText(message: SystemMessage, leading: boolean) {
   const sections = Object.entries(message.sections ?? {});
   const parts = [previewText(message.content)];
 
@@ -468,22 +505,23 @@ function previewSystemText(message, leading) {
   return parts.filter(part => part.length > 0).join("\n\n");
 }
 
-function previewMessage(message, index) {
+function previewMessage(message: Message, index: number) {
   return { role: message.role, text: message.role === "system" ? previewSystemText(message, index === 0) : previewText(message.content) };
 }
 
 // Every place where the request declares tools: a "tools" list in a request field, or a request item that
 // adds tools, such as an "additional_tools" item in the input or an Anthropic "tool_addition" block.
-function requestTools(payload, declared) {
+function requestTools(payload: unknown, declared: boolean) {
   const found: { place: string; json: string }[] = [];
-  const visit = (value, place: string, item: boolean) => {
+  const visit = (value: unknown, place: string, item: boolean): void => {
     if (Array.isArray(value)) { value.forEach((entry, index) => visit(entry, `${place}[${index}]`, true)); return; }
 
     if (value === null || typeof value !== "object") return;
+    const fields: { tools?: unknown; type?: unknown } = value;
 
-    if (item && (Array.isArray(value.tools) || value.type === "tool_addition")) { found.push({ place, json: JSON.stringify(value, null, 2) }); return; }
+    if (item && (Array.isArray(fields.tools) || fields.type === "tool_addition")) { found.push({ place, json: JSON.stringify(value, null, 2) }); return; }
 
-    if (Array.isArray(value.tools)) found.push({ place: place ? `${place}.tools` : "tools", json: JSON.stringify(value.tools, null, 2) });
+    if (Array.isArray(fields.tools)) found.push({ place: place ? `${place}.tools` : "tools", json: JSON.stringify(fields.tools, null, 2) });
 
     for (const [key, entry] of Object.entries(value)) if (key !== "tools") visit(entry, place ? `${place}.${key}` : key, false);
   };
@@ -496,14 +534,14 @@ function requestTools(payload, declared) {
 
 // Runs the first prompt until the provider has built its request, and returns everything before the user's
 // message. Providers hand the request to onPayload before they send it; the preview stops it there.
-async function previewPrompt(session) {
+async function previewPrompt(session: BridgeSession) {
   if (process.env.PIOP_PROMPT_PREVIEW !== "1") throw new Error("Only a prompt preview runtime can build a prompt preview");
   const marker = `Prompt preview ${randomUUID()}`;
   const agent = session.agent;
   const transform = agent.onPayload;
-  let transcript;
-  let built;
-  const request = new Promise(resolve => { built = resolve; });
+  let transcript: Omit<PreviewCapture, "payload"> | undefined;
+  let built!: (capture: PreviewCapture) => void;
+  const request = new Promise<PreviewCapture>(resolve => { built = resolve; });
   patchMethod(agent, "streamFunction", stream => (model, context, options) => {
     transcript ??= { model: `${model.provider}/${model.id}`, messages: context.messages };
 
@@ -511,11 +549,11 @@ async function previewPrompt(session) {
   });
   agent.onPayload = async (payload, model) => {
     const sent = transform ? (await transform(payload, model)) ?? payload : payload;
-    built({ ...transcript, payload: sent });
+    built({ ...transcript!, payload: sent });
     throw new Error("The prompt preview stops before the model request");
   };
   const run = session.prompt(marker).then(() => {
-    const failure = agent.state.messages.findLast(message => message.role === "assistant")?.errorMessage;
+    const failure = agent.state.messages.findLast((message): message is AssistantMessage => message.role === "assistant")?.errorMessage;
     throw new Error(failure ? `The agent could not start: ${failure}` : "The agent did not start a model request");
   });
   run.catch(() => {});
@@ -525,12 +563,12 @@ async function previewPrompt(session) {
   if (end < 0) throw new Error("The prompt preview could not find its message in the model request");
   const messages = captured.messages.slice(0, end);
 
-  return { model: captured.model, messages: messages.map(previewMessage), tools: requestTools(captured.payload, messages.some(message => message.toolsAdded?.length)) };
+  return { model: captured.model, messages: messages.map(previewMessage), tools: requestTools(captured.payload, messages.some(message => message.role === "system" && message.toolsAdded?.length)) };
 }
 
 type CommandInfo = { name: string; description?: string; source: string; sourceInfo: unknown; options?: { value: string; label: string; description?: string }[] };
 
-async function listCommands(session) {
+async function listCommands(session: PiSession) {
   const commands: CommandInfo[] = [];
 
   for (const command of session.extensionRunner.getRegisteredCommands()) {
@@ -544,7 +582,7 @@ async function listCommands(session) {
   return commands;
 }
 
-async function commandOptions(session, command) {
+async function commandOptions(session: PiSession, command: ResolvedCommand) {
   if (!command.getArgumentCompletions) return undefined;
 
   try {
@@ -556,7 +594,7 @@ async function commandOptions(session, command) {
   }
 }
 
-async function reportCommands(session) {
+async function reportCommands(session: PiSession) {
   try {
     const commands = (await listCommands(session)).filter(command => command.source === "extension").map(({ name, description, options }) => ({ name, description, options }));
     await Object.getOwnPropertyDescriptor(globalThis, Symbol.for("piop.runtime-events"))!.value("commands_available", { commands });
@@ -575,19 +613,19 @@ const imageCommands = new Set<string | undefined>(commandPolicy.withImages);
 
 const disabledCommands = new Map<string | undefined, string>(Object.entries(commandPolicy.disabled));
 
-const commandName = text => /^\/(\S+)/.exec(text)?.[1];
+const commandName = (text: string) => /^\/(\S+)/.exec(text)?.[1];
 
-const queuedCommand = text => queuedCommands.has(commandName(text)) || (queuedWithPrompt.has(commandName(text)) && /^\/\S+\s+\S/.test(text.trimStart()));
+const queuedCommand = (text: string) => queuedCommands.has(commandName(text)) || (queuedWithPrompt.has(commandName(text)) && /^\/\S+\s+\S/.test(text.trimStart()));
 
-const userText = message => message.role === "user" ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
+const userText = (message: PiopMessage) => message.role === "user" ? (message.content as (TextContent | ImageContent)[]).filter((part): part is TextContent => part.type === "text").map(part => part.text).join("") : "";
 
-function bindFollowUpDrain(session) {
+function bindFollowUpDrain(session: PiSession) {
   const agent = session.agent;
   const queue = agent.followUpQueue;
 
   patchMethod(queue, "drain", drain => function (this: any) {
     const messages = drain.call(this);
-    const queued = messages.findIndex(message => queuedCommand(userText(message)));
+    const queued = messages.findIndex((message: PiopMessage) => queuedCommand(userText(message)));
 
     if (queued === -1) return messages;
     const count = queued === 0 ? 1 : queued;
@@ -597,11 +635,11 @@ function bindFollowUpDrain(session) {
   }, "Agent follow-up queue");
 }
 
-function executePluginCommand(session, text, images) {
+function executePluginCommand(session: PiSession, text: string, images: ImageContent[]) {
   return afterReload(session, () => executePluginCommandReady(session, text, images));
 }
 
-async function executePluginCommandReady(session, text, images) {
+async function executePluginCommandReady(session: PiSession, text: string, images: ImageContent[]) {
   const ctx = session.extensionRunner.createCommandContext();
   const signal = ctx.signal;
   const command = text.split(/\s/, 1)[0].slice(1);
@@ -620,8 +658,8 @@ async function executePluginCommandReady(session, text, images) {
   return !signal?.aborted;
 }
 
-async function consumeQueuedCommands(session, messages, output) {
-  const prompts: any[] = [];
+async function consumeQueuedCommands(session: BridgeSession, messages: PiopMessage[], output: Output) {
+  const prompts: PiopMessage[] = [];
 
   for (const message of messages) {
     const text = userText(message);
@@ -639,7 +677,8 @@ async function consumeQueuedCommands(session, messages, output) {
       break;
     }
 
-    const consumed = await executePluginCommand(session, text, message.content.filter(part => part.type === "image"));
+    const images = message.role === "user" ? (message.content as (TextContent | ImageContent)[]).filter((part): part is ImageContent => part.type === "image") : [];
+    const consumed = await executePluginCommand(session, text, images);
 
     if (consumed && isQueuedUserMessage(message)) output({ type: "queue_consumed", queueId: message.piopQueueId, sessionId: session.sessionManager.getSessionId(), entryId: null });
   }
@@ -647,7 +686,7 @@ async function consumeQueuedCommands(session, messages, output) {
   return prompts;
 }
 
-async function drainQueuedCommands(session, drain, output) {
+async function drainQueuedCommands(session: BridgeSession, drain: () => Promise<PiopMessage[]>, output: Output) {
   while (true) {
     if (session.agent.signal?.aborted || session[reachedCompaction]) return [];
     const messages = await drain();
@@ -659,22 +698,22 @@ async function drainQueuedCommands(session, drain, output) {
   }
 }
 
-const compactionText = text => commandName(text) === "compact";
+const compactionText = (text: string) => commandName(text) === "compact";
 
 const reachedCompaction = Symbol("piop.reachedCompaction");
 
 const runningCompaction = Symbol("piop.runningCompaction");
 
-async function runQueuedCompaction(session, reached, output) {
+async function runQueuedCompaction(session: BridgeSession, reached: ReachedCompaction, output: Output) {
   const instructions = reached.text.slice("/compact".length).trim() || undefined;
-  let finish;
-  session[runningCompaction] = new Promise(resolve => { finish = resolve; });
-  patchMethod(session, "abort", () => async function () { delete session.abort; });
+  let finish!: (value: void) => void;
+  session[runningCompaction] = new Promise<void>(resolve => { finish = resolve; });
+  patchMethod(session, "abort", () => async function () { delete (session as Partial<Pick<PiSession, "abort">>).abort; });
 
   try { await session.compact(instructions); } catch (error) {
     console.error(`Queued compaction failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
-    if (Object.hasOwn(session, "abort")) delete session.abort;
+    if (Object.hasOwn(session, "abort")) delete (session as Partial<Pick<PiSession, "abort">>).abort;
     session[runningCompaction] = undefined;
     finish();
   }
@@ -682,7 +721,7 @@ async function runQueuedCompaction(session, reached, output) {
   if (isQueuedUserMessage(reached.message)) output({ type: "queue_consumed", queueId: reached.message.piopQueueId, sessionId: session.sessionManager.getSessionId(), entryId: null });
 }
 
-function bindQueuedCompaction(session, output) {
+function bindQueuedCompaction(session: BridgeSession, output: Output) {
   patchMethod(session, "_handlePostAgentRun", post => async function (this: any) {
     const reached = this[reachedCompaction];
 
@@ -703,7 +742,7 @@ function bindQueuedCompaction(session, output) {
   });
 }
 
-function bindQueuedCommands(session, output) {
+function bindQueuedCommands(session: BridgeSession, output: Output) {
   const agent = session.agent;
   bindFollowUpDrain(session);
   bindQueuedCompaction(session, output);
@@ -715,13 +754,13 @@ function bindQueuedCommands(session, output) {
     return config;
   });
 
-  patchMethod(agent, "runPromptMessages", runPromptMessages => async function (this: any, messages, options) {
+  patchMethod(agent, "runPromptMessages", runPromptMessages => async function (this: any, messages: PiopMessage[], options?: { skipInitialSteeringPoll?: boolean }) {
     if (options?.skipInitialSteeringPoll || !messages.some(message => queuedCommand(userText(message)))) {
       return runPromptMessages.call(this, messages, options);
     }
 
     let cancelled = false;
-    await this.runWithLifecycle(async signal => {
+    await this.runWithLifecycle(async (signal: AbortSignal) => {
       await consumeQueuedCommands(session, messages, output);
       cancelled = signal.aborted;
     });
@@ -752,7 +791,7 @@ async function main() {
   queueValidation = await queueContracts(root);
   installReloadLifecycle(AgentSession);
   const { writeRawStdout } = await import(pathToFileURL(join(root, "dist/core/output-guard.js")).href);
-  const output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
+  const output: Output = value => writeRawStdout(`${JSON.stringify(value)}\n`);
   patchMethod(AgentSession.prototype, "prompt", prompt => async function (this: any, text, options) {
     const disabled = disabledCommands.get(commandName(text));
 
@@ -774,9 +813,9 @@ async function main() {
     return prompt.call(this, text, options);
   });
 
-  let session;
-  let markSessionReady;
-  const sessionReady = new Promise(resolve => { markSessionReady = resolve; });
+  let session: BridgeSession | undefined;
+  let markSessionReady!: (value: void) => void;
+  const sessionReady = new Promise<void>(resolve => { markSessionReady = resolve; });
   patchMethod(AgentSession.prototype, "bindExtensions", bind => async function (this: any, ...bindings) {
     installQueueProtocol(this, output);
     bindQueuePull(this, output);

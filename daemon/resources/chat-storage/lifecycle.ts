@@ -206,7 +206,7 @@ function sweep(root: string): string[] {
 }
 
 // The chat target names when it is a saved chat without a message and without queued input, else undefined.
-function blankSession(target) {
+function blankSession(target: { root: string; path?: string; id?: string }) {
   const directory = target.root;
 
   if (!fs.existsSync(directory)) return;
@@ -221,7 +221,7 @@ function blankSession(target) {
   return inspectBlank(root, source, target.id);
 }
 
-function inspectBlank(directory, file, expected) {
+function inspectBlank(directory: string, file: string, expected: string | undefined) {
   let entries;
 
   try { entries = fs.readFileSync(file, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line)); }

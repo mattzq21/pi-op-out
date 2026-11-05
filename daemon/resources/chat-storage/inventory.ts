@@ -225,11 +225,13 @@ const definitions = [
   ['other-storage', 'file', 'owned', 'unknown'],
 ];
 
-function publicRoot(record) {
+function publicRoot(record: StorageRoot) {
   return { path: record.path, ownership: record.ownership, provenance: record.provenance, owners: record.owners, available: record.available ?? false };
 }
 
-function diskCategory(definition, disk, activeCount, archivedCount) {
+type DiskStorage = Awaited<ReturnType<typeof diskStorage>>;
+
+function diskCategory(definition: string[], disk: DiskStorage, activeCount: number, archivedCount: number) {
   const [id, countUnit, ownership, reclaimability] = definition;
   const roots = [...disk.roots.get(id)?.values() || []].map(publicRoot);
   let itemCount = disk.counts.get(id) || 0;
@@ -243,7 +245,7 @@ function diskCategory(definition, disk, activeCount, archivedCount) {
   return { id, countUnit, ownership, reclaimability, measurement: 'allocated-blocks', includedInTotal: true, byteSize: disk.sizes.get(id) || 0, itemCount, directories, roots };
 }
 
-function inventoryCategories(disk, activeCount, archivedCount) {
+function inventoryCategories(disk: DiskStorage, activeCount: number, archivedCount: number) {
   const categories = definitions.map(definition => diskCategory(definition, disk, activeCount, archivedCount));
 
   return categories;

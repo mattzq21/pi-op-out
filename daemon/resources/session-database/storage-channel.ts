@@ -26,11 +26,11 @@ function channel() {
   return descriptor;
 }
 
-function writeAll(fd, body) {
+function writeAll(fd: number, body: Buffer): void {
   for (let offset = 0; offset < body.length;) offset += fs.writeSync(fd, body, offset);
 }
 
-function readLine(fd) {
+function readLine(fd: number): string {
   const parts: Buffer[] = [];
   const buffer = Buffer.allocUnsafe(64 * 1024);
   for (;;) {

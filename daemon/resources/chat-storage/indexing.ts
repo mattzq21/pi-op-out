@@ -1,7 +1,8 @@
 import * as stateRecords from '../piop-storage/index.ts';
 import * as names from '../piop-storage/index.ts';
 import fs from 'node:fs';
-import { Type } from 'typebox';
+import { Type, type Static } from 'typebox';
+import type { SessionHeader } from '@earendil-works/pi-coding-agent';
 import { Check } from 'typebox/value';
 
 const parentSchema = Type.Object({ kind: Type.String({ minLength: 1 }), parentSessionId: Type.String(), sessionId: Type.Optional(Type.String()) });
@@ -12,16 +13,18 @@ const entrySchema = Type.Object({ type: Type.String() });
 const PREVIEW_CODE_POINTS = 100;
 
 interface SessionEntry { type: string; id?: unknown; parentId?: unknown; message?: any; [key: string]: any }
+interface IndexHeader extends SessionHeader { piopForkSource?: { sessionId?: unknown; entryId?: unknown } }
+interface Auxiliary { parentId: string; kind: string }
 interface MessageRecord { role: string; content: string; timestamp: number }
 interface SessionSummary { path: string; id: string; cwd: string; name: string; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; explicitlyNamed: boolean; hasUserMessage: boolean; bytes: number; auxiliaryParentId?: string; auxiliaryKind?: string; forkSourceId?: string; forkEntryId?: string }
 
-function text(message) {
+function text(message: { content?: unknown }): string {
   return Check(Type.String(), message.content) ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
 }
 
-const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-function userPrompt(content) {
+function userPrompt(content: string): string {
   const blocks = content.match(/^(?:\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*)+/)?.[0] ?? '';
   const rest = content.slice(blocks.length).trim();
   const missing = [...blocks.matchAll(/<skill\b[^>]*\bname="([^"]*)"/g)].map(match => match[1]).filter(name => !new RegExp(`(^|\\s)(\\$|/skill:)${escapeRegExp(name)}(?=\\s|$)`, 'i').test(rest));
@@ -29,7 +32,7 @@ function userPrompt(content) {
   return [...missing.map(name => `$${name}`), rest].filter(Boolean).join(' ');
 }
 
-function timestamp(value) {
+function timestamp(value: unknown): number {
   const numeric = Number(value);
 
   if (Number.isFinite(numeric) && numeric > 0) return numeric;
@@ -39,10 +42,10 @@ function timestamp(value) {
 }
 
 class SessionIndex {
-  header;
-  name;
-  inheritedAuxiliary;
-  ownAuxiliary;
+  header: IndexHeader | undefined;
+  name: string | undefined;
+  inheritedAuxiliary: Auxiliary | undefined;
+  ownAuxiliary: Auxiliary | undefined;
   first = '';
   hasUserMessage = false;
   preview = '';
@@ -57,7 +60,7 @@ class SessionIndex {
   leaf: string | null = null;
   unnamed = 0;
 
-  metadata(entry) {
+  metadata(entry: SessionEntry) {
     if (entry.type === 'custom' && entry.customType === stateRecords.AUXILIARY_PARENT) {
       const data = entry.data ?? {};
 
@@ -66,9 +69,10 @@ class SessionIndex {
 
   }
 
-  parent(data) {
-    const own = data.sessionId === this.header.id;
-    const unbound = data.sessionId === undefined && !this.header.parentSession;
+  parent(data: Static<typeof parentSchema>) {
+    const header = this.header!;
+    const own = data.sessionId === header.id;
+    const unbound = data.sessionId === undefined && !header.parentSession;
 
     if (!own && !unbound) return;
 
@@ -78,7 +82,7 @@ class SessionIndex {
     else this.inheritedAuxiliary = auxiliary;
   }
 
-  messageRecord(entry): MessageRecord | undefined {
+  messageRecord(entry: SessionEntry): MessageRecord | undefined {
     if (entry.type !== 'message') return undefined;
     const message = entry.message || {};
     let content = text(message);
@@ -88,7 +92,7 @@ class SessionIndex {
     return { role: message.role, content: content.slice(0, 2000), timestamp: message.role === 'user' ? timestamp(message.timestamp ?? entry.timestamp) : 0 };
   }
 
-  recordMessage(record) {
+  recordMessage(record: MessageRecord) {
     if (record.role === 'user') {
       this.hasUserMessage = true;
       this.lastMessageAt = Math.max(this.lastMessageAt, record.timestamp);
@@ -114,13 +118,13 @@ class SessionIndex {
     for (const record of branch.reverse()) if (record) this.recordMessage(record);
   }
 
-  recordCost(message) {
+  recordCost(message: { usage?: { cost?: { total?: unknown } }; [key: string]: unknown }) {
     const amount = message.usage?.cost?.total;
 
-    if (Number.isFinite(amount) && amount >= 0) this.cost += amount;
+    if (typeof amount === 'number' && Number.isFinite(amount) && amount >= 0) this.cost += amount;
   }
 
-  line(line, terminated = true) {
+  line(line: Buffer, terminated = true) {
     this.bytes += line.length + Number(terminated);
     this.lineNumber++;
     if (!terminated) { this.interruptedBytes = line.length; return; }
@@ -132,7 +136,7 @@ class SessionIndex {
 
     if (!this.header) {
       if (entry.type !== 'session') throw Error('Invalid session header');
-      this.header = entry;
+      this.header = entry as IndexHeader;
 
       return;
     }
@@ -149,7 +153,7 @@ class SessionIndex {
     this.leaf = id;
   }
 
-  summary(path): SessionSummary | undefined {
+  summary(path: string): SessionSummary | undefined {
     if (this.header) this.name = names.sessionName(path, this.header.id);
     if (this.header) {
       this.leaf = stateRecords.selectedLeaf(path, this.header.id, this.leaf);
@@ -165,20 +169,21 @@ class SessionIndex {
     if (!this.header) return;
 
     const source = this.header.piopForkSource;
-    const forked = typeof source?.sessionId === 'string' && source.sessionId && typeof source.entryId === 'string' && source.entryId;
-    const forkSourceId = forked ? source.sessionId : undefined;
-    const forkEntryId = forked ? source.entryId : undefined;
+    const sourceId = source?.sessionId, entryId = source?.entryId;
+    const forked = typeof sourceId === 'string' && sourceId && typeof entryId === 'string' && entryId;
+    const forkSourceId = forked ? sourceId : undefined;
+    const forkEntryId = forked ? entryId : undefined;
 
     return { path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name ? names.capSessionName(this.name) : names.promptName(this.first) || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, auxiliaryParentId: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.parentId, auxiliaryKind: (this.ownAuxiliary ?? this.inheritedAuxiliary)?.kind, forkSourceId, forkEntryId };
   }
 }
 
-async function indexFile(path) {
+async function indexFile(path: string) {
   const modifiedAt = Number(fs.statSync(path, { bigint: true }).mtimeNs / 1_000_000_000n);
   const index = new SessionIndex();
   let pending: Buffer[] = [];
   let state: Map<string | null, unknown[]> | undefined;
-  const feed = line => {
+  const feed = (line: Buffer) => {
     index.line(line);
     if (!index.header) return;
     if (!state) {
@@ -220,8 +225,8 @@ async function indexFile(path) {
   return summary && { ...summary, modifiedAt };
 }
 
-async function indexSessions(request) {
-  if (!Array.isArray(request.paths) || !request.paths.every(path => typeof path === 'string')) throw new Error('Invalid session summary request');
+async function indexSessions(request: { paths: string[] }) {
+  if (!Array.isArray(request.paths) || !request.paths.every((path: unknown) => typeof path === 'string')) throw new Error('Invalid session summary request');
   const summaries: SessionSummary[] = [];
   const warnings: string[] = [];
 

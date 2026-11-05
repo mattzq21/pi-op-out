@@ -3,7 +3,7 @@ import path from 'node:path';
 import * as database from '../session-database/index.ts';
 import { onMainThread } from '../session-database/index.ts';
 
-function directoryExists(directory) {
+function directoryExists(directory: string): boolean {
   try {
     const info = fs.lstatSync(directory);
 
@@ -32,7 +32,7 @@ const allocate = onMainThread('temporary-chat.allocate', (root: string, id: stri
   });
 });
 
-function create(root, id) {
+function create(root: string, id: string): string {
   const tmp = path.join(root, 'tmp');
   const directory = allocate(root, id);
 
@@ -43,7 +43,7 @@ function create(root, id) {
   return directory;
 }
 
-function firstLine(file) {
+function firstLine(file: string): string | null {
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
 
   try {
@@ -93,12 +93,12 @@ function inUse(root: string, folders: string[], directory: string, excluded?: st
   return folders.some(cwd => cwd === directory || cwd.startsWith(directory + path.sep)) || database.queuedInputMentions(root, directory, excluded);
 }
 
-function removeChecked(root, directory, id) {
+function removeChecked(root: string, directory: string, id: string): void {
   if (!inUse(root, workingFolders(root, id), directory, id)) remove(root, directory, id);
 }
 
 // Removes the temporary folders of deleted chats, except those in use.
-function cleanupDeleted(root) {
+function cleanupDeleted(root: string): void {
   if (!directoryExists(path.join(root, 'tmp'))) return;
   const candidates = database.orphanTemporaryChatAllocations(root);
 
@@ -125,7 +125,7 @@ const forgetAllocation = onMainThread('temporary-chat.forgetAllocation', (root: 
   });
 });
 
-function remove(root, directory, id) {
+function remove(root: string, directory: string, id: string): void {
   const allocated = database.temporaryChatFolder(root, id);
   const deleted = !database.temporaryChatSessionExists(root, id);
 
@@ -144,7 +144,9 @@ function remove(root, directory, id) {
   forgetAllocation(root, directory, id);
 }
 
-function temporaryChat(request) {
+type TemporaryChatRequest = { action: 'create'; id: string; root: string } | { action: 'remove'; path: string; root: string };
+
+function temporaryChat(request: TemporaryChatRequest): string | null {
   if (!['create', 'remove'].includes(request.action)) throw new Error('Invalid temporary chat action');
   if (typeof request.root !== 'string' || !path.isAbsolute(request.root)) throw new Error('Invalid temporary chat profile directory');
   const root = path.resolve(request.root);
@@ -173,17 +175,17 @@ function temporaryChat(request) {
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
-function folderNames(id) {
+function folderNames(id: string): string[] {
   const hex = id.replaceAll('-', '');
 
   return Array.from({ length: hex.length - 3 }, (_, index) => hex.slice(0, index + 4));
 }
 
-function ownsFolder(root, id, directory) {
+function ownsFolder(root: string, id: string, directory: string): boolean {
   return uuid.test(id) && path.dirname(directory) === path.join(root, 'tmp') && folderNames(id).includes(path.basename(directory));
 }
 
-function list(root) {
+function list(root: string) {
   const rows = database.temporaryChatAllocations(root);
 
   for (const row of rows) {

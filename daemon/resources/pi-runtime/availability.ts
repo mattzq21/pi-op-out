@@ -1,10 +1,11 @@
+import type { AgentSession as PiAgentSession } from '@earendil-works/pi-coding-agent';
 import { patchMethod } from '../pi/index.ts';
 
 const installed = new WeakSet();
 const waitKey = Symbol.for("piop.wait-for-idle");
 const lifetimeKey = Symbol.for("piop.context-lifetime");
 
-function installAvailability(AgentSession) {
+function installAvailability(AgentSession: typeof PiAgentSession) {
   if (installed.has(AgentSession)) return;
   const runners = new WeakSet();
   patchMethod(AgentSession.prototype, "_bindExtensionCore", bind => function (this: any, runner) {

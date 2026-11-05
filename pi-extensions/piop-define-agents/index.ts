@@ -266,7 +266,7 @@ function withAgentPromptAtHead<M extends { role: string }>(messages: M[]): M[] |
   if (!cut || !isSystemMessage(messages[0])) return undefined;
   const prefix = messages.slice(0, cut);
 
-  return [replaySystemMessages(prefix.filter(isSystemMessage)) as unknown as M, ...prefix.filter(message => !isSystemMessage(message)), ...messages.slice(cut)];
+  return [replaySystemMessages(prefix.filter((message): message is M & SystemMessage => isSystemMessage(message))) as unknown as M, ...prefix.filter(message => !isSystemMessage(message)), ...messages.slice(cut)];
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {

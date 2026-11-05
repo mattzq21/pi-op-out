@@ -10,7 +10,7 @@ export function sessionReferenceRoot() {
 }
 
 // The saved entries of a transcript. A last line that a write did not finish is left out; `partial` gives its length.
-export function readTranscript(path) {
+export function readTranscript(path: string) {
   const body = storageFs.readFileSync(path);
   const end = body.lastIndexOf(10) + 1;
   const lines = body.subarray(0, end).toString("utf8").split("\n");
@@ -27,7 +27,7 @@ export function readTranscript(path) {
   return { entries, end, partial: body.length - end };
 }
 
-export function sessionHeaderMatches(file, id, cwd) {
+export function sessionHeaderMatches(file: string, id: string, cwd: string): boolean {
   let descriptor;
 
   try {

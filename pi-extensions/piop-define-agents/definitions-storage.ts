@@ -3,33 +3,40 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as storageDatabase from '../../daemon/resources/session-database/index.ts';
 import { onMainThread } from '../../daemon/resources/session-database/index.ts';
+export type ProjectChange = { revision: string; agents?: unknown[]; defaultAgent?: string | null };
 
 // The agent definitions in the storage database: the global ones, and those of each project. Only the daemon's main
 // thread saves them. The agent loader runs in a worker thread and asks for each change.
 
 export const DEFINITIONS = "agent-definitions";
 
-export const isNamedAgent = agent => Check(Type.Object({ name: Type.String({ pattern: "\\S" }) }), agent);
+export const isNamedAgent = (agent: unknown): agent is { name: string } => Check(Type.Object({ name: Type.String({ pattern: "\\S" }) }), agent);
 
-export function revisionOf(body) { return createHash("sha256").update(body).digest("hex"); }
+export function revisionOf(body: string): string { return createHash("sha256").update(body).digest("hex"); }
 
-export function bodyText(body) {
+// The saved definitions are UTF-8 JSON text.
+export function bodyText(body: Buffer): string;
+export function bodyText(body: Buffer | undefined): string | undefined;
+export function bodyText(body: Buffer | undefined): string | undefined {
   return body?.toString("utf8");
 }
 
-function storedBody(root, name) {
+function storedBody(root: string, name: string): string | undefined {
   return bodyText(storageDatabase.applicationSetting(root, name));
 }
 
-function storedProject(root, directory) {
+function storedProject(root: string, directory: string): string | undefined {
   return bodyText(storageDatabase.projectAgentDefinition(root, directory));
 }
 
-function transaction(root, change) {
+function transaction<T>(root: string, change: () => T): T {
   return storageDatabase.transaction(root, "IMMEDIATE", change);
 }
 
-function putConfig(root, value, createOnly) {
+// The global agent definitions as a caller saves them: revision is the revision that the caller read.
+type Definitions = { revision?: string; agents: unknown[] };
+
+function putConfig(root: string, value: Definitions, createOnly: boolean) {
   const current = storedBody(root, DEFINITIONS);
   const revision = current === undefined ? "missing" : revisionOf(current);
 
@@ -37,7 +44,7 @@ function putConfig(root, value, createOnly) {
 
   if (!createOnly && (!value.revision || value.revision !== revision)) throw new Error("Agent definitions changed in another window or client. Reload them before saving.");
   const stored = current === undefined ? undefined : JSON.parse(current);
-  const unnamed = Array.isArray(stored?.agents) ? stored.agents.filter(agent => !isNamedAgent(agent)) : [];
+  const unnamed = Array.isArray(stored?.agents) ? stored.agents.filter((agent: unknown) => !isNamedAgent(agent)) : [];
   const { revision: _revision, ...configuration } = value;
   const body = `${JSON.stringify({ ...configuration, agents: [...configuration.agents, ...unnamed], _revision: randomUUID() }, null, 2)}\n`;
   storageDatabase.saveApplicationSetting(root, DEFINITIONS, Buffer.from(body));
@@ -45,17 +52,17 @@ function putConfig(root, value, createOnly) {
   return { revision: revisionOf(body), result: { revision: revisionOf(body), warnings: [] } };
 }
 
-export function namedAgents(document) {
+export function namedAgents(document: { agents?: unknown } | undefined): string[] {
   return Array.isArray(document?.agents) ? document.agents.filter(isNamedAgent).map(agent => agent.name) : [];
 }
 
-function storedGlobalNames(root) {
+function storedGlobalNames(root: string): Set<string> {
   const body = storedBody(root, DEFINITIONS);
 
   return new Set(["general", ...namedAgents(body === undefined ? undefined : JSON.parse(body))]);
 }
 
-function requireConsistentDefinitions(root) {
+function requireConsistentDefinitions(root: string): void {
   const global = storedGlobalNames(root);
 
   for (const row of storageDatabase.projectAgentDefinitions(root)) {
@@ -70,7 +77,7 @@ function requireConsistentDefinitions(root) {
   }
 }
 
-function putProject(root, directory, change) {
+function putProject(root: string, directory: string, change: ProjectChange): string {
   const current = storedProject(root, directory);
 
   if (change.revision !== (current === undefined ? "missing" : revisionOf(current))) throw new Error("Project agent definitions changed in another window or client. Reload them before saving.");
@@ -92,27 +99,27 @@ function putProject(root, directory, change) {
 
 // Saves the global agent definitions. Returns the saved revision, and the result for the caller (none when createOnly
 // found saved definitions).
-export const saveConfig = onMainThread("agent-definitions.saveConfig", (root, value, createOnly) => transaction(root, () => {
+export const saveConfig = onMainThread("agent-definitions.saveConfig", (root: string, value: Definitions, createOnly: boolean) => transaction(root, () => {
   const saved = putConfig(root, value, createOnly);
   requireConsistentDefinitions(root);
 
   return saved;
 }));
 
-export const saveProject = onMainThread("agent-definitions.saveProject", (root, directory, change) => transaction(root, () => {
+export const saveProject = onMainThread("agent-definitions.saveProject", (root: string, directory: string, change: ProjectChange) => transaction(root, () => {
   const revision = putProject(root, directory, change);
   requireConsistentDefinitions(root);
 
   return revision;
 }));
 
-const removeAgent = (agents, name) => name === undefined ? agents : agents.filter(item => !(isNamedAgent(item) && item.name === name));
+const removeAgent = (agents: unknown[], name: string | undefined): unknown[] => name === undefined ? agents : agents.filter(item => !(isNamedAgent(item) && item.name === name));
 
 type ProjectEdit = { directory: string; revision?: string; remove?: string; add?: unknown };
 
 // Moves an agent between the global definitions and projects in one change. Each project edit removes the agent named
 // remove and adds add. With revision, it applies only to the project agents saved at that revision.
-export const saveMove = onMainThread("agent-definitions.saveMove", (root: string, global: { revision?: string; agents: unknown[] } | undefined, projects: ProjectEdit[]) => transaction(root, () => {
+export const saveMove = onMainThread("agent-definitions.saveMove", (root: string, global: Definitions | undefined, projects: ProjectEdit[]) => transaction(root, () => {
   const saved = global && putConfig(root, global, false);
 
   if (global && !saved?.result) throw new Error("Agent definitions were not saved");

@@ -11,25 +11,32 @@ export interface LockOptions { shared?: boolean; wait?: boolean; timeoutMs?: num
 
 const STATE = Symbol.for('piop.storage-locks');
 
-function state() {
-  if (!Object.hasOwn(globalThis, STATE)) Object.defineProperty(globalThis, STATE, { value: { locks: new Map(), tokens: new Map(), next: 0 } });
-  return globalThis[STATE];
+type Owner = ReturnType<typeof currentCaller>;
+interface Waiter { shared: boolean; owner: Owner; resolve: (token: number | null) => void; timer?: NodeJS.Timeout }
+interface Lock { shared: number; exclusive: boolean; waiters: Waiter[] }
+interface Held { name: string; shared: boolean; owner: Owner; finish: () => void }
+interface LockState { locks: Map<string, Lock>; tokens: Map<number, Held>; next: number }
+
+function state(): LockState {
+  const shared = globalThis as typeof globalThis & { [STATE]?: LockState };
+  if (!Object.hasOwn(shared, STATE)) Object.defineProperty(shared, STATE, { value: { locks: new Map(), tokens: new Map(), next: 0 } satisfies LockState });
+  return shared[STATE]!;
 }
 
-function entry(name) {
+function entry(name: string): Lock {
   const { locks } = state();
   let lock = locks.get(name);
   if (!lock) { lock = { shared: 0, exclusive: false, waiters: [] }; locks.set(name, lock); }
   return lock;
 }
 
-function free(lock, shared, waiting) {
+function free(lock: Lock, shared: boolean, waiting: Waiter[]): boolean {
   if (lock.exclusive) return false;
   if (shared) return !waiting.some(waiter => !waiter.shared);
   return lock.shared === 0;
 }
 
-function grant(name, lock, shared, owner) {
+function grant(name: string, lock: Lock, shared: boolean, owner: Owner): number {
   if (shared) lock.shared++; else lock.exclusive = true;
   const store = state();
   const token = ++store.next;
@@ -39,16 +46,16 @@ function grant(name, lock, shared, owner) {
   return token;
 }
 
-function give(token) {
+function give(token: number): void {
   const store = state();
   const record = store.tokens.get(token);
   if (!record) return;
   store.tokens.delete(token);
   record.owner?.end.delete(record.finish);
-  const lock = store.locks.get(record.name);
+  const lock = store.locks.get(record.name)!;
   if (record.shared) lock.shared--; else lock.exclusive = false;
   while (lock.waiters.length && free(lock, lock.waiters[0].shared, [])) {
-    const waiter = lock.waiters.shift();
+    const waiter = lock.waiters.shift()!;
     clearTimeout(waiter.timer);
     if (waiter.owner?.ended) { waiter.resolve(null); continue; }
     waiter.resolve(grant(record.name, lock, waiter.shared, waiter.owner));
@@ -56,7 +63,7 @@ function give(token) {
   if (!lock.shared && !lock.exclusive && !lock.waiters.length) store.locks.delete(record.name);
 }
 
-const tryTake = onMainThread('storage-locks.try', (name, shared) => {
+const tryTake = onMainThread('storage-locks.try', (name: string, shared: boolean) => {
   const lock = entry(name);
   if (!free(lock, shared, lock.waiters)) { if (!lock.shared && !lock.exclusive && !lock.waiters.length) state().locks.delete(name); return null; }
   return grant(name, lock, shared, currentCaller());
@@ -67,7 +74,7 @@ const take = onMainThread('storage-locks.take', (name: string, shared: boolean, 
   const lock = entry(name);
   if (free(lock, shared, lock.waiters)) return grant(name, lock, shared, owner);
   return new Promise<number | null>(resolve => {
-    const waiter: { shared: boolean; owner: typeof owner; resolve: (token: number | null) => void; timer?: NodeJS.Timeout } = { shared, owner, resolve, timer: undefined };
+    const waiter: Waiter = { shared, owner, resolve, timer: undefined };
     if (timeoutMs !== undefined) waiter.timer = setTimeout(() => {
       lock.waiters.splice(lock.waiters.indexOf(waiter), 1);
       if (!lock.shared && !lock.exclusive && !lock.waiters.length) state().locks.delete(name);
@@ -86,7 +93,7 @@ const flows = new AsyncLocalStorage<Map<string, { token: number; shared: boolean
 // Runs operation as one flow.
 function withinFlow<T>(operation: () => T): T { return flows.run(new Map(), operation); }
 
-function release(held, name, token) {
+function release(held: Map<string, { token: number; shared: boolean; count: number }> | undefined, name: string, token: number): () => void {
   let done = false;
   return () => {
     if (done) return;
@@ -98,7 +105,7 @@ function release(held, name, token) {
   };
 }
 
-function reentered(name, shared) {
+function reentered(name: string, shared: boolean): (() => void) | undefined {
   const held = flows.getStore();
   const mine = held?.get(name);
   if (!mine || (!shared && mine.shared)) return undefined;
@@ -106,7 +113,7 @@ function reentered(name, shared) {
   return release(held, name, mine.token);
 }
 
-function taken(name, shared, token) {
+function taken(name: string, shared: boolean, token: number | null | undefined): (() => void) | undefined {
   if (token === null || token === undefined) return undefined;
   const held = flows.getStore();
   held?.set(name, { token, shared, count: 1 });
@@ -118,7 +125,8 @@ function taken(name, shared, token) {
 function lockSync(name: string, { shared = false, wait = true, timeoutMs, busy = 'This storage is busy. Try again.' }: LockOptions = {}): (() => void) | undefined {
   const again = reentered(name, shared);
   if (again) return again;
-  if (linkedWorker() && wait) return taken(name, shared, take(name, shared, timeoutMs));
+  // A worker gets the answer of the main thread, not its promise.
+  if (linkedWorker() && wait) return taken(name, shared, take(name, shared, timeoutMs) as number | null);
   const release = taken(name, shared, tryTake(name, shared));
   if (!release && wait && !linkedWorker()) throw new Error(busy);
   return release;

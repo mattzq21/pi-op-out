@@ -1,23 +1,51 @@
+import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import { patchGetter, patchMethod } from '../pi/index.ts';
+import type { PendingMessageQueue, PiSession, PiopMessage } from './pi-session.ts';
 
 const pullState = Symbol("piop.queue-pull");
 
-const userText = message => message?.role === "user" && Array.isArray(message.content) ? message.content.filter(part => part.type === "text").map(part => part.text).join("") : "";
+const userText = (message: PiopMessage | undefined) => message?.role === "user" && Array.isArray(message.content) ? message.content.filter((part): part is TextContent => part.type === "text").map(part => part.text).join("") : "";
+
+type QueueKind = "steer" | "followUp" | "goal";
+
+export type QueueOffer = { sequence?: number; steer?: number; followUp?: number; goal?: number; tools?: unknown };
+
+export type CustomInsertion = Parameters<PiSession["sendCustomMessage"]>[0];
+
+export type QueueItem = { id: string; insertion: CustomInsertion }
+  | { id: string; insertion?: undefined; message: string; behavior: "steer" | "followUp"; goalSubmissionId?: string; images?: ImageContent[]; context?: CustomInsertion[] };
+
+type QueueAsk = {
+  (name: "queue_outcome", payload: { outcome: string }): Promise<QueueOffer | undefined>;
+  (name: "queue_take", payload: { behavior: QueueKind; holding: string[] }): Promise<{ item?: QueueItem | null; offer?: QueueOffer } | undefined>;
+  (name: "queue_used" | "queue_failed" | "queue_release", payload: unknown): Promise<unknown>;
+};
 
 type QueuePullBindings = {
-  ask: (name: string, payload: unknown) => Promise<any>;
-  prompt: (session, item) => Promise<unknown>;
-  insert: (session, insertion) => Promise<unknown>;
+  ask: QueueAsk;
+  prompt: (session: PiSession, item: Extract<QueueItem, { message: string }>) => Promise<unknown>;
+  insert: (session: PiSession, insertion: CustomInsertion) => Promise<unknown>;
   tools: (state: unknown) => void;
   steer: (count: number) => void;
 };
 
-function queuePull(session, { ask, prompt, insert, tools, steer }: Partial<QueuePullBindings> = {}) {
+type QueuePull = {
+  offered(kind?: QueueKind): boolean;
+  take(kind: QueueKind): Promise<boolean>;
+  start(): Promise<void>;
+  setOffer(next: QueueOffer | undefined): void;
+};
+
+const integer = (value: unknown): value is number => Number.isInteger(value);
+
+type PullSession = PiSession & { [pullState]?: QueuePull };
+
+function queuePull(session: PullSession, { ask, prompt, insert, tools, steer }: Partial<QueuePullBindings> = {}): QueuePull {
   if (session[pullState]) return session[pullState];
   if (!ask || !prompt || !insert || !tools || !steer) throw new Error("The queue pull of this session is not bound");
 
   const offer = { steer: 0, followUp: 0, goal: 0, sequence: 0 };
-  const holding = new Set();
+  const holding = new Set<string>();
   let starting = false;
   let toolState = "";
   let reportedSteer = 0;
@@ -28,13 +56,13 @@ function queuePull(session, { ask, prompt, insert, tools, steer }: Partial<Queue
     try { steer(offer.steer); } catch (error) { console.error(`Could not report the queued steer messages: ${error instanceof Error ? error.message : String(error)}`); }
   };
 
-  const offered = (kind?) => kind ? offer[kind] > 0 : offer.steer + offer.followUp > 0;
+  const offered = (kind?: QueueKind) => kind ? offer[kind] > 0 : offer.steer + offer.followUp > 0;
 
-  const update = next => {
-    if (!Number.isInteger(next?.sequence) || next.sequence <= offer.sequence) return false;
+  const update = (next: QueueOffer | undefined) => {
+    if (!integer(next?.sequence) || next.sequence <= offer.sequence) return false;
     offer.sequence = next.sequence;
-    offer.steer = Number.isInteger(next.steer) && next.steer > 0 ? next.steer : 0;
-    offer.followUp = Number.isInteger(next.followUp) && next.followUp > 0 ? next.followUp : 0;
+    offer.steer = integer(next.steer) && next.steer > 0 ? next.steer : 0;
+    offer.followUp = integer(next.followUp) && next.followUp > 0 ? next.followUp : 0;
     offer.goal = next.goal === 1 ? 1 : 0;
     reportSteer();
     const state = next.tools && typeof next.tools === "object" ? JSON.stringify(next.tools) : toolState;
@@ -47,12 +75,12 @@ function queuePull(session, { ask, prompt, insert, tools, steer }: Partial<Queue
     return true;
   };
 
-  const report = async outcome => {
+  const report = async (outcome: string) => {
     try { update(await ask("queue_outcome", { outcome })); }
     catch (error) { console.error(`Could not report how the run ended: ${error instanceof Error ? error.message : String(error)}`); }
   };
 
-  const take = async kind => {
+  const take = async (kind: QueueKind) => {
     if (!offered(kind)) return false;
     let answer;
 
@@ -98,7 +126,9 @@ function queuePull(session, { ask, prompt, insert, tools, steer }: Partial<Queue
     const agent = session.agent;
     const released: string[] = [];
 
-    for (const [queue, texts] of [[agent.steeringQueue, session._steeringMessages], [agent.followUpQueue, session._followUpMessages]]) {
+    const queues: [PendingMessageQueue, string[]][] = [[agent.steeringQueue, session._steeringMessages], [agent.followUpQueue, session._followUpMessages]];
+
+    for (const [queue, texts] of queues) {
       queue.messages = queue.messages.filter(message => {
         if (typeof message?.piopQueueId !== "string" || !holding.has(message.piopQueueId)) return true;
         released.push(message.piopQueueId);
@@ -115,7 +145,7 @@ function queuePull(session, { ask, prompt, insert, tools, steer }: Partial<Queue
     await ask("queue_release", { ids: released });
   };
 
-  const pull = {
+  const pull: QueuePull = {
     offered,
     take,
     start,
@@ -154,7 +184,7 @@ function queuePull(session, { ask, prompt, insert, tools, steer }: Partial<Queue
   return pull;
 }
 
-function bindAgent(session, pull) {
+function bindAgent(session: PiSession, pull: QueuePull) {
   const agent = session.agent;
   const hasQueuedMessages = patchMethod(agent, "hasQueuedMessages", original => function (this: any) { return original.call(this) || pull.offered(); });
 
