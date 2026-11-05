@@ -6,7 +6,7 @@ export function webUrl(value: string): string | undefined {
   const colon = candidate.indexOf(":");
 
   if (colon < 0) return undefined;
-  const scheme = candidate.slice(0, colon).replace(/[\t\r\n]/g, "").replace(/^[\u0000-\u0020]+/, "");
+  const scheme = candidate.slice(0, colon).replace(/[\t\r\n]/g, "").replace(/^[^\u0021-\uffff]+/, "");
 
   if (!/^https?$/i.test(scheme)) return undefined;
 

@@ -1,6 +1,6 @@
 import { required } from "../lib/required";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSelector, createSignal } from "solid-js";
+import { createMemo, createSelector, createSignal, untrack } from "solid-js";
 import { createDependencyEffect, createRef, type KeyboardEvent } from "../lib/solid";
 
 import { ArrowDown, ArrowUp, Folder, FolderOpen, Search } from "lucide-solid";
@@ -54,10 +54,8 @@ export function ProjectDialog(componentProps: Props) {
   const dialogRef = createRef<HTMLDialogElement>(null);
   const inputRef = createRef<HTMLInputElement>(null);
   const returnFocusRef = createRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
-  const callbacks = createRef({ onHomeDirectory: componentProps.onHomeDirectory, onChooseDirectory: componentProps.onChooseDirectory });
-  createComputed(() => { callbacks.current = { onHomeDirectory: componentProps.onHomeDirectory, onChooseDirectory: componentProps.onChooseDirectory }; });
-  const initialLocation = createRef({ path: componentProps.initialPath, hostId: componentProps.hostId });
-  const [hostId, setHostId] = createSignal(componentProps.hostId);
+  const initialLocation = untrack(() => ({ path: componentProps.initialPath, hostId: componentProps.hostId }));
+  const [hostId, setHostId] = createSignal(initialLocation.hostId);
   const [query, setQuery] = createSignal("");
   const queryHistory = createRef<{ current: string; past: string[]; future: string[] }>({ current: "", past: [], future: [] });
   const queryRevision = createRef(0);
@@ -142,15 +140,14 @@ export function ProjectDialog(componentProps: Props) {
     return () => { if (dialog?.open) dialog.close(); requestAnimationFrame(() => returnFocusRef.current?.focus()); };
   }, () => []);
 
-  createDependencyEffect(() => { const capturedHostId = hostId();
+  createDependencyEffect(() => {
     let cancelled = false;
     setLoaded(undefined); setBasePath(""); setHomePath(""); resetQuery(""); setLoading(true); setError(undefined);
     const initialQueryRevision = queryRevision.current;
 
-    const initialize = async () => {
-      const location = initialLocation.current;
-      const home = await callbacks.current.onHomeDirectory(capturedHostId);
-      const path = location.hostId === capturedHostId && location.path.trim() ? expandHome(location.path, home) : home;
+    const initialize = async (requestedHostId: string, onHomeDirectory: Props["onHomeDirectory"]) => {
+      const home = await onHomeDirectory(requestedHostId);
+      const path = initialLocation.hostId === requestedHostId && initialLocation.path.trim() ? expandHome(initialLocation.path, home) : home;
 
       if (!cancelled) {
         setHomePath(home); setBasePath(path);
@@ -159,19 +156,19 @@ export function ProjectDialog(componentProps: Props) {
       }
     };
 
-    void initialize().catch((reason) => { if (!cancelled) { setError(String(reason instanceof Error ? reason.message : reason)); setLoading(false); } });
+    void initialize(hostId(), componentProps.onHomeDirectory).catch((reason) => { if (!cancelled) { setError(String(reason instanceof Error ? reason.message : reason)); setLoading(false); } });
 
     return () => { cancelled = true; };
   }, () => [hostId()]);
 
-  createDependencyEffect(() => { const capturedParent = parent(); const capturedHostId = hostId();
+  createDependencyEffect(() => { const capturedParent = parent(); const capturedHostId = hostId(); const chooseDirectory = componentProps.onChooseDirectory;
 
     if (!capturedParent) return;
     let cancelled = false;
     setLoading(true); setError(undefined);
 
     const timer = setTimeout(() => {
-      void callbacks.current.onChooseDirectory(capturedParent, capturedHostId).then((listing) => {
+      void chooseDirectory(capturedParent, capturedHostId).then((listing) => {
         if (!cancelled) setLoaded({ hostId: capturedHostId, requested: capturedParent, listing });
       }).catch((reason) => { if (!cancelled) { setLoaded(undefined); setError(reason instanceof Error ? reason.message : String(reason)); } }).finally(() => { if (!cancelled) setLoading(false); });
     }, 150);
@@ -240,7 +237,7 @@ export function ProjectDialog(componentProps: Props) {
 
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) { event.preventDefault(); void open(); }
   }}>
-    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2>{componentProps.hosts && <select aria-label="Host" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><Key each={componentProps.hosts} by={host => host.id}>{(host) => <option value={host().id} disabled={host().disabled}>{host().name}</option>}</Key></select>}<button class="directory-palette-escape" disabled={opening()} onClick={componentProps.onCancel}>esc</button></header>
+    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2>{componentProps.hosts && <select aria-label="Host" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><Key each={componentProps.hosts} by={host => host.id}>{(host) => <option value={host().id} disabled={host().disabled}>{host().name}</option>}</Key></select>}<button class="directory-palette-escape" disabled={opening()} onClick={() => componentProps.onCancel()}>esc</button></header>
     {renderDirectoryPaletteSearch()}
     {renderDirectoryPaletteCaption()}
     {renderDirectoryPaletteResults()}

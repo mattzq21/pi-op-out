@@ -16,6 +16,6 @@ export function RemoveHostDialog(props: { name: string; onRemove: () => void; on
   return <dialog ref={(element) => { dialogRef.current = element; }} class="extension-dialog" aria-labelledby={titleId} aria-describedby={descriptionId} onCancel={(event) => { event.preventDefault(); props.onCancel(); }}>
     <h2 id={titleId}>Remove host “{props.name}”?</h2>
     <p id={descriptionId}>After saving, this host’s conversations will no longer be available here. Its files and conversations will remain on the remote host.</p>
-    <div class="dialog-actions"><button autofocus onClick={props.onCancel}>Cancel</button><button class="primary-button" onClick={props.onRemove}>Remove host</button></div>
+    <div class="dialog-actions"><button autofocus onClick={() => props.onCancel()}>Cancel</button><button class="primary-button" onClick={() => props.onRemove()}>Remove host</button></div>
   </dialog>;
 }

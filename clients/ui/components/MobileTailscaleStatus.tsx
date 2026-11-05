@@ -1,6 +1,6 @@
 import { App as AndroidApp } from "@capacitor/app";
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { createDependencyEffect } from "../lib/solid";
 
 type State = "checking" | "active" | "off" | "other-vpn" | "missing" | "unknown";
@@ -60,9 +60,9 @@ export function MobileTailscaleStatus(props: { hideDetail?: boolean }) {
     return () => { disposed = true; for (const handle of handles) void handle.remove().catch(reason => setListenerError((reason instanceof Error ? reason.message : String(reason)))); };
   }, () => []);
 
-  return Capacitor.getPlatform() === "android" && <div class="mobile-tailscale-status" data-state={state()}>
+  return <Show when={Capacitor.getPlatform() === "android"}><div class="mobile-tailscale-status" data-state={state()}>
     <div role="status"><strong><span class="mobile-tailscale-dot" aria-hidden="true" />{messages[state()].title}</strong>{!props.hideDetail && <p>{messages[state()].detail}</p>}</div>
     <div class="mobile-host-actions"><button type="button" onClick={() => void check()}>Check again</button>{state() !== "missing" && <button type="button" onClick={() => void open()}>Open Tailscale</button>}</div>
     {(listenerError() || error()) && <p role="alert">{listenerError() || error()}</p>}
-  </div>;
+  </div></Show>;
 }

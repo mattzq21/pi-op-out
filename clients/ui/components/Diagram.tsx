@@ -1,5 +1,5 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { renderDiagram } from "../lib/diagrams";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { diagramElement, renderDiagram } from "../lib/diagrams";
 import "./diagram.css";
 import { copyText } from "../lib/clipboard";
 
@@ -9,6 +9,8 @@ export function Diagram(props: { source: string; complete: boolean }) {
   const [sourceVisible, setSourceVisible] = createSignal(false);
   const [zoom, setZoom] = createSignal(1);
   const [feedback, setFeedback] = createSignal("");
+  const thumb = createMemo(() => svg() ? diagramElement(svg()) : undefined);
+  const preview = createMemo(() => svg() ? diagramElement(svg()) : undefined);
   let root!: HTMLElement;
   let viewport!: HTMLDivElement;
   let dialog!: HTMLDialogElement;
@@ -118,7 +120,7 @@ export function Diagram(props: { source: string; complete: boolean }) {
     </div>
     <Show when={svg()}>
       <button type="button" class="diagram-thumb" aria-label="Open diagram preview" data-tooltip="Click to open a larger preview" onClick={open}>
-        <div class="diagram-thumb-canvas" innerHTML={svg()} />
+        <div class="diagram-thumb-canvas">{thumb()}</div>
       </button>
     </Show>
     <Show when={!props.complete}><p class="diagram-status" role="status">Receiving diagram…</p></Show>
@@ -135,7 +137,7 @@ export function Diagram(props: { source: string; complete: boolean }) {
         <button type="button" onClick={close}>Close</button>
       </div>
       <div ref={viewport} class="diagram-viewport" tabindex="0" role="region" aria-label="Diagram preview; scroll or drag to pan, Ctrl+scroll to zoom" data-tooltip="Ctrl+scroll up to zoom in, Ctrl+scroll down to zoom out" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={() => { drag = undefined; }} onPointerCancel={() => { drag = undefined; }} onDragStart={event => event.preventDefault()} onLostPointerCapture={() => { drag = undefined; }}>
-        <div class="diagram-canvas" style={{ width: `${zoom() * 100}%` }} innerHTML={svg()} />
+        <div class="diagram-canvas" style={{ width: `${zoom() * 100}%` }}>{preview()}</div>
       </div>
     </dialog>
   </section>;

@@ -147,7 +147,8 @@ export class SessionMemory {
   private resourceReleases = new Map<string, () => void>();
   revision?: string;
   constructor(private transport: Transport, private initialState: AgentState) {
-    [this.data, this.setData] = createStore(initialSnapshot(initialState));
+    const [data, setData] = createStore(initialSnapshot(initialState));
+    this.data = data; this.setData = setData;
   }
   // Marks the conversation as shown, so the cache limit does not evict it.
   observe() { this.observers++;

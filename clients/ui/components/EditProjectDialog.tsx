@@ -1,4 +1,4 @@
-import { createSignal, createUniqueId, For, lazy, Match, Show, Switch } from "solid-js";
+import { createSignal, createUniqueId, For, lazy, Match, Show, Switch, untrack } from "solid-js";
 import { hostCatalog } from "../lib/draftRuntime";
 import { saveProjectAgents } from "../lib/hostAgents";
 import type { AgentProfile } from "../types";
@@ -20,9 +20,9 @@ interface Props {
 
 export function EditProjectDialog(props: Props) {
   const dialogRef = createRef<HTMLDialogElement>(null);
-  const hostId = props.project.hostId ?? "local";
-  const [name, setName] = createSignal(props.project.name);
-  const [cwd, setCwd] = createSignal(props.project.cwd ?? "");
+  const hostId = () => props.project.hostId ?? "local";
+  const [name, setName] = createSignal(untrack(() => props.project.name));
+  const [cwd, setCwd] = createSignal(untrack(() => props.project.cwd ?? ""));
   const [step, setStep] = createSignal<Step>("edit");
   const [error, setError] = createSignal<string>();
   const [browsing, setBrowsing] = createSignal(false);
@@ -35,7 +35,7 @@ export function EditProjectDialog(props: Props) {
     const directory = cwd();
     let cancelled = false;
     setAgents(undefined); setAgentsError(undefined);
-    void Promise.all([hostCatalog(hostId, "fresh", directory), hostCatalog(hostId, "fresh")]).then(([project, global]) => {
+    void Promise.all([hostCatalog(hostId(), "fresh", directory), hostCatalog(hostId(), "fresh")]).then(([project, global]) => {
       if (cancelled) return;
       const stored = project.config.project;
 
@@ -75,11 +75,13 @@ export function EditProjectDialog(props: Props) {
       if (nameChanged() || cwdChanged()) await props.onSave(trimmedName(), cwd());
       const choice = agents();
 
-      if (choice && defaultAgentChanged()) await saveProjectAgents(hostId, cwd(), { revision: choice.revision, defaultAgent: defaultAgent() || null });
+      if (choice && defaultAgentChanged()) await saveProjectAgents(hostId(), cwd(), { revision: choice.revision, defaultAgent: defaultAgent() || null });
       setStep("saved");
     }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setStep("confirm"); }
   };
+
+  const chooseDirectory = async (path: string) => { setCwd(path); setError(undefined); setBrowsing(false); };
 
   const close = () => { if (step() !== "saving") props.onClose(); };
 
@@ -109,6 +111,6 @@ export function EditProjectDialog(props: Props) {
         <div class="dialog-actions"><button class="primary-button" autofocus onClick={close}>Done</button></div>
       </Match>
     </Switch>
-    <Show when={browsing()}><ProjectDialog initialPath={cwd()} hostId={hostId} onHomeDirectory={id => props.transport.homeDirectory(id)} onChooseDirectory={(path, id) => props.transport.listDirectories(id, path || undefined)} onOpen={async path => { setCwd(path); setError(undefined); setBrowsing(false); }} onCancel={() => setBrowsing(false)} /></Show>
+    <Show when={browsing()}><ProjectDialog initialPath={cwd()} hostId={hostId()} onHomeDirectory={id => props.transport.homeDirectory(id)} onChooseDirectory={(path, id) => props.transport.listDirectories(id, path || undefined)} onOpen={chooseDirectory} onCancel={() => setBrowsing(false)} /></Show>
   </dialog>;
 }

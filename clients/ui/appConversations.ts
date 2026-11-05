@@ -54,21 +54,22 @@ const removedSessionHost = (removed: RemovedSession) => removed.hostId ?? "local
 export type AppConversations = ReturnType<typeof createAppConversations>;
 
 export function createAppConversations(preloadChat: () => void, prepareTranscript: (transport: NativeTransport) => void = () => undefined) {
-  const runtimePool = createMemo(() => new SessionRuntimePool());
+  const sessionRuntimePool = new SessionRuntimePool();
+  const runtimePool = () => sessionRuntimePool;
   const initialTarget = initialWindowTarget();
   const drafts = createConversationDrafts(message => addNotice({ title: "Could not save drafts", message }));
 
-  const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialTarget); runtimePool().activate(initial);
-
-    return initial; })());
+  const initialTransport = sessionRuntimePool.create(initialTarget);
+  sessionRuntimePool.activate(initialTransport);
+  const [transport, setTransport] = createSignal(initialTransport);
 
   const [view, setView] = createSignal<"chat" | "settings">("chat");
-  const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
+  const activeTransportRef = createRef(initialTransport); createComputed(() => { activeTransportRef.current = transport(); });
   const initialConversationKey = createRef(initialTarget.draftKey ?? (initialTarget.sessionId ? `${initialTarget.hostId ?? "local"}:${initialTarget.sessionId}` : `${initialTarget.hostId ?? "local"}:draft-${crypto.randomUUID()}`));
   const [activeConversationKey, setActiveConversationKey] = createSignal(initialConversationKey.current);
   const chatViewKey = createConversationViewKey(transport, activeConversationKey, () => chatSubmission(transport())?.message);
-  const activeConversationKeyRef = createRef(activeConversationKey()); createComputed(() => { activeConversationKeyRef.current = activeConversationKey(); });
-  const transportConversationKeys = createRef(new Map<NativeTransport, string>([[transport(), initialConversationKey.current]]));
+  const activeConversationKeyRef = createRef(initialConversationKey.current); createComputed(() => { activeConversationKeyRef.current = activeConversationKey(); });
+  const transportConversationKeys = createRef(new Map<NativeTransport, string>([[initialTransport, initialConversationKey.current]]));
   const liveSessionRevision = () => runtimePool().liveSessionRevision();
 
   const liveSessions = createMemo(() => { liveSessionRevision();
@@ -93,16 +94,16 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const [query, setQuery] = createSignal("");
   const [connected, setConnected] = createSignal(false);
   const pendingSettingsCount = createSettingsPendingCount(connected);
-  const connectionReadyRef = createRef(connected()); createComputed(() => { connectionReadyRef.current = connected(); });
+  const connectionReadyRef = createRef(false); createComputed(() => { connectionReadyRef.current = connected(); });
   const updateConnected = (value: boolean) => { const owned = value && activeTransportRef.current.ownsConversation(); connectionReadyRef.current = owned; setConnected(owned); };
 
   const [error, setError] = createSignal<string>();
   const [createGroupRequest, setCreateGroupRequest] = createSignal(0);
   const handleCreateGroup = () => setCreateGroupRequest(0);
   const [newChatRequest, setNewChatRequest] = createSignal(0);
-  const [activeHostId, setActiveHostId] = createSignal((() => transport().currentHostId())());
-  const [activeCwd, setActiveCwd] = createSignal<string | undefined>((() => transport().currentCwd())());
-  const activeHostIdRef = createRef(activeHostId()); createComputed(() => { activeHostIdRef.current = activeHostId(); });
+  const [activeHostId, setActiveHostId] = createSignal(initialTransport.currentHostId());
+  const [activeCwd, setActiveCwd] = createSignal<string | undefined>(initialTransport.currentCwd());
+  const activeHostIdRef = createRef(initialTransport.currentHostId()); createComputed(() => { activeHostIdRef.current = activeHostId(); });
   const { codexUsage, anthropicUsage, opencodeGoBadge, opencodexUsage, usageClock, usageError, refreshUsage, refreshingUsage } = useAppUsage();
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
 
@@ -154,7 +155,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
   const [renameSession, setRenameSession] = createSignal<RenameTarget>();
   const [projectOpen, setProjectOpen] = createSignal(false);
-  const projectOpenRef = createRef(projectOpen()); createComputed(() => { projectOpenRef.current = projectOpen(); });
+  const projectOpenRef = createRef(false); createComputed(() => { projectOpenRef.current = projectOpen(); });
   const projectOpenRequest = createRef(0);
   const { composerDrafts, uploadsByTransport, setComposerDraft, setComposerUploads, transportHasDraft } = drafts;
   const draftSessions = drafts.draftSummaries;
@@ -163,7 +164,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
     if (current) drafts.configureHosts(current);
   }, () => [settings()]);
-  drafts.bindTransport(transport(), initialConversationKey.current);
+  drafts.bindTransport(initialTransport, initialConversationKey.current);
   createDependencyEffect(() => drafts.bindTransport(transport(), activeConversationKey()), () => [transport(), activeConversationKey(), activeCwd(), connected()]);
   const newSessionPending = createRef(false);
   const abortPending = createRef(new Set<NativeTransport>());
@@ -216,7 +217,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
     location: () => ({ cwd: activeCwd() ?? sessions().find(session => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId())?.cwd, hostId: activeHostId() }),
   });
 
-  const { terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, conversationTerminalIds, queueTerminalOutput, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal } = terminals;
+  const { terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, conversationTerminalIds, queueTerminalOutput, startTerminal, addTerminal, selectTerminal, deleteTerminal } = terminals;
   const reconnectPending = createRef(new Set<NativeTransport>());
   useSessionResume(() => {
     const saved = chatSession().state.messageCount > 0;
@@ -397,13 +398,9 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   };
 
   useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, openAuxiliaryRequest, openChatAgentRequest, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
-  createDependencyEffect(() => {
-    const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
-    const shutdown = () => { for (const id of terminals.draftTerminalIds()) void capturedTransport.closeTerminal(id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); };
-
-    window.addEventListener("pagehide", shutdown);
-
-    return () => window.removeEventListener("pagehide", shutdown); }, () => [runtimePool(), transport()]);
+  const shutdown = () => { const client = transport(); for (const id of terminals.draftTerminalIds()) void client.closeTerminal(id).catch(() => undefined); void sessionRuntimePool.disconnectAll(); };
+  window.addEventListener("pagehide", shutdown);
+  onCleanup(() => window.removeEventListener("pagehide", shutdown));
   createDependencyEffect(() => {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
     capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
@@ -539,13 +536,17 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
     if (!target) return;
     owner.setNewChatGroup(target.id);
-    runtimePool().onFirstPrompt(owner, key => updateSessionGroups(target.cwd ? { type: "project", key, project: target } : { type: "assign", key, group: target.id })
-      .then(() => undefined, reason => { addNotice({ title: "Could not add chat to group", message: reason instanceof Error ? reason.message : String(reason) }); }));
+    const assignFirstPrompt = (key: string) => updateSessionGroups(target.cwd ? { type: "project", key, project: target } : { type: "assign", key, group: target.id })
+      .then(() => undefined, reason => { addNotice({ title: "Could not add chat to group", message: reason instanceof Error ? reason.message : String(reason) }); });
+    runtimePool().onFirstPrompt(owner, assignFirstPrompt);
   };
 
   const existingSessionDraft = () => {
-    const onHost = (draft: SessionSummary) => (draft.hostId ?? "local") === activeHostId() ? 0 : 1;
-    const candidates = [...draftSessions()].sort((left, right) => onHost(left) - onHost(right) || (right.lastMessageAt ?? 0) - (left.lastMessageAt ?? 0));
+    const hostId = activeHostId(); const onHost: SessionSummary[] = []; const offHost: SessionSummary[] = [];
+
+    for (const draft of draftSessions()) ((draft.hostId ?? "local") === hostId ? onHost : offHost).push(draft);
+    const byRecent = (left: SessionSummary, right: SessionSummary) => (right.lastMessageAt ?? 0) - (left.lastMessageAt ?? 0);
+    const candidates = [...onHost.sort(byRecent), ...offHost.sort(byRecent)];
 
     return candidates.find(draft => draft.isDraft && (!isSelectedSession(draft) || currentSessionIsDraft()) && !runningSessions().has(`${draft.hostId ?? "local"}:${draft.id}`) && ![...sessions(), ...liveSessions()].some(saved => saved.messageCount > 0 && (saved.hostId ?? "local") === (draft.hostId ?? "local") && (saved.id === draft.id || Boolean(draft.path && saved.path === draft.path))));
   };
@@ -579,7 +580,7 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const createNewSessionDraft = async (clearProject: boolean, group?: SessionGroup, project?: { cwd: string; hostId: string }, host?: string, fresh = false) => {
     closeMobileSidebar();
     setArchivesOpen(false);
-    const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
+    const ownerTransport = activeTransportRef.current; const ownerKey = activeConversationKeyRef.current;
     const request = projectOpenRequest.current;
     const isCurrent = () => (!project || projectOpenRef.current && projectOpenRequest.current === request) && activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey;
     const capturedSession = { ...chatSession() }; const pool = runtimePool();
@@ -698,7 +699,8 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
     const nextTransport = runtimePool().forSession(session);
     const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); drafts.bindTransport(nextTransport, conversationKey);
-    switchChat(nextTransport, transport, () => { activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport); });
+    const showSession = () => { activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd || undefined); activateTransport(nextTransport); };
+    switchChat(nextTransport, transport, showSession);
 
     return nextTransport;
   };
@@ -788,16 +790,14 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
   const toggleTerminal = () => {
     if (!canLeaveSettings()) return;
     setView("chat");
-    terminals.toggle(() => {
-      const split = activePane() === "split" ? splitPane()?.session : undefined;
-
-      return split ? { sessionKey: `${split.hostId ?? "local"}:${split.id}`, cwd: split.cwd, hostId: split.hostId ?? "local" }
-        : { sessionKey: activeConversationKeyRef.current, cwd: selectedProjectCwd(activeCwd(), transport().isTemporaryChat()), hostId: activeHostIdRef.current };
-    });
+    const split = activePane() === "split" ? splitPane()?.session : undefined;
+    const target = split ? { sessionKey: `${split.hostId ?? "local"}:${split.id}`, cwd: split.cwd, hostId: split.hostId ?? "local" }
+      : { sessionKey: activeConversationKeyRef.current, cwd: selectedProjectCwd(activeCwd(), transport().isTemporaryChat()), hostId: activeHostIdRef.current };
+    terminals.toggle(target);
   };
 
   const reconnectMain = () => {
-    const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
+    const ownerTransport = activeTransportRef.current; const ownerKey = activeConversationKeyRef.current;
 
     if (reconnectPending.current.has(ownerTransport)) return; reconnectPending.current.add(ownerTransport); setError(undefined); updateConnected(false);
     void ownerTransport.connect().then(() => ownerTransport.loadSettings()).then((value) => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey ? configureRuntime(value) : undefined).then(async () => {
@@ -841,22 +841,21 @@ export function createAppConversations(preloadChat: () => void, prepareTranscrip
 
   const chatModels = createMemo(() => modelVisibility.visibleModels(activeHostId(), chatSession().models));
 
-  const heldWhileLoading = <T,>(ready: () => boolean, live: () => T) => {
+  const createHeldWhileLoading = <T,>(ready: () => boolean, live: () => T) => {
     let last: { value: T } | undefined;
 
     return createMemo(() => { const value = live(); if (ready() || !last) last = { value }; return last.value; });
   };
   const fastStatusKey = "pi-desktop-fast-mode";
   const liveComposerState = () => composerControls.state(chatSession().state);
-  const heldPrompt = heldWhileLoading(connected, () => { const state = liveComposerState(); return { model: state.model, thinkingLevel: state.thinkingLevel, contextUsage: state.contextUsage }; });
-  const heldFastStatus = heldWhileLoading(connected, () => composerControls.statuses(extensionStateIsCurrent() ? statuses() : {}, liveComposerState().model)[fastStatusKey] as string | undefined);
-  const composerView = {
-    state: createMemo(() => { const state = liveComposerState(); const held = heldPrompt(); return connected() ? state : { ...state, ...held }; }),
-    agentProps: heldWhileLoading(() => connected() && extensionStateIsCurrent(), chatAgentProps),
-    models: heldWhileLoading(connected, chatModels),
-    thinkingLevels: heldWhileLoading(connected, () => composerControls.thinkingLevels(chatSession().thinkingLevels)),
-    statuses: createMemo(() => { const { [fastStatusKey]: _fast, ...rest } = composerControls.statuses(extensionStateIsCurrent() ? statuses() : {}, liveComposerState().model); const fast = heldFastStatus(); return fast === undefined ? rest : { ...rest, [fastStatusKey]: fast }; }),
-  };
+  const heldPrompt = createHeldWhileLoading(connected, () => { const state = liveComposerState(); return { model: state.model, thinkingLevel: state.thinkingLevel, contextUsage: state.contextUsage }; });
+  const heldFastStatus = createHeldWhileLoading(connected, () => composerControls.statuses(extensionStateIsCurrent() ? statuses() : {}, liveComposerState().model)[fastStatusKey] as string | undefined);
+  const composerViewState = createMemo(() => { const state = liveComposerState(); const held = heldPrompt(); return connected() ? state : { ...state, ...held }; });
+  const composerAgentProps = createHeldWhileLoading(() => connected() && extensionStateIsCurrent(), chatAgentProps);
+  const composerModels = createHeldWhileLoading(connected, chatModels);
+  const composerThinkingLevels = createHeldWhileLoading(connected, () => composerControls.thinkingLevels(chatSession().thinkingLevels));
+  const composerStatuses = createMemo(() => { const { [fastStatusKey]: _fast, ...rest } = composerControls.statuses(extensionStateIsCurrent() ? statuses() : {}, liveComposerState().model); const fast = heldFastStatus(); return fast === undefined ? rest : { ...rest, [fastStatusKey]: fast }; });
+  const composerView = { state: composerViewState, agentProps: composerAgentProps, models: composerModels, thinkingLevels: composerThinkingLevels, statuses: composerStatuses };
   const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands);
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const dirlessPending = new Set<string>();

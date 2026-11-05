@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal, Show } from "solid-js";
+import { createMemo, createSignal, For, Index, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { DeleteArchivesDialog } from "./DeleteArchivesDialog";
 import { createDependencyEffect, createRef } from "../lib/solid";
@@ -203,14 +203,14 @@ export function StorageSettings(componentProps: { hostId?: string }) {
             <button type="button" class="storage-category-icon storage-directory-button" aria-label={`Open ${details().name} ${directories().length > 1 ? "directories" : "directory"}`} aria-expanded={directories().length > 1 ? showDirectories() : undefined} data-tooltip={directoryTitle(host().hostId, directories())} disabled={host().hostId !== "local" || !directories().length} onClick={openCategory}><Dynamic component={CategoryIcon()} size={15} /></button>
             <span><strong>{details().name}</strong><small>{details().description} · {itemCount(category())}</small><small>{categoryAccounting(category())}</small><i><b style={{ width: `${Math.max(category().byteSize ? 2 : 0, category().byteSize / maximum() * 100)}%` }} /></i></span>
             <code>{categorySize(category())}</code>
-            {showDirectories() && <div class="storage-directory-list" aria-label={`${details().name} directories`}>{directories().map((directory) => <button type="button" data-tooltip={directory} onClick={() => void openDirectory(directory, host())}>{directory}</button>)}</div>}
+            <Show when={showDirectories()}><div class="storage-directory-list" aria-label={`${details().name} directories`}><For each={directories()}>{(directory) => <button type="button" data-tooltip={directory} onClick={() => void openDirectory(directory, host())}>{directory}</button>}</For></div></Show>
           </div>;
         }}</Key>}</div>
       );
 
       const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
-        {host().warnings.length > 0 && <div class="storage-warning"><details><summary>Storage coverage is incomplete · {host().warnings.length} warning{host().warnings.length === 1 ? "" : "s"}</summary>{host().warnings.map(warning => <p>{warning}</p>)}</details></div>}
-        {storageSections.map((section) => {
+        {host().warnings.length > 0 && <div class="storage-warning"><details><summary>Storage coverage is incomplete · {host().warnings.length} warning{host().warnings.length === 1 ? "" : "s"}</summary><Index each={host().warnings}>{warning => <p>{warning()}</p>}</Index></details></div>}
+        <For each={storageSections}>{(section) => {
           const categories = createMemo(() => section.categories.flatMap((id) => host().categories.filter((category) => category.id === id)));
           const subtotal = createMemo(() => categories().reduce((sum, category) => sum + countedBytes(category), 0));
           const estimated = createMemo(() => categories().some((category) => category.estimated && category.byteSize > 0));
@@ -235,7 +235,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
               }}</Key>}</div>}
             </>}
           </section>;
-        })}
+        }}</For>
       </Show>);
 
       return <section class="storage-host" >

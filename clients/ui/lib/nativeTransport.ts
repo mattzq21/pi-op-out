@@ -1,6 +1,6 @@
 import { hostModelConnected } from "./modelReports";
 import { DraftRuntime } from "./draftRuntime";
-import { agentStateSchema, sessionGroupsSchema, voidResultSchema, storageReportSchema, rpcEventSchema, sessionSummarySchema, providerUsageSchema, directoryListingSchema } from "./responseSchemas";
+import { agentStateSchema, voidResultSchema, rpcEventSchema } from "./responseSchemas";
 import { z } from "zod";
 import { jsonResultSchema } from "./transportSchemas";
 import { commandSessionSchema, runtimeEventSchema, runtimeStderrSchema, type CommandSession } from "./rpcSchemas";
@@ -385,7 +385,7 @@ export class NativeTransport {
       });
     }
 
-    for (const listener of [...this.listeners]) {
+    for (const listener of Array.from(this.listeners)) {
       try {
         listener(event);
       } catch (reason) {

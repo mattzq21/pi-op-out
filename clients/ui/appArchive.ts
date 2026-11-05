@@ -46,21 +46,20 @@ export function createConversationArchive(context: ArchiveContext) {
   const ownsSelectedSession = (owner: NativeTransport, session: SessionSummary) => owner === transport() && isSelectedSession(session);
   const ownsConversationUi = (owner: NativeTransport, key: string) => activeTransportRef.current === owner && activeConversationKeyRef.current === key;
 
-  const archiveTarget = (session: SessionSummary, key: string) => {
-    if (archivePending().has(key)) return;
-
+  const archiveTarget = (session: SessionSummary, pool: SessionRuntimePool) => {
     if (session.isDraft || !session.path) {
       addNotice({ title: "Conversation is not saved yet", message: "Send a message before archiving this draft." });
 
       return;
     }
 
-    return runtimePool().forSession(session);
+    return pool.forSession(session);
   };
 
   const archiveSession = async (session: SessionSummary) => { const capturedRuntimePool = runtimePool(); const capturedSession = { ...chatSession() }; const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
     const archivedSessionKey = `${session.hostId ?? "local"}:${session.id}`;
-    const ownerTransport = archiveTarget(session, archivedSessionKey);
+    if (archivePending().has(archivedSessionKey)) return;
+    const ownerTransport = archiveTarget(session, capturedRuntimePool);
 
     if (!ownerTransport) return;
     setArchivePending(current => new Set(current).add(archivedSessionKey));

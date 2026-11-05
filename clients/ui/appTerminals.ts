@@ -130,11 +130,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
   const ready = () => chatStarted() && readySession() === terminalSessionId();
   let refreshShared = async () => {};
 
-  createEffect(() => {
-    const key = terminalSessionId();
-    const hostId = terminalLocationState().terminalHostId;
-
-    if (!terminalLocationState().terminalCwd || !chatStarted()) return;
+  const syncSharedTerminals = (key: string, hostId: string) => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let dirty = false;
@@ -267,6 +263,14 @@ export function createTerminalController({ transport, sessionTransport, conversa
       void refresh();
     }).catch(reason => { if (!cancelled) addNotice({ title: "Could not subscribe to terminals", message: reason instanceof Error ? reason.message : String(reason) }); });
     onCleanup(() => { cancelled = true; unlisten?.(); dismissError?.(); buffered = []; setReadySession(undefined); });
+  };
+
+  createEffect(() => {
+    const key = terminalSessionId();
+    const location = terminalLocationState();
+
+    if (!location.terminalCwd || !chatStarted()) return;
+    syncSharedTerminals(key, location.terminalHostId);
   });
 
   const takeOwnership = async () => {
@@ -442,9 +446,8 @@ export function createTerminalController({ transport, sessionTransport, conversa
     setTerminalTarget(target); setTerminalOpen(!closing, target.sessionKey);
   };
 
-  const toggle = (target: () => TerminalTarget) => {
+  const toggle = (next: TerminalTarget) => {
     if (terminalOpen()) { void close(); return; }
-    const next = target();
     if (!chatStartedFor(next.sessionKey)) return;
     terminalPanelRevision.current += 1;
     composerFocus.delete(next.sessionKey);
@@ -529,9 +532,11 @@ export function createTerminalController({ transport, sessionTransport, conversa
     void nativeTerminals.write(state.activeTerminal.id, "", "adopt_draft").catch(reason => addNotice({ title: "Could not restore terminal input", message: reason instanceof Error ? reason.message : String(reason) }));
   }, () => [terminalOpen(), ready(), owned(), state.activeTerminal.id, state.activeTerminal.inputDraft]);
 
+  const viewKey = createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`);
+
   return {
     terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, prepareTerminal, owned, takeOwnership,
-    viewKey: createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`),
+    viewKey,
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
     forgetConversation, removeConversationTerminals, resetConversation, rekeyConversation,

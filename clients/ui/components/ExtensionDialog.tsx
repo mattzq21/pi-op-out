@@ -1,11 +1,11 @@
-import { createSignal, createUniqueId, Index } from "solid-js";
+import { createSignal, createUniqueId, Index, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import type { ExtensionUiRequest, ExtensionUiResponse } from "../types";
 import { stringsSchema } from "../lib/messageSchemas";
 
 export function ExtensionDialog(componentProps: { request: ExtensionUiRequest; owner?: string; selectPrefill?: boolean; onRespond: (response: ExtensionUiResponse) => void | Promise<void> }) {
-  const [value, setValue] = createSignal(componentProps.request.prefill ?? "");
+  const [value, setValue] = createSignal(untrack(() => componentProps.request.prefill) ?? "");
   const [responseError, setResponseError] = createSignal<string>();
   const [responding, setResponding] = createSignal(false);
   const respondingRef = createRef(false);

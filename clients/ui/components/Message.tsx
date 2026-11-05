@@ -6,7 +6,7 @@ import { ConversationHostContext } from "../lib/subagentNavigation";
 import { AgentDelivery } from "./AgentDelivery";
 import { GoalPrompt } from "./GoalPrompt";
 import { Key } from "@solid-primitives/keyed";
-import { type Accessor, createMemo, createSignal, Index, onCleanup, Show, useContext } from "solid-js";
+import { type Accessor, createMemo, createSignal, Index, onCleanup, Show, untrack, useContext } from "solid-js";
 import { formatDuration, formatElapsed } from "../lib/duration";
 import { ConversationImageProject } from "./markdownImages";
 import { createDependencyEffect, createRef } from "../lib/solid";
@@ -124,7 +124,7 @@ function responseFailure(message: ChatMessage) {
   return { failure };
 }
 
-function responseMetadata(message: Accessor<ChatMessage>, turnCacheUsage: Accessor<Props['turnCacheUsage']>) {
+function createResponseMetadata(message: Accessor<ChatMessage>, turnCacheUsage: Accessor<Props['turnCacheUsage']>) {
   const timestamp = createMemo(() => message().timestamp);
   const completedAt = createMemo(() => message().completedAt ?? timestamp());
   const id = createMemo(() => message().id);
@@ -175,7 +175,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
       {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)} <button onClick={componentProps.retry}>Retry</button></div>}
-    {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "") ? <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" /> : null}</Index>}
+    {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => <Show when={part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "")}><ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" /></Show>}</Index>}
     {needsLoad() && <button onClick={componentProps.retry}>Load input and output</button>}
   </>;
 }
@@ -191,7 +191,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount"> & { deb
   let failed: { version?: number; retry: number } | undefined;
   let evictedAt: number | undefined;
   createDependencyEffect(() => {
-    const retryAttempt = retry();
+    const retryAttempt = untrack(retry);
     if (failed && (failed.version !== componentProps.message.toolPayloadVersion || failed.retry !== retryAttempt)) failed = undefined;
 
     if (!open()) return;
@@ -310,7 +310,7 @@ export function Message(componentProps: Props) {
     const output = createMemo(() => (textOf(componentProps.message.content)));
     const thinking = createMemo(() => (thinkingOf(componentProps.message.content)));
     const streaming = createMemo(() => componentProps.message.streaming);
-    const metadata = responseMetadata(() => componentProps.message, () => componentProps.turnCacheUsage);
+    const metadata = createResponseMetadata(() => componentProps.message, () => componentProps.turnCacheUsage);
     const failureState = createMemo(() => (responseFailure(componentProps.message)));
     const forkActions = createForkActions(componentProps);
 

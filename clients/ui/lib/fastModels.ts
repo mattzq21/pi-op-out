@@ -30,7 +30,7 @@ export function hostFastModels(hostId: string): Accessor<FastModelSnapshot | und
   if (!watching) {
     watching = true;
     void listen("pi://fast-models-changed", ({ payload }) => load(payload.hostId), z.object({ hostId: z.string() }));
-    void listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") for (const hostId of [...failed]) load(hostId); }, z.object({ type: z.string().optional() }).catch({}));
+    void listen("pi://event", ({ payload }) => { if (payload.type === "connection_restored") for (const hostId of Array.from(failed)) load(hostId); }, z.object({ type: z.string().optional() }).catch({}));
   }
 
   let entry = hosts.get(hostId);

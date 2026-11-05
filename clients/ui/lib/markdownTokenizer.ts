@@ -26,7 +26,7 @@ export const markdownHooks: HooksObject = {
 function emailFreeSource(lexer: Lexer, source: string) {
   if (lexer instanceof MarkdownLexer && lexer.emailFree) return true;
 
-  return /^[\s\S]?[a-zA-Z0-9.!#$%&'*+\/=?_`{|}~-]{64}/.test(source) && !source.includes("@");
+  return /^[\s\S]?[a-zA-Z0-9.!#$%&'*+/=?_`{|}~-]{64}/.test(source) && !source.includes("@");
 }
 
 class FirstLineRule extends RegExp {

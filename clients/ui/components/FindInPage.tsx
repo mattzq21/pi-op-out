@@ -1,5 +1,5 @@
 import { required } from "../lib/required";
-import { createSignal, Index } from "solid-js";
+import { createSignal, Index, untrack } from "solid-js";
 import { createDependencyEffect, createRef, cssPixels } from "../lib/solid";
 
 import { ArrowDown, ArrowUp, Search, X } from "lucide-solid";
@@ -206,7 +206,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
     selected.current = matches()[next]; setIndex(next); reveal(matches()[next].range);
   };
 
-  createDependencyEffect(() => { const capturedOpen = open(); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector; const capturedActive2 = componentProps.active;
+  createDependencyEffect(() => { const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector; const capturedActive2 = componentProps.active;
     const enabled = capturedEnabled0 ?? true;
     const active = capturedActive2 ?? true;
 
@@ -219,12 +219,12 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
       if (isFindShortcut(event)) {
         event.preventDefault(); event.stopImmediatePropagation();
 
-        if (!capturedOpen) rememberFocus();
+        if (!open()) rememberFocus();
         setOpen(true);
         requestAnimationFrame(() => { input.current?.focus(); input.current?.select(); });
-      } else if (capturedOpen && event.key === "Escape") {
+      } else if (open() && event.key === "Escape") {
         event.preventDefault(); event.stopImmediatePropagation(); close();
-      } else if (capturedOpen && event.key === "F3") {
+      } else if (open() && event.key === "F3") {
         event.preventDefault(); event.stopImmediatePropagation(); move(event.shiftKey ? -1 : 1);
       }
     };
@@ -232,7 +232,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
     window.addEventListener("keydown", onKey, true);
 
     return () => window.removeEventListener("keydown", onKey, true);
-  }, () => [open(), close, move, componentProps.selector, (componentProps.active === undefined ? true : componentProps.active), (componentProps.enabled === undefined ? true : componentProps.enabled)]);
+  }, () => [componentProps.selector, (componentProps.active === undefined ? true : componentProps.active), (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 
   createDependencyEffect(() => {
     const root = document.querySelector<HTMLElement>(componentProps.selector);
@@ -248,7 +248,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
     };
   }, () => [open(), componentProps.enabled, componentProps.selector, componentProps.scopeKey]);
 
-  createDependencyEffect(() => { const capturedOpen = open(); const capturedQuery = query(); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector;
+  createDependencyEffect(() => { const capturedOpen = open(); const capturedQuery = untrack(query); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector;
 
     if (!capturedOpen || !(capturedEnabled0 === undefined ? true : capturedEnabled0)) { setMatches([]); setBoxes([]);
 
@@ -287,7 +287,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
     return () => { observer.disconnect(); window.clearTimeout(timer); };
   }, () => [open(), query(), componentProps.selector, componentProps.scopeKey, (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 
-  createDependencyEffect(() => { const capturedOpen = open(); const capturedMatches = matches(); const capturedIndex = index(); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector;
+  createDependencyEffect(() => { const capturedOpen = open(); const capturedMatches = untrack(matches); const capturedIndex = untrack(index); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector;
 
     if (!capturedOpen || !(capturedEnabled0 === undefined ? true : capturedEnabled0)) return;
     let frame = 0;

@@ -167,10 +167,16 @@ export function ImageLoading() {
   return <span class="image-loading" role="status"><LoaderCircle size={18} aria-hidden="true" /><span>Loading image…</span></span>;
 }
 
-export function ZoomableImage(props: { src: string; alt: string; onError?: () => void }) {
+type ZoomableImageProps = { src: string; alt: string; onError?: () => void };
+
+export function ZoomableImage(props: ZoomableImageProps) {
   const gallery = useContext(ImageGalleryContext);
 
-  if (!gallery) return <ImageGallery><ZoomableImage {...props} /></ImageGallery>;
+  return <Show when={gallery} fallback={<ImageGallery><ZoomableImage {...props} /></ImageGallery>}><GalleryPreview {...props} /></Show>;
+}
+
+function GalleryPreview(props: ZoomableImageProps) {
+  const gallery = required(useContext(ImageGalleryContext));
   const [state, setState] = createSignal<"loading" | "ready" | "error">("loading");
   let preview: HTMLButtonElement | undefined;
   const image: GalleryImage = { src: () => props.src, alt: () => props.alt, ready: () => state() === "ready", element: () => preview };
