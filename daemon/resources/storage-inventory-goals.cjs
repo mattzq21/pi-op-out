@@ -63,7 +63,7 @@ async function recordClaims(profile, record, discovery) {
 
   try {
     record.identity = await directoryIdentity(record.path);
-    const file = path.join(profile, 'sessions.sqlite');
+    const file = require('./session-database.cjs').databaseFile(profile);
     const claims = require('./piop-storage/goal-ownership.cjs').read(profile, record.path);
 
     if (claims === undefined) return;

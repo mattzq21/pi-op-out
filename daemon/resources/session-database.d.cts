@@ -3,6 +3,9 @@ import type { DatabaseSync } from "node:sqlite";
 // The shared connection of this process. Never close it.
 export type Connection = Omit<DatabaseSync, "close">;
 
+export const DATABASE_NAME: string;
+export function databaseFile(root: string): string;
+export function databaseExists(root: string): boolean;
 export function readOnlyStorage(): void;
 export function connection(root: string): Connection;
 export function transaction<T>(database: Connection, behavior: "IMMEDIATE" | "DEFERRED" | "EXCLUSIVE", operation: () => T): T;

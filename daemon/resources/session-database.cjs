@@ -3,6 +3,20 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { onMainThread, holdTransaction } = require('./main-thread.cjs');
 
+const DATABASE_NAME = 'sessions.sqlite';
+
+// The storage database file of root.
+function databaseFile(root) { return path.join(path.resolve(root), DATABASE_NAME); }
+
+// True when the storage database of root exists, false when it does not. Throws when it is not a regular file.
+function databaseExists(root) {
+  const file = databaseFile(root);
+  const metadata = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!metadata) return false;
+  if (!metadata.isFile()) throw new Error(`Storage database is not a regular file: ${file}`);
+  return true;
+}
+
 function rollback(db, error) {
   if (!db.isTransaction) return error;
 
@@ -192,7 +206,7 @@ const createDatabase = onMainThread('session-database.create', root => { connect
 // A database file that was replaced or removed gets a new connection, so no write goes to a deleted file.
 function connection(root) {
   const directory = path.resolve(root);
-  const file = path.join(directory, 'sessions.sqlite');
+  const file = databaseFile(directory);
   const cached = connections.get(file);
   const current = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
 
@@ -258,7 +272,7 @@ function directoryQuery(_db, columns, suffix = '') {
 }
 
 const movePaths = onMainThread('session-database.movePaths', (root, moves) => {
-  if (!fs.existsSync(path.join(root, 'sessions.sqlite'))) return;
+  if (!databaseExists(root)) return;
   const db = connection(root);
 
   transaction(db, 'IMMEDIATE', () => {
@@ -410,5 +424,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
+module.exports = { DATABASE_NAME, databaseFile, databaseExists, readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, movePaths, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, markCleanup, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

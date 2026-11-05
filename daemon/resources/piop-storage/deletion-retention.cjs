@@ -225,14 +225,11 @@ function retainPublications(root, candidates, retained, inventory) {
 
 function cleanupRegistry(root, sessionIds) {
   if (!sessionIds.length) return [];
-  const database = path.join(root, 'sessions.sqlite');
-  const info = metadata(database);
+  const tables = require('../session-database.cjs');
 
-  if (!info) return [...sessionIds];
+  if (!tables.databaseExists(root)) return [...sessionIds];
 
-  if (!info.isFile()) throw new Error('Invalid session directory registry');
-
-  return removeRegistryRows(require('../session-database.cjs').connection(root), sessionIds);
+  return removeRegistryRows(tables.connection(root), sessionIds);
 }
 
 function removeRegistryRows(db, sessionIds) {

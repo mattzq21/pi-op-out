@@ -1,5 +1,3 @@
-const fs = require('node:fs');
-const path = require('node:path');
 const database = require('./session-database.cjs');
 const { onMainThread } = require('./main-thread.cjs');
 
@@ -28,7 +26,7 @@ function get(db, name) { return body(db.prepare('SELECT body FROM application_se
 // The record name of root, or undefined when it or the storage database does not exist.
 function read(root, name) {
   checked(name);
-  if (!fs.existsSync(path.join(root, 'sessions.sqlite'))) return undefined;
+  if (!database.databaseExists(root)) return undefined;
   return get(database.connection(root), name);
 }
 

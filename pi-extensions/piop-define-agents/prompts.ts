@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import fs from "node:fs";
 import * as storageDatabase from "../../daemon/resources/session-database.cjs";
 import { call } from "../../daemon/resources/storage-channel.cjs";
 import { bodyText, DEFINITIONS, isNamedAgent, revisionOf, saveConfig, saveMove, saveProject } from "../../daemon/resources/agent-definitions-writes.mjs";
@@ -44,13 +43,7 @@ export const storageRoot = process.env.PIOP_STORAGE_ROOT || dirname(dirname(file
 export const agentDirectory = join(storageRoot, "piop-define-agents");
 
 function readRow(root: string, sql: string, key: string): Record<string, unknown> | undefined {
-  const path = join(root, "sessions.sqlite");
-  let metadata;
-
-  try { metadata = fs.lstatSync(path); }
-  catch (error) { if (hasErrorCode(error, "ENOENT")) return undefined; throw error; }
-
-  if (!metadata.isFile()) throw new Error("Settings database is not a regular file");
+  if (!storageDatabase.databaseExists(root)) return undefined;
 
   return storageDatabase.connection(root).prepare(sql).get(key) as Record<string, unknown> | undefined;
 }

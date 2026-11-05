@@ -31,11 +31,11 @@ function addRoot(roots, target, provenance, ownership = 'referenced', owners = [
 
 
 async function readRegistry(profile, discovery) {
-  const database = path.join(profile, 'sessions.sqlite');
+  const tables = require('./session-database.cjs');
+  const database = tables.databaseFile(profile);
 
   try {
     await fs.lstat(database);
-    const tables = require('./session-database.cjs');
     const db = tables.connection(profile);
     const rows = db.prepare(tables.directoryQuery(db, ['session_id', 'session_path', 'cwd'])).all();
 
