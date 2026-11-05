@@ -12,4 +12,3 @@ export function pending(database: Connection, work: "recovery" | "retention"): b
 export function register(database: Connection, sessionId: string, sessionPath: string): void;
 export function storageRoot(file: string): string;
 export function lookup(root: string, sessionId: string): string | null | undefined;
-export function markCleanup(root: string, kind: "goal"): void;

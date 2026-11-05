@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { closeSync, constants, existsSync, mkdirSync, openSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -19,8 +19,7 @@ beforeAll(async () => {
     history: await import('../../daemon/src/chat_branch_history'),
     publication: require('../../daemon/resources/piop-storage/session-publication.cjs'),
     database: require('../../daemon/resources/session-database.cjs'),
-    assets: require('../../daemon/resources/piop-storage/goal-assets.cjs'),
-    dependencies: require('../../daemon/resources/piop-storage/goal-dependencies.cjs'),
+    goalFiles: require('../../daemon/resources/piop-storage/goal-files.cjs'),
     goals: require('../../daemon/resources/piop-storage/goals.cjs'),
     records: require('../../daemon/resources/piop-storage/session-records.cjs'),
     names: require('../../daemon/resources/session-broker/session-names.cjs'),
@@ -36,18 +35,17 @@ afterAll(() => {
 const text = (value: string) => [{ type: 'text', text: value }];
 const message = (id: string, parentId: string | null, role: string, content: any, extra: any = {}) => ({ type: 'message', id, parentId, timestamp: new Date().toISOString(), message: { role, content, timestamp: 1, ...extra } });
 
-async function sourceChat() {
-  const { database, dependencies, publication, lock, goals } = modules;
-  const attachment = join(root, 'sessions', 'project', 'attachments', 'goal-' + randomUUID().replace(/-/g, '').slice(0, 6));
-  mkdirSync(attachment, { recursive: true });
-  writeFileSync(join(attachment, 'goal-objective.md'), 'Ship it');
-  dependencies.saveTextFiles(root, attachment, ['goal-objective.md']);
+// A goal objective long enough to reach the agent as a goal file.
+const OBJECTIVE = 'Keep going. ' + 'x'.repeat(5000);
+
+async function sourceChat(objective = OBJECTIVE) {
+  const { database, publication, lock, goals } = modules;
   const cwd = join(home, 'project');
   mkdirSync(cwd, { recursive: true });
   const id = database.reserve(root);
   const path = join(root, 'sessions', 'project', '2026-10-20T00-00-00-000Z_' + id + '.jsonl');
   const entries = [
-    message('u1', null, 'user', text('Read ' + attachment + '/goal-objective.md')),
+    message('u1', null, 'user', text('Ship it')),
     message('a1', 'u1', 'assistant', text('First answer'), { stopReason: 'stop' }),
     message('u2', 'a1', 'user', text('More')),
     message('a2', 'u2', 'assistant', [{ type: 'toolCall', id: 'call', name: 'bash', arguments: {} }], { stopReason: 'toolUse' }),
@@ -62,15 +60,13 @@ async function sourceChat() {
     const release = lock.acquireReferencePublicationLock(root, true);
     try { return await operation(); } finally { release(); }
   }, { name: 'Source', dependencies: { workspace: { path: cwd, kind: 'existing' } } });
-  goals.write(path, id, { id: randomUUID(), sessionId: id, objective: 'Keep going', status: 'active' });
-  return { id, path, cwd, attachment, entries: [...entries, ...current] };
+  goals.write(path, id, { id: randomUUID(), sessionId: id, objective, status: 'active' });
+  return { id, path, cwd, entries: [...entries, ...current] };
 }
 
 async function deleteChat(path: string) {
   return modules.locks.withinFlow(() => modules.lifecycle.run({ root, begin: () => true }, { action: 'delete', sessionIds: [modules.lifecycle.idOf(root, path)] }));
 }
-
-function owners(directory: string) { return modules.assets.readOwners(root, directory).owners.map((owner: any) => owner.sessionId).sort(); }
 
 function registered(id: string) {
   const db = modules.database.connection(root);
@@ -89,7 +85,7 @@ function leftovers(id: string, path: string) {
   };
 }
 
-test('a branch copies history through the selected final response, current settings and shared attachments, and discarding it leaves the source intact', async () => {
+test('a branch copies history through the selected final response, current settings and the goal, and discarding it leaves the source intact', async () => {
   const source = await sourceChat();
   const sourceBody = readFileSync(source.path, 'utf8');
   const sessionId = modules.database.reserve(root);
@@ -105,15 +101,12 @@ test('a branch copies history through the selected final response, current setti
   expect(settings.map((entry: any) => entry.customType ?? entry.type).sort()).toEqual(['piop-input-hold', 'thinking_level_change']);
   expect(settings.find((entry: any) => entry.customType === 'piop-input-hold').data).toEqual({ held: true });
   expect(settings.find((entry: any) => entry.type === 'thinking_level_change').thinkingLevel).toBe('high');
-  expect(modules.goals.read(result.sessionPath, sessionId)).toMatchObject({ objective: 'Keep going', sessionId });
-  expect(owners(source.attachment)).toEqual([source.id, sessionId].sort());
+  expect(modules.goals.read(result.sessionPath, sessionId)).toMatchObject({ objective: OBJECTIVE, sessionId });
 
   await modules.history.discardBranchHistory(root, sessionId, result.sessionPath);
   expect(leftovers(sessionId, result.sessionPath)).toMatchObject({ transcript: false, registry: false, goal: false, state: 0, journals: 0 });
-  expect(owners(source.attachment)).toEqual([source.id]);
-  expect(existsSync(join(source.attachment, 'goal-objective.md'))).toBe(true);
   expect(readFileSync(source.path, 'utf8')).toBe(sourceBody);
-  expect(modules.goals.read(source.path, source.id)).toMatchObject({ objective: 'Keep going' });
+  expect(modules.goals.read(source.path, source.id)).toMatchObject({ objective: OBJECTIVE });
 
   await modules.history.discardBranchHistory(root, sessionId, result.sessionPath);
   await modules.history.discardBranchHistory(root, sessionId, null);
@@ -134,7 +127,6 @@ test('a publication that fails after claiming resources removes everything it cr
   const files = readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId));
   expect(files).toEqual([]);
   expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0 });
-  expect(owners(source.attachment)).toEqual([source.id]);
 });
 
 test('only finished or stopped final responses on the current branch can be branched from', async () => {
@@ -144,7 +136,6 @@ test('only finished or stopped final responses on the current branch can be bran
   await expect(modules.history.publishBranchHistory({ ...request, entryId: 'a2' })).rejects.toThrow(/finished or stopped final response/);
   await expect(modules.history.publishBranchHistory({ ...request, entryId: 'a1', leafId: 'u1' })).rejects.toThrow(/not on the current branch/);
   expect(registered(sessionId)).toBeNull();
-  expect(owners(source.attachment)).toEqual([source.id]);
 });
 
 test('discarding refuses a conversation that is not a branch', async () => {
@@ -154,19 +145,28 @@ test('discarding refuses a conversation that is not a branch', async () => {
   expect(registered(source.id)).toBe(source.path);
 });
 
-test('shared attachments stay while the branch exists after its source is deleted, and go with the last chat', async () => {
-  const source = await sourceChat();
+test('a goal file stays while a goal row has its objective, comes back when missing, and goes with the last chat that has it', async () => {
+  // No other chat of this file has this objective.
+  const objective = randomUUID() + OBJECTIVE;
+  const source = await sourceChat(objective);
   const sessionId = modules.database.reserve(root);
   const branch = await modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' });
-  const remove = (path: string) => deleteChat(path);
+  const text = modules.goalFiles.agentText(root, objective);
+  const file = /^Read the goal objective file at (\S+) before continuing\.$/.exec(text)![1];
+  expect(file.startsWith(join(root, 'goal-files') + '/')).toBe(true);
+  expect(readFileSync(file, 'utf8')).toBe(objective);
+  expect(modules.goalFiles.agentText(root, 'Short')).toBe('Short');
 
-  expect(await remove(source.path)).toEqual({});
+  expect(await deleteChat(source.path)).toEqual({});
   expect(existsSync(source.path)).toBe(false);
-  expect(readFileSync(join(source.attachment, 'goal-objective.md'), 'utf8')).toBe('Ship it');
-  expect(owners(source.attachment)).toEqual([sessionId]);
+  expect(readFileSync(file, 'utf8')).toBe(objective);
 
-  expect(await remove(branch.sessionPath)).toEqual({});
-  expect(existsSync(source.attachment)).toBe(false);
+  rmSync(file);
+  expect(modules.goalFiles.agentText(root, objective)).toBe(text);
+  expect(readFileSync(file, 'utf8')).toBe(objective);
+
+  expect(await deleteChat(branch.sessionPath)).toEqual({});
+  expect(existsSync(file)).toBe(false);
 });
 
 test('a publication that saves the transcript but cannot finish is removed', async () => {
@@ -184,7 +184,6 @@ test('a publication that saves the transcript but cannot finish is removed', asy
   await modules.history.discardBranchHistory(root, sessionId, null);
   expect(readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId))).toEqual([]);
   expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0 });
-  expect(owners(source.attachment)).toEqual([source.id]);
 });
 
 for (const kind of ['subagent', 'review', 'btw']) test(`worktree history rejects a ${kind} chat even outside the selected history`, async () => {

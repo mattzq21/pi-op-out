@@ -5,7 +5,6 @@ const { createHash } = require('node:crypto');
 const { lines: lfLines } = require('./lf-lines.cjs');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const { createObservation, observeEntry, recordGoals } = require('./storage-inventory-owners.cjs');
 const { discoverPublicationDiagnostics } = require('./storage-inventory-publications.cjs');
 
 const headerSchema = Type.Object({ type: Type.Literal('session'), id: Type.String({ minLength: 1 }) });
@@ -18,7 +17,7 @@ function verifyHeader(header, source) {
 
 function stable(before, after) { return ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].every(key => before[key] === after[key]); }
 
-async function readTranscript(handle, observation, source) {
+async function readTranscript(handle, source) {
   const digest = createHash('sha256');
   let bytes = 0;
   let header;
@@ -30,7 +29,6 @@ async function readTranscript(handle, observation, source) {
       if (!line.trim()) continue;
       const entry = JSON.parse(line);
       header ??= entry;
-      observeEntry(observation, entry);
     }
   } finally { stream.destroy(); }
 
@@ -39,9 +37,8 @@ async function readTranscript(handle, observation, source) {
   return header;
 }
 
-async function transcript(file, source, discovery, kind) {
+async function transcript(file, source) {
   const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  const observation = createObservation();
 
   try {
     const metadata = await handle.stat({ bigint: true });
@@ -49,15 +46,14 @@ async function transcript(file, source, discovery, kind) {
     if (!metadata.isFile() || await fs.realpath(file) !== file) throw new Error('Diagnostic transcript is not a canonical regular file');
 
     if (source.identity && source.identity !== metadata.dev + ':' + metadata.ino) throw new Error('Diagnostic transcript inode differs from its journal');
-    const header = await readTranscript(handle, observation, source);
+    const header = await readTranscript(handle, source);
     verifyHeader(header, source);
 
     if (!stable(metadata, await handle.stat({ bigint: true })) || !stable(metadata, await fs.lstat(file, { bigint: true }))) throw new Error('Diagnostic transcript changed during discovery');
-    recordGoals(discovery, { observation, readable: true }, { sessionId: header.id, sessionPath: file, kind }, { file, kind });
   } finally { await handle.close(); }
 }
 
-async function discoverGoalDiagnostics(profile, discovery) {
+async function discoverDiagnostics(profile, discovery) {
   await discoverPublicationDiagnostics(profile, discovery, transcript);
   discoverTemporaryCleanup(profile, discovery);
 }
@@ -66,4 +62,4 @@ function discoverTemporaryCleanup(profile, discovery) {
   if (require('./session-database.cjs').cleanupRequest(profile, 'temporary-chat') !== undefined) discovery.warnings.push('Temporary folder cleanup for deleted sessions is pending');
 }
 
-module.exports = { discoverGoalDiagnostics };
+module.exports = { discoverDiagnostics };

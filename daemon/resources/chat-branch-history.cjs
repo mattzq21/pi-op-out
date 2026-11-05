@@ -4,8 +4,6 @@ const { randomUUID } = require('node:crypto');
 const io = require('./piop-storage/session-publication-io.cjs');
 const publication = require('./piop-storage/session-publication.cjs');
 const stateRecords = require('./piop-storage/session-records.cjs');
-const assets = require('./piop-storage/goal-assets.cjs');
-const goalOwnership = require('./piop-storage/goal-ownership.cjs');
 const database = require('./session-database.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
 const auxiliaryCopies = require('./piop-storage/auxiliary-copies.cjs');
@@ -163,15 +161,6 @@ function checkNoWriter(root, target) {
   lease();
 }
 
-function releaseClaims(root, sessionId) {
-  assets.locked(root, () => {
-    for (const directory of assets.ownedDirectories(root, sessionId)) {
-      const record = assets.readOwners(root, directory);
-      goalOwnership.save(root, directory, { ...record, owners: record.owners.filter(owner => owner.sessionId !== sessionId) });
-    }
-  });
-}
-
 const releaseReservation = onMainThread('chat-branch-history.releaseReservation', (root, sessionId) => {
   database.connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(sessionId);
 });
@@ -206,7 +195,6 @@ async function discardBranchHistory(root, sessionId, sessionPath) {
       if (target !== null) step(() => { if (io.exists(target)) { ownedTranscript(target, sessionId); removeFile(target); } });
       for (const journal of pending) step(() => removeJournal(root, journal, target));
       if (target !== null) step(() => checkNoWriter(root, target));
-      step(() => releaseClaims(root, sessionId));
       if (!failures.length) step(() => forget(root, sessionId, target));
       if (failures.length) throw new Error('Branch cleanup is incomplete: ' + failures.join('; '));
     } finally { release(); }

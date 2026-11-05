@@ -1,6 +1,5 @@
 const stateRecords = require('./session-records.cjs');
 const goals = require('./goals.cjs');
-const registry = require('../session-registry.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -101,8 +100,7 @@ function prepare(root, target, body, options) {
 
   if (!Check(io.uuid, id)) throw new Error('Invalid session publication identity');
   const prepared = prepareBody(body, id);
-  registry.bindSession(root, prepared.header.id, target);
-
+  goals.bind(root, prepared.header.id, target, options.goalSource);
 
   if (!path.basename(target).endsWith(`_${prepared.header.id}.jsonl`) || io.exists(target)) throw new Error('Session publication target is occupied or does not bind its session identity');
   const lock = io.lockName(target);
@@ -118,9 +116,6 @@ function prepareJournal(root, target, prepared, id, lock, lease, options) {
   if (prepared.entries.some(stateRecords.isName)) throw new Error('A new chat gets its name from the publication name, not from its entries');
   const name = options.name === undefined ? undefined : names.validName(options.name);
   const contract = dependencies.plan(root, prepared.entries, options.dependencies);
-  if (options.goalSource) goals.copy(options.goalSource, target, prepared.header.id);
-  prepared.header = { ...prepared.header, goalAssets: contract.goalAssets };
-  prepared.entries[0] = prepared.header;
   prepared.body = stateRecords.stored(prepared.entries).map(value => JSON.stringify(value)).join('\n') + '\n';
 
   const journal = {

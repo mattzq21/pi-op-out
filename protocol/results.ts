@@ -18,7 +18,7 @@ export const storageOwnerSchema = z.object({ sessionId: z.string(), sessionPath:
 export const storageRootSchema = z.object({ path: z.string(), ownership: storageOwnershipSchema, provenance: z.array(z.string()), available: z.boolean(), owners: z.array(storageOwnerSchema), state: z.string().optional() });
 
 export const storageCategorySchema = z.object({
-  id: z.enum(["active-conversations", "archived-conversations", "temporary-chats", "chat-worktrees", "other-storage", "recovery-storage", "unattributed-recovery-storage", "goal-attachments", "unattributed-goal-attachments"]),
+  id: z.enum(["active-conversations", "archived-conversations", "temporary-chats", "chat-worktrees", "other-storage", "recovery-storage", "unattributed-recovery-storage", "goal-files"]),
   byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional(), countUnit: z.string().optional(),
   ownership: storageOwnershipSchema.optional(), reclaimability: z.enum(["retained", "requires-owner-check", "unknown"]).optional(),
   measurement: z.enum(["allocated-blocks"]).optional(), includedInTotal: z.boolean().optional(), roots: z.array(storageRootSchema).optional(),

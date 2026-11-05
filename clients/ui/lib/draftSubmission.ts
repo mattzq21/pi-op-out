@@ -3,7 +3,7 @@ import type { ComposerUpload, ImageAttachment, RpcCommand } from "../types";
 import type { StateUpdate } from "./solid";
 import { z } from "zod";
 
-export const goalPreparationSchema = z.object({ objective: z.string(), goalId: z.string().optional(), sessionId: z.string(), sessionPath: z.string().optional(), cwd: z.string(), sessionSaved: z.boolean() });
+export const goalPreparationSchema = z.object({ objective: z.string(), goalId: z.string(), sessionId: z.string(), sessionPath: z.string(), cwd: z.string() });
 
 export async function submissionFingerprint(text: string, uploads: ComposerUpload[]) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([text, uploads.map(upload => upload.id)])));

@@ -37,10 +37,6 @@ export function runningTasks(root: string): string[] {
   return (connection(root).prepare('SELECT session_id FROM running_tasks').all() as Array<{ session_id: string }>).map(row => row.session_id);
 }
 
-export function requestCleanup(root: string, kind: 'goal'): void {
-  SessionTables.markCleanup(root, kind);
-}
-
 export function record(state: any, cwd: string | undefined | null): void {
   const id = typeof state?.sessionId === 'string' ? state.sessionId : undefined;
   if (!id || typeof cwd !== 'string') return;

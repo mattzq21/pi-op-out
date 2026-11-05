@@ -4,7 +4,7 @@ import { acquireReferencePublicationLock } from "./reference-publication-lock.cj
 import * as registry from "../session-registry.cjs";
 import * as references from "../transcript-references.cjs";
 import { storagePublish } from "../storage-file.mjs";
-import { fileIdentity, managedGoalReferences, readTranscript, sameFile, sessionReferenceRoot, validateNewGoalReferences, validateSessionReferencePublication } from "./transcript-file.mjs";
+import { fileIdentity, sameFile, sessionReferenceRoot } from "./transcript-file.mjs";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 
@@ -13,9 +13,6 @@ import * as storagePath from "node:path";
 // An error with `damaged` set means the transcript may not match Pi's copy any more.
 
 export const PUBLICATION_LOCKED = new Set(["publish", "append"]);
-
-// The changes that take the goal asset lock first.
-export const GOAL_ASSETS_LOCKED = new Set(["copyGoal"]);
 
 function damaged(error) {
   const failure = error instanceof Error ? error : new Error(String(error));
@@ -74,7 +71,6 @@ export function publish(root, request) {
   const exclusive = request.exclusive === true;
   registry.registerExternalTranscript(root, path, id);
   registerManaged(root, path, id, false);
-  validateSessionReferencePublication(entries, exclusive ? undefined : readTranscript(path).entries, root);
   stateRecords.save(path, entries);
   try { storagePublish(path, temporaryPath(path), stateRecords.stored(entries).map(item => JSON.stringify(item) + "\n").join(""), exclusive); }
   catch (error) { throw storageFs.existsSync(path) ? damaged(error) : error; }
@@ -104,15 +100,13 @@ function appendLine(path, item, expected) {
 }
 
 // Adds one entry. Settings and extension records go to the database; the rest go to the end of the file,
-// which must still be the file that Pi saved last (`expected`). `previous` lists the goal folders that the transcript already names.
+// which must still be the file that Pi saved last (`expected`).
 export function append(root, request) {
   const path = transcriptPath(request?.path);
   const sessionId = text(request.sessionId, "session ID");
   const item = entry(request.entry);
-  if (!Array.isArray(request.previous) || request.previous.some(value => typeof value !== "string")) throw new Error("Invalid saved goal references");
   registry.registerExternalTranscript(root, path, sessionId);
   registerManaged(root, path, sessionId, false);
-  validateNewGoalReferences(managedGoalReferences([item], root), request.previous, root);
   if (item.type === "custom" || stateRecords.isCurrent(item)) {
     if (request.after !== null && typeof request.after !== "string") throw new Error("Invalid record position");
     stateRecords.append(path, sessionId, request.after, item);

@@ -1,6 +1,5 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const database = require('./session-database.cjs');
@@ -109,27 +108,20 @@ function removeFiles(file) {
   fs.rmSync(file, { force: true });
 }
 
-// The deletion of the chats ids. It reads what goal cleanup needs, commits, and then removes the files.
+// The deletion of the chats ids: their rows in one transaction, and then their files and the goal files that only they used.
 function deleteSessions(root, ids) {
-  const targets = sessions(database.connection(root), ids).map(saved => ({ sessionId: saved.sessionId, path: saved.sessionPath }));
-  const present = targets.filter(target => fs.existsSync(target.path));
-  const goals = require('./piop-storage/goal-asset-cleanup.cjs').plan(root, present);
-  const files = present.flatMap(target => [{ file: target.path, sessionId: target.sessionId }, ...fs.existsSync(snapshots(target.path)) ? [{ file: snapshots(target.path) }] : []]);
-  const retention = require('./piop-storage/deletion-retention.cjs').collectRetention(root, targets.map(target => target.path), files).deferred;
+  const targets = sessions(database.connection(root), ids).map(saved => saved.sessionPath);
 
   forget(root, ids);
   const warnings = [];
 
   for (const target of targets) {
-    try { removeFiles(target.path); }
-    catch (error) { warnings.push(`Deleted, but the files of ${target.path} were kept until the next start: ${error.message}`); }
+    try { removeFiles(target); }
+    catch (error) { warnings.push(`Deleted, but the files of ${target} were kept until the next start: ${error.message}`); }
   }
 
-  try { require('./piop-storage/goal-asset-cleanup.cjs').finish({ root, targets, goalAssets: goals }, () => {}); }
-  catch (error) { warnings.push(`Deleted, but goal attachment cleanup failed: ${error.message}`); }
-
-  try { require('./piop-storage/retention-candidates.cjs').recordRetention(root, randomUUID(), retention); }
-  catch (error) { warnings.push(`Deleted, but deferred cleanup was not recorded: ${error.message}`); }
+  try { require('./piop-storage/goal-files.cjs').collect(root); }
+  catch (error) { warnings.push(`Deleted, but its goal files were kept until the next start: ${error.message}`); }
 
   warnings.push(...maintenance(root, false));
 
@@ -158,7 +150,7 @@ function cleanupTemporaryChats(root) {
   } catch (error) { return `Temporary folder cleanup will retry: ${error.message}`; }
 }
 
-// Finishes session publications, deferred retention and temporary folder cleanup. Returns the warnings.
+// Finishes session publications and temporary folder cleanup. Returns the warnings.
 function maintenance(root, publications = true) {
   const warnings = [];
 
@@ -171,9 +163,6 @@ function maintenance(root, publications = true) {
       for (const retained of result.quarantined) warnings.push(`Session publication retained: ${retained.path}: ${retained.reason}`);
     } catch (error) { warnings.push(`Session publication recovery is pending: ${error.message}`); }
   }
-
-  try { require('./piop-storage/retention-collection.cjs').collectDeferredRetention(root); }
-  catch (error) { warnings.push(`Deferred retention cleanup will retry: ${error.message}`); }
 
   const temporary = cleanupTemporaryChats(root);
 
@@ -233,7 +222,8 @@ function claimed(file, owner) {
   return typeof header?.id === 'string' && Boolean(owner.get(header.id));
 }
 
-// Removes the transcripts and snapshot folders in the sessions area that no session row has. Returns the warnings.
+// Removes the transcripts and snapshot folders in the sessions area that no session row has, and the goal files that no
+// goal row has. Returns the warnings.
 function sweep(root) {
   const db = database.connection(root);
   const registered = db.prepare('SELECT 1 FROM sessions WHERE session_path=?');
@@ -251,8 +241,8 @@ function sweep(root) {
       const snapshot = entry.isDirectory() && entry.name.endsWith('.snapshots');
 
       if (entry.isDirectory() && !snapshot) {
-        // Goal attachments and hidden work folders hold no transcripts of their own.
-        if (entry.name !== 'attachments' && !entry.name.startsWith('.')) visit(file);
+        // Hidden work folders hold no transcripts of their own.
+        if (!entry.name.startsWith('.')) visit(file);
         continue;
       }
 
@@ -268,6 +258,9 @@ function sweep(root) {
   };
 
   visit(path.join(root, 'sessions'));
+
+  try { require('./piop-storage/goal-files.cjs').collect(root, true); }
+  catch (error) { warnings.push(`Could not remove the unused goal files: ${error.message}`); }
 
   return warnings;
 }

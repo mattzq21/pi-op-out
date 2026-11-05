@@ -1,27 +1,7 @@
 const path = require('node:path');
-const { Type } = require('typebox');
-const { Check } = require('typebox/value');
 const { addRoot } = require('./storage-inventory-roots.cjs');
-const { validGoalPath, observeGoalContract } = require('./storage-inventory-goals.cjs');
 
 const safeId = value => value.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
-
-function observeEntry(observation, entry) {
-  observeGoals(observation, entry);
-  observeGoalContract(observation, entry);
-}
-
-function observeGoals(observation, entry) {
-  if (!['custom', 'custom_message'].includes(entry.type) || entry.customType !== 'piop-goal-context') return;
-  const objective = entry.data?.objective;
-  const text = Check(Type.String(), objective) ? objective : JSON.stringify(entry.content ?? entry.data);
-
-  if (!text) return;
-
-  for (const match of text.matchAll(/(\/[^"\n]*?\/attachments\/goal-[a-zA-Z0-9_-]+)(?=\/)/g)) observation.goals.add(match[1]);
-}
-
-function createObservation() { return { goals: new Set(), goalContracts: new Map(), goalWarnings: [] }; }
 
 function recordSession(discovery, details, candidate, root) {
   const id = details.sessionId;
@@ -36,27 +16,6 @@ function recordSession(discovery, details, candidate, root) {
   }
 
   addRoot(discovery.cwds, details.cwd, source, 'referenced', [owner]);
-
-  recordGoals(discovery, details, owner, candidate);
-}
-
-function recordGoals(discovery, details, owner, candidate) {
-  let kind = 'unresolved';
-
-  if (details.readable) kind = details.fork ? 'fork-history' : `${candidate.kind}-goal-history`;
-
-  if (candidate.kind.startsWith('diagnostic-')) kind = candidate.kind;
-  const goalOwner = { ...owner, kind };
-  const source = candidate.kind.startsWith('diagnostic-') ? 'Retained diagnostic reference; not a live owner: ' : 'Goal reference in surviving history: ';
-
-  for (const warning of details.observation.goalWarnings) discovery.warnings.push(candidate.file + ': ' + warning);
-
-  for (const directory of details.observation.goals) {
-    const record = addRoot(discovery.goals, directory, source + candidate.file, 'shared', [goalOwner]);
-    const identities = details.observation.goalContracts.get(directory);
-
-    if (identities) { record.contracts ??= []; record.contracts.push({ owner: goalOwner, identities }); }
-  }
 }
 
 function resolveOwners(discovery) {
@@ -93,4 +52,4 @@ function sessionKind(file, profile) {
   return 'referenced';
 }
 
-module.exports = { createObservation, observeEntry, recordSession, recordGoals, resolveOwners, sessionKind, validGoalPath };
+module.exports = { recordSession, resolveOwners, sessionKind };

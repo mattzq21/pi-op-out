@@ -1,9 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { validGoalPath } = require('./storage-inventory-owners.cjs');
-const { goalOwner } = require('./storage-inventory-goals.cjs');
-
-const localCategories = { sessions: 'active-conversations', tmp: 'temporary-chats', worktrees: 'chat-worktrees', recovery: 'unattributed-recovery-storage' };
+const localCategories = { sessions: 'active-conversations', tmp: 'temporary-chats', worktrees: 'chat-worktrees', recovery: 'unattributed-recovery-storage', 'goal-files': 'goal-files' };
 
 function specialCategory(target, category, metadata, discovery) {
   category = queuedCategory(target, category, metadata, discovery);
@@ -14,19 +11,11 @@ function specialCategory(target, category, metadata, discovery) {
 
   if (discovery.recovery.has(target)) return discovery.recovery.get(target).ownership === 'owned' ? 'recovery-storage' : 'unattributed-recovery-storage';
 
-  const knownGoal = discovery.goals.has(target) || ['active-conversations', 'archived-conversations'].includes(category);
-
-  if (knownGoal && validGoalPath(target)) return goalCategory(target, discovery);
-
   return category;
 }
 
 function queuedCategory(target, category, metadata, discovery) {
   return metadata.isFile() && discovery.queuedInput?.has(target) ? discovery.queuedInput.get(target).category : category;
-}
-
-function goalCategory(target, discovery) {
-  return goalOwner(discovery.goals.get(target)) ? 'goal-attachments' : 'unattributed-goal-attachments';
 }
 
 async function diskStorage(profile, discovery) {
@@ -62,13 +51,7 @@ async function diskStorage(profile, discovery) {
 
     if (category === 'other-storage') addCount(category, entries.filter(entry => entry.isFile() && !discovery.queuedInput?.has(path.join(target, entry.name))).length);
 
-    if (['goal-attachments', 'unattributed-goal-attachments'].includes(category) && validGoalPath(target)) {
-      addCount(category);
-      const record = discovery.goals.get(target) || { path: target, ownership: 'unattributed', provenance: ['Goal asset directory without a readable surviving reference'], owners: [] };
-      record.available = true;
-      record.directory = true;
-      register(category, record);
-    }
+    if (category === 'goal-files' && target === path.join(root, 'goal-files')) addCount(category, entries.filter(entry => entry.isFile()).length);
   }
 
   async function visit(target, category, required = false) {
@@ -161,8 +144,6 @@ async function diskStorage(profile, discovery) {
   register('other-storage', { path: root, ownership: 'owned', provenance: ['PIOP_STORAGE_DIRECTORY profile'], owners: [], available: directories.has(root), directory: true });
 
   for (const record of discovery.recovery.values()) await visitRecovery(record);
-
-  for (const record of discovery.goals.values()) await visitRecord(goalOwner(record) ? 'goal-attachments' : 'unattributed-goal-attachments', record);
 
   await visitRetainedArtifacts();
 

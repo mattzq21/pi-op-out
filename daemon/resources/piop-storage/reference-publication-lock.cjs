@@ -1,7 +1,7 @@
 const storageLocks = require('../storage-locks.cjs');
 
-// The reference publication lock of a storage folder. Chats that save goal attachments and references take it shared;
-// deletion takes it exclusive while it removes chats.
+// The reference publication lock of a storage folder. Writes of transcripts take it shared; deletion takes it exclusive
+// while it removes chats.
 function name(root) { return 'reference-publication:' + root; }
 
 function acquireReferencePublicationLock(root, shared = false, nonblocking = false) {

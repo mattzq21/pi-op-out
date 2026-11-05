@@ -1,7 +1,7 @@
 export type HostOperationName =
   | 'index-sessions' | 'storage-inventory' | 'recover-missing-session' | 'relocate-session'
   | 'chat-branch-history' | 'discard-chat-branch'
-  | 'record-session-directory' | 'session-storage' | 'temporary-chat' | 'goal-text' | 'agent-definitions' | 'save-agent-definitions' | 'move-agent';
+  | 'record-session-directory' | 'session-storage' | 'temporary-chat' | 'agent-definitions' | 'save-agent-definitions' | 'move-agent';
 
 export const QUEUED = 0;
 export const STARTED = 1;

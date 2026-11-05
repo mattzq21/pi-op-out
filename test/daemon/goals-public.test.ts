@@ -100,16 +100,18 @@ test('a goal continues after repeated tool failures', async () => {
   expect(await failedReads()).toBeGreaterThanOrEqual(7);
 }, 120000);
 
-test('a long goal is saved to a file the agent reads, which stays while any chat still uses it', async () => {
+test('a long goal is saved to a file the agent reads, which stays while a goal of any chat has it', async () => {
   const objective = 'Translate the long brief. ' + 'Every line matters. '.repeat(300);
   let file = '';
   agents.scripts.set('Read the goal objective file at', messages => {
     file ||= JSON.stringify(messages).match(/Read the goal objective file at ([^ ]+?\.md)/)?.[1] ?? '';
-    return called(messages, 'update_goal_status') ? { text: 'Brief done.' } : { tool: 'update_goal_status', arguments: { status: 'complete' } };
+    return called(messages, 'update_goal_status') ? { text: 'Brief done.' } : { tool: 'update_goal_status', arguments: { status: 'paused' } };
   });
   const chat = await agents.rootChat({ repository: true });
   await send(chat, '/goal ' + objective);
   await chat.until(history => text(history.at(-1)) === 'Brief done.');
+  await settled(chat.runtimeId);
+  expect(shownGoal(chat.runtimeId)).toMatchObject({ objective: objective.trim(), status: 'active' });
   expect(readFileSync(file, 'utf8').trim()).toBe(objective.trim());
 
   const original = await chat.command({ type: 'get_state' });

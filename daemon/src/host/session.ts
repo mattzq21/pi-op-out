@@ -24,7 +24,7 @@ import type { RuntimeEvent, RuntimeEventSource } from './runtime_events';
 import { RuntimeWorker, type Request, type WorkerObserver } from './worker';
 import { QueueGoal } from './goals/state';
 import { GOAL_COMMAND } from './goals/commands';
-import { goalPreparationView, restoreGoalAttachments, type GoalPlace } from './goals/files';
+import { agentObjective, goalPreparationView, type GoalPlace } from './goals/files';
 import type { BrokerAnswer, BrokerCall } from '../broker';
 import type { HostEvents } from './events';
 import { PiStorage } from './pi_storage';
@@ -161,7 +161,7 @@ export class Session {
   private restoreGoalFiles(): void {
     const goal = this.queue.liveGoal();
     if (!goal) return;
-    void restoreGoalAttachments(this.goalPlace(), goal.objective).catch(error => this.goalError('Could not restore the goal files: ' + errorText(error)));
+    try { agentObjective(this.goalPlace(), goal.objective); } catch (error) { this.goalError('Could not restore the goal file: ' + errorText(error)); }
   }
 
   private goalError(message: string): void {

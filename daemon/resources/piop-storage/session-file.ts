@@ -14,7 +14,7 @@ export interface PublicationOptions {
   goalSource?: string;
 }
 
-// Saving the chat failed, but its goal and folder dependencies are kept for recovery.
+// Saving the chat failed, but its folder dependencies are kept for recovery.
 export function publicationRetainsDependencies(error: Error): boolean {
   const flags = error as Error & { dependenciesRetained?: boolean; publicationPending?: boolean };
   if (flags.dependenciesRetained === true || flags.publicationPending === true) return true;
@@ -38,17 +38,6 @@ export function release(publication: SessionPublication): void {
 // The new chats of one kind whose link to this parent is not saved yet. This Pi holds their claims until it releases them.
 export async function pendingLinks(parentPath: string, parentId: string, kind: string): Promise<Array<{ publication: SessionPublication; record: unknown }>> {
   return await call("publication.pendingLinks", { parentPath, parentId, kind }) as Array<{ publication: SessionPublication; record: unknown }>;
-}
-
-export interface GoalAssetContract { version: 1; policy: string; directories: Array<{ path: string; identity: unknown }> }
-
-// Marks the goal folders of a chat's history as also used by a new chat.
-export function retainHistory(root: string, entries: unknown[], sessionId: string, sessionPath: string): GoalAssetContract {
-  return call("publication.retainHistory", { root, entries, sessionId, sessionPath }) as GoalAssetContract;
-}
-
-export function releaseHistory(root: string, contract: GoalAssetContract, sessionId: string): void {
-  call("publication.releaseHistory", { root, contract, sessionId });
 }
 
 // Saves the side chats, reviews and subagent chats of a fork, and their subagent runs.

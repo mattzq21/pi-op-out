@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { text } from '../json';
 import type { QueueGate } from '../queue_gate';
 import type { QueueDelivery } from '../queue_delivery';
-import { materializeGoal } from './files';
+import { agentObjective, validateObjective } from './files';
 import { goalChangedPrompt, goalSetPrompt } from './prompts';
 import { GOAL_TOOL, type ContextInsertion, type Goal } from './state';
 
@@ -47,13 +47,12 @@ export async function goalCommand(queue: QueueDelivery, gate: QueueGate, command
   return locked(() => enqueue({ ...command, ...prepared }));
 }
 
-export async function prepareGoal(queue: QueueDelivery, objective: string, submissionId?: string): Promise<{ message: string; preparedGoal: { id: string; objective: string } } | undefined> {
+export async function prepareGoal(queue: QueueDelivery, objective: string, submissionId?: string): Promise<{ message: string; preparedGoal: { id: string; objective: string; submissionId?: string } } | undefined> {
   const place = queue.goalPlace();
+  const value = validateObjective(objective);
   if (queue.state.goals.live() && !(await queue.ask({ method: 'confirm', title: 'Replace current goal?', message: 'This replaces the current objective.' }))?.confirmed) return undefined;
-  const draft = await materializeGoal(place, objective, submissionId);
-  const preparedGoal = { id: randomUUID(), objective: draft.objective };
-  try { await draft.bind(preparedGoal.id); } catch (error) { await draft.cleanup(); throw error; }
-  return { message: '/goal ' + draft.objective, preparedGoal };
+  const preparedGoal = { id: randomUUID(), objective: value, ...submissionId ? { submissionId } : {} };
+  return { message: '/goal ' + agentObjective(place, value), preparedGoal };
 }
 
 const handled = { disposition: 'handled' };
@@ -64,21 +63,25 @@ async function edit(queue: QueueDelivery, locked: <T>(operation: () => T | Promi
   const place = queue.goalPlace();
   const answer = await queue.ask({ method: 'editor', title: 'Edit goal', prefill: current.objective });
   if (typeof answer?.value !== 'string') return;
-  const draft = await materializeGoal(place, answer.value, randomUUID());
-  try {
-    await locked(async () => {
-      if (goals.goal?.id !== current.id) throw new Error('The goal changed while preparing this operation. Submit /goal again.');
-      await draft.bind(current.id);
-      const next: Goal = { ...goals.require(), objective: draft.objective, status: 'active' };
-      return change(queue, next, goalChangedPrompt(next));
-    });
-  } catch (error) { await draft.cleanup(); throw error; }
+  const objective = validateObjective(answer.value);
+  await locked(async () => {
+    if (goals.goal?.id !== current.id) throw new Error('The goal changed while preparing this operation. Submit /goal again.');
+    const next: Goal = { ...goals.require(), objective, status: 'active' };
+    goals.waitingForInput = false;
+    goals.save(place, next);
+    return announce(queue, goalChangedPrompt(goals.shown(place, next)));
+  });
 }
 
 async function change(queue: QueueDelivery, next: Goal | null, notice: string | null = null): Promise<void> {
   const goals = queue.state.goals;
   goals.waitingForInput = false;
   goals.save(queue.goalPlace(), next);
+  await announce(queue, notice);
+}
+
+async function announce(queue: QueueDelivery, notice: string | null): Promise<void> {
+  const goals = queue.state.goals;
   try { if (notice !== null) await queue.execute({ type: 'insert_context', message: goals.notice(notice) }); }
   finally { await goalChanged(queue); }
 }
@@ -90,12 +93,12 @@ export async function goalChanged(queue: QueueDelivery): Promise<void> {
   await queue.publish();
 }
 
-export function activateGoal(queue: QueueDelivery, prepared: { id: string; objective: string }): ContextInsertion | undefined {
+export function activateGoal(queue: QueueDelivery, prepared: { id: string; objective: string; submissionId?: string }): ContextInsertion | undefined {
   const goals = queue.state.goals;
   if (goals.goal?.id === prepared.id) return undefined;
   const place = queue.goalPlace();
   goals.waitingForInput = false;
-  goals.save(place, goals.create(place, prepared.objective, prepared.id));
+  goals.save(place, goals.create(place, prepared.objective, prepared.id, prepared.submissionId));
   queue.goalStatus(goals.status());
   return goals.notice(goalSetPrompt);
 }
@@ -111,10 +114,10 @@ export async function queueTool(queue: QueueDelivery, tool: unknown, params: any
   if (status !== 'complete' && status !== 'paused') throw new Error('status must be complete or paused');
   const goals = queue.state.goals;
   const place = queue.goalPlace();
-  const edit = goals.unseenEdit();
+  const edit = goals.unseenEdit(place);
   if (edit) { goals.markSeen(); throw new Error(edit); }
   const goal = goals.require();
-  const data = { goal: { objective: goal.objective, status } };
+  const data = { goal: { objective: goals.shown(place, goal).objective, status } };
   if (status === 'paused') await queue.hold(true);
   else {
     goals.save(place, { ...goal, status });

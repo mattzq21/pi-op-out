@@ -2,7 +2,6 @@ import { join, dirname, basename, isAbsolute, resolve } from 'node:path';
 import * as Registry from '../session_registry';
 import { ensurePrivateDir } from '../private_fs';
 import { transaction, type Database } from '../util/db';
-import * as Publication from './reference_publication';
 
 const UUID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
@@ -108,13 +107,8 @@ export class QueueStorage {
   }
 
   private async saveLocked(items: any[], origin: any): Promise<void> {
-    const root = this.root();
-    const publication = await Publication.lock(root);
-    try {
-      await Publication.validateNewReferences(root, items, this.load());
-      const db = Registry.connection(root);
-      transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin));
-    } finally { publication.release(); }
+    const db = Registry.connection(this.root());
+    transaction(db, 'IMMEDIATE', () => this.writeItems(db, items, origin));
   }
 
   private writeItems(db: Database, items: any[], origin: any): void {

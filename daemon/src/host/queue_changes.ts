@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { clone, flag, jsonEqual, text } from './json';
 import type { QueueGate } from './queue_gate';
 import { GOAL_ENTRY_ID, type QueueState } from './queue_state';
@@ -78,7 +77,7 @@ async function editPending(queue: QueueDelivery, target: any, action: { message:
   const update: any = { message, images };
   if (goalSubmission({ message })) {
     if (images.length) throw new Error('Goals do not accept attachments. Remove the files and images before saving.');
-    const prepared = await prepareGoal(queue, goalArgument(message)!, randomUUID());
+    const prepared = await prepareGoal(queue, goalArgument(message)!);
     if (prepared === undefined) throw new Error('The goal was not prepared, so the message was not changed.');
     Object.assign(update, prepared);
   } else if (goalArgument(message) !== undefined) throw new Error('Only a goal objective can wait in the queue. Send /goal ' + goalArgument(message) + ' as a new message.');
@@ -173,7 +172,7 @@ export async function takeNext(queue: QueueDelivery, behavior: unknown, holding:
   if (behavior === 'goal') {
     if (has.size) await queue.publish();
     const ready = state.goalAvailable() && !state.pending.some(entry => state.available(entry));
-    return { item: ready ? { id: GOAL_ENTRY_ID, insertion: state.goals.prompt() } : null, offer: queue.currentOffer() };
+    return { item: ready ? { id: GOAL_ENTRY_ID, insertion: state.goals.prompt(queue.goalPlace()) } : null, offer: queue.currentOffer() };
   }
   const item = state.pending.find(entry => entry.behavior === behavior && state.available(entry));
   if (!item) { if (has.size) await queue.publish(); return { item: null, offer: queue.currentOffer() }; }

@@ -23,7 +23,6 @@ export interface PublicationOptions {
 export interface PublicationDependencies {
   version: 1;
   workspace: { path: string; kind: "existing" | "created-directory"; identity: string };
-  goalAssets: { version: 1; policy: "shared-profile"; directories: { path: string; identity: string }[] };
 }
 
 export interface DiagnosticPublication {

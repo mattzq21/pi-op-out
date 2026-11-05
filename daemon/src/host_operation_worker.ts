@@ -23,7 +23,6 @@ const handlers: Record<HostOperationName, Handler> = {
   'relocate-session': started(async input => (await import('../resources/relocate-session.cjs')).checkedRelocation(input)),
   'record-session-directory': started(async input => (await import('../resources/session-registry.cjs')).recordDirectory(input)),
   'temporary-chat': started(async input => (await import('../resources/temporary-chat.cjs')).temporaryChat(input)),
-  'goal-text': started(async input => (await import('../resources/piop-storage/goal-dependencies.cjs')).textContents(input.root, input.directory).map((entry: any) => entry.text)),
   'agent-definitions': started(async input => (await import('piop-agent-loader')).loadAgentDefinitions(input)),
   'save-agent-definitions': started(async input => (await import('piop-agent-loader')).saveAgentDefinitions(input)),
   'move-agent': started(async input => (await import('piop-agent-loader')).moveAgent(input)),

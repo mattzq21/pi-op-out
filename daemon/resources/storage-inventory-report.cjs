@@ -7,8 +7,7 @@ const definitions = [
   ['chat-worktrees', 'directory', 'owned', 'unknown'],
   ['recovery-storage', 'recovery', 'owned', 'unknown'],
   ['unattributed-recovery-storage', 'recovery', 'unattributed', 'unknown'],
-  ['goal-attachments', 'asset directory', 'shared', 'requires-owner-check'],
-  ['unattributed-goal-attachments', 'asset directory', 'unattributed', 'unknown'],
+  ['goal-files', 'file', 'owned', 'unknown'],
   ['other-storage', 'file', 'owned', 'unknown'],
 ];
 

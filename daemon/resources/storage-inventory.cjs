@@ -8,11 +8,10 @@ const { createReadStream } = require("node:fs");
 const path = require("node:path");
 const { lines: lfLines } = require("./lf-lines.cjs");
 const { discoverRoots } = require('./storage-inventory-roots.cjs');
-const { createObservation, observeEntry, recordSession, resolveOwners, sessionKind } = require('./storage-inventory-owners.cjs');
+const { recordSession, resolveOwners, sessionKind } = require('./storage-inventory-owners.cjs');
 const { diskStorage } = require('./storage-inventory-disk.cjs');
 const { inventoryCategories, archiveCoverage } = require('./storage-inventory-report.cjs');
-const { reconcileGoalAssets } = require('./storage-inventory-goals.cjs');
-const { discoverGoalDiagnostics } = require('./storage-inventory-diagnostics.cjs');
+const { discoverDiagnostics } = require('./storage-inventory-diagnostics.cjs');
 
 function messageText(message) {
   if (Check(Type.String(), message?.content)) return message.content;
@@ -40,7 +39,6 @@ async function inspectTranscript(file) {
   let firstPrompt = "";
   let malformed = false;
   let auxiliary = false;
-  const observation = createObservation();
 
   const recordDescription = (entry) => {
     if (!firstPrompt && entry.type === "message" && entry.message?.role === "user") firstPrompt = messageText(entry.message).trim().slice(0, 2000);
@@ -55,7 +53,6 @@ async function inspectTranscript(file) {
 
       try { entry = JSON.parse(line); } catch { malformed = true; continue; }
 
-      observeEntry(observation, entry);
       if (stateRecords.isAuxiliary([entry])) auxiliary = true;
 
       if (!header) {
@@ -68,13 +65,13 @@ async function inspectTranscript(file) {
     }
   } finally { input.destroy(); }
 
-  const result = { ...sessionDetails(header, malformed, observation), auxiliary };
+  const result = { ...sessionDetails(header, malformed), auxiliary };
 
   return { header, firstPrompt, malformed, result };
 }
 
-function sessionDetails(header, malformed, observation) {
-  return { observation, readable: validSessionHeader(header) && !malformed, fork: Boolean(header?.parentSession), cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
+function sessionDetails(header, malformed) {
+  return { readable: validSessionHeader(header) && !malformed, fork: Boolean(header?.parentSession), cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
 }
 
 async function archiveDetails(file, id, header, explicitName, firstPrompt, malformed, result, db) {
@@ -202,7 +199,6 @@ async function storageInventory(request) {
   const discovery = await discoverRoots(profile);
   discovery.sessions = new Map();
   discovery.headers = new Map();
-  discovery.goals = new Map();
   const active = await registeredSessions(profile, false, discovery.warnings);
   const archived = await registeredSessions(profile, true, discovery.warnings);
   const candidates = new Map();
@@ -222,8 +218,7 @@ async function storageInventory(request) {
     for (const candidate of candidates.values()) await collectSession(piopRoot, candidate, discovery, archives, read, db);
   });
   resolveOwners(discovery);
-  await discoverGoalDiagnostics(profile, discovery);
-  await reconcileGoalAssets(profile, discovery);
+  await discoverDiagnostics(profile, discovery);
 
   const disk = await diskStorage(profile, discovery);
   archives.sort((left, right) => right.modifiedAt - left.modifiedAt);

@@ -16,10 +16,9 @@ function report(recovery: Recovery, events: HostEvents): void {
 }
 
 // Collects deferred cleanup at start, and again each time the storage changes in a way that can free it: a
-// deletion of chats or the end of a goal's preparation. A failed pass is tried again later.
+// deletion of chats. A failed pass is tried again later.
 export function watchRetention(root: string, ownership: ConversationOwnership, events: HostEvents): () => void {
   let reported: string | null = null;
-  let initialized = false;
   let running = false;
   let again = false;
   let failures = 0;
@@ -31,8 +30,7 @@ export function watchRetention(root: string, ownership: ConversationOwnership, e
     clearTimeout(retry);
     retry = undefined;
     try {
-      await retentionPass(root, !initialized);
-      initialized = true;
+      await retentionPass(root);
       reported = null;
       failures = 0;
     } catch (error) {
@@ -49,8 +47,7 @@ export function watchRetention(root: string, ownership: ConversationOwnership, e
   return () => { clearTimeout(retry); remove(); };
 }
 
-async function retentionPass(root: string, initialize: boolean): Promise<void> {
-  if (initialize) Registry.requestCleanup(root, 'goal');
+async function retentionPass(root: string): Promise<void> {
   if (!Registry.pending(root, 'retention')) return;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Deferred retention cleanup timed out; candidates remain available for retry')), 30_000); });

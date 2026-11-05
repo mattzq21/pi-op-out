@@ -1,9 +1,7 @@
 import * as publication from "./session-publication.cjs";
-import * as goalAssets from "./goal-assets.cjs";
 import * as auxiliaryCopies from "./auxiliary-copies.cjs";
 import { acquireReferencePublicationLockAsync } from "./reference-publication-lock.cjs";
 import * as registry from "../session-registry.cjs";
-import { validateSessionReferencePublication } from "./transcript-file.mjs";
 import * as storagePath from "node:path";
 
 // The new chats that Pi extensions make: forks, side chats, reviews, subagent and peer chats. Only the daemon runs these:
@@ -49,7 +47,6 @@ export function writeSessionFile(root, path, entries, given) {
     const release = await acquireReferencePublicationLockAsync(root);
     try {
       registry.registerExternalTranscript(root, path);
-      validateSessionReferencePublication(entries, undefined, root);
       return await operation();
     } finally { release(); }
   }, options(given));
@@ -59,9 +56,6 @@ function claimed(owner, result) {
   if (result?.id && owner) owner.claims.add(result.id);
   return result;
 }
-
-// The changes that take the goal asset lock first.
-export const GOAL_ASSETS_LOCKED = new Set(["retainHistory", "releaseHistory"]);
 
 export const OPERATIONS = {
   publish: (root, request, owner) => writeSessionFile(root, request?.path, request?.entries, request?.options).then(result => claimed(owner, result)),
@@ -81,8 +75,6 @@ export const OPERATIONS = {
     for (const { publication: claim } of pending) claimed(owner, claim);
     return pending;
   },
-  retainHistory: (root, request) => goalAssets.retainHistory(sameRoot(root, request?.root), request.entries, String(request.sessionId), transcriptPath(request.sessionPath)),
-  releaseHistory: (root, request) => { goalAssets.releaseHistory(sameRoot(root, request?.root), object(request.contract, "goal asset contract"), String(request.sessionId)); return null; },
   publishCopies: async (root, request) => {
     await auxiliaryCopies.publishAuxiliaryCopies(sameRoot(root, request?.root), object(request.plan, "copy plan"), object(request.target, "copy target"),
       (path, entries, given) => writeSessionFile(root, path, entries, given));

@@ -6,9 +6,8 @@ import * as storagePath from "node:path";
 
 import { storageTarget } from "../storage-file.mjs";
 import { patchMethod, requireMethods } from "../pi-patch.cjs";
-import { managedGoalReferences, readTranscript, sessionHeaderMatches, sessionReferenceRoot, validateSessionReferencePublication } from "./transcript-file.mjs";
+import { readTranscript, sessionHeaderMatches, sessionReferenceRoot } from "./transcript-file.mjs";
 
-export { validateSessionReferencePublication };
 
 const installedStorageClasses = new WeakSet();
 const currentSessionState = new WeakMap();
@@ -24,7 +23,6 @@ const failedSessionStorage = new WeakSet();
 
 const sessionStorageFiles = new WeakMap();
 
-const sessionReferenceBaselines = new WeakMap();
 
 // The daemon writes all saved chats. Pi asks it through these calls; see transcript-writes.mjs.
 const installedWrites = new WeakMap();
@@ -151,24 +149,20 @@ function sessionStoragePublish(manager, entries, exclusive) {
   try { identity = writes(manager).publish({ path, entries, exclusive }); }
   catch (error) { if (error.damaged) failedSessionStorage.add(manager); throw error; }
   sessionStorageFiles.set(manager, { path, identity });
-  sessionReferenceBaselines.set(manager, { path, entries: manager.fileEntries, references: managedGoalReferences(entries) });
 }
 
 function sessionStorageAppend(manager, entry) {
   const path = manager.sessionFile;
-  const baseline = sessionReferenceBaselines.get(manager);
-  const previous = baseline?.path === path && baseline.entries === manager.fileEntries ? baseline.references : managedGoalReferences(manager.fileEntries);
   const expected = sessionStorageFiles.get(manager);
   const after = entry.type === "custom" || stateRecords.isCurrent(entry) ? manager.fileEntries.findLast(item => item.type !== "session" && item.type !== "custom")?.id ?? null : null;
   let identity;
   try {
     identity = writes(manager).append({
-      path, sessionId: manager.getSessionId(), entry, after, previous: [...previous],
+      path, sessionId: manager.getSessionId(), entry, after,
       expected: expected?.path === path ? expected.identity : null,
     });
   } catch (error) { if (error.damaged) failedSessionStorage.add(manager); throw error; }
   if (identity) sessionStorageFiles.set(manager, { path, identity });
-  sessionReferenceBaselines.set(manager, { path, entries: manager.fileEntries, references: new Set([...previous, ...managedGoalReferences([entry])]) });
 }
 
 function persistSessionEntry(manager, entry) {

@@ -4,7 +4,6 @@ const { Type } = require('typebox');
 const { Check } = require('typebox/value');
 const { awaitRetainedDependencies } = require('./piop-storage/session-publication.cjs');
 const { addRoot } = require('./storage-inventory-roots.cjs');
-const { createObservation, observeEntry, recordGoals } = require('./storage-inventory-owners.cjs');
 
 const journalSchema = Type.Object({ kind: Type.Literal('session-publication'), root: Type.String(), id: Type.String(), sessionId: Type.String(), bytes: Type.Integer({ minimum: 1 }), digest: Type.String({ pattern: '^[a-f0-9]{64}$' }), target: Type.String(), temporary: Type.String(), quarantine: Type.Optional(Type.Object({ path: Type.String() })) });
 
@@ -16,14 +15,6 @@ function artifact(discovery, file, diagnostic, category, provenance, expectedIde
   record.expectedIdentity = expectedIdentity;
 
   return record;
-}
-
-function contractGoals(diagnostic, discovery) {
-  if (!diagnostic.dependencies) return;
-  const observation = createObservation();
-  observeEntry(observation, { goalAssets: diagnostic.dependencies.goalAssets });
-  const kind = 'diagnostic-publication-contract';
-  recordGoals(discovery, { observation, readable: true }, { sessionId: diagnostic.sessionId, sessionPath: diagnostic.journalPath, kind }, { file: diagnostic.journalPath, kind });
 }
 
 function journalProof(profile, diagnostic) {
@@ -42,7 +33,7 @@ async function transcripts(diagnostic, journal, discovery, transcript) {
   for (const file of diagnostic.transcriptPaths) {
     try {
       if (!candidates.has(file)) throw new Error('Publication transcript mapping changed after verified enumeration');
-      await transcript(file, { sessionId: diagnostic.sessionId, publicationId: journal.id, bytes: journal.bytes, digest: journal.digest }, discovery, 'diagnostic-publication-transcript');
+      await transcript(file, { sessionId: diagnostic.sessionId, publicationId: journal.id, bytes: journal.bytes, digest: journal.digest });
       const category = file.startsWith(path.join(journal.root, 'sessions') + path.sep) ? 'active-conversations' : 'other-storage';
       artifact(discovery, file, diagnostic, category, 'Exact-digest publication transcript from ' + diagnostic.journalPath);
     } catch (error) { discovery.warnings.push(file + ': publication transcript diagnostic coverage unavailable: ' + error.message); }
@@ -76,8 +67,6 @@ async function discoverPublicationDiagnostics(profile, discovery, transcript) {
   }
 
   for (const diagnostic of diagnostics) {
-    contractGoals(diagnostic, discovery);
-
     try { await transcripts(diagnostic, journalProof(profile, diagnostic), discovery, transcript); }
     catch (error) { discovery.warnings.push(diagnostic.journalPath + ': publication transcript coverage unavailable: ' + error.message); }
   }

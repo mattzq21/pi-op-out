@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -14,8 +14,7 @@ import { getProjectRepository, rememberProjectRepository } from '../../daemon/sr
 
 const database = require('../../daemon/resources/session-database.cjs');
 const publication = require('../../daemon/resources/piop-storage/session-publication.cjs');
-const dependencies = require('../../daemon/resources/piop-storage/goal-dependencies.cjs');
-const assets = require('../../daemon/resources/piop-storage/goal-assets.cjs');
+const goals = require('../../daemon/resources/piop-storage/goals.cjs');
 const lock = require('../../daemon/resources/piop-storage/reference-publication-lock.cjs');
 
 const daemons: TestDaemon[] = [];
@@ -42,27 +41,25 @@ async function inStorage<T>(profile: string, fn: () => Promise<T>): Promise<T> {
 const branchExists = (repo: string, branch: string) => {
   try { execFileSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/' + branch], { stdio: 'ignore' }); return true; } catch { return false; }
 };
-const owners = (profile: string, directory: string): string[] => assets.readOwners(profile, directory).owners.map((owner: any) => owner.sessionId).sort();
+const objective = (profile: string, id: string): string | undefined => database.connection(profile).prepare('SELECT objective FROM session_goals WHERE session_id=?').get(id)?.objective;
 const warnings = async (daemon: TestDaemon, id: string): Promise<string[]> =>
   (await daemon.invoke('storage_report')).hosts.find((host: any) => host.hostId === 'local').warnings.filter((line: string) => line.includes(id));
 
 async function sourceChat(profile: string, repo: string) {
   const folder = join(profile, 'sessions', 'project');
-  const attachment = join(folder, 'attachments', 'goal-' + randomUUID().replace(/-/g, '').slice(0, 6));
-  mkdirSync(attachment, { recursive: true });
-  writeFileSync(join(attachment, 'goal-objective.md'), 'Ship it');
-  dependencies.saveTextFiles(profile, attachment, ['goal-objective.md']);
+  mkdirSync(folder, { recursive: true });
   const id = database.reserve(profile);
   const path = join(folder, '2026-10-20T00-00-00-000Z_' + id + '.jsonl');
   const message = (entryId: string, parentId: string | null, role: string, text: string, extra: any = {}) =>
     ({ type: 'message', id: entryId, parentId, timestamp: new Date().toISOString(), message: { role, content: [{ type: 'text', text }], timestamp: 1, ...extra } });
-  const entries = [message('u1', null, 'user', 'Read ' + attachment + '/goal-objective.md'), message('a1', 'u1', 'assistant', 'Answer', { stopReason: 'stop' })];
+  const entries = [message('u1', null, 'user', 'Ship it'), message('a1', 'u1', 'assistant', 'Answer', { stopReason: 'stop' })];
   const header = { type: 'session', version: 3, id, timestamp: new Date().toISOString(), cwd: repo };
   await publication.publish(path, [header, ...entries].map(entry => JSON.stringify(entry)).join('\n') + '\n', async (operation: any) => {
     const release = lock.acquireReferencePublicationLock(profile, true);
     try { return await operation(); } finally { release(); }
   }, { dependencies: { workspace: { path: repo, kind: 'existing' } } });
-  return { id, path, attachment, entries };
+  goals.write(path, id, { id: randomUUID(), sessionId: id, objective: 'Ship it', status: 'active' });
+  return { id, path, entries };
 }
 
 async function unfinishedBranch() {
@@ -88,14 +85,13 @@ async function expectRemoved(daemon: TestDaemon, branch: Awaited<ReturnType<type
   expect(Records.read(id, profile)).toBeNull();
   expect(existsSync(published.sessionPath)).toBe(false);
   expect(database.lookup(profile, id) ?? null).toBeNull();
-  expect(owners(profile, source.attachment)).toEqual([source.id]);
+  expect(objective(profile, source.id)).toBe('Ship it');
   expect(existsSync(created.worktree)).toBe(false);
   expect(branchExists(repo, created.branch)).toBe(false);
   expect(getProjectRepository(profile, created.worktree)).toBeNull();
   expect(await warnings(daemon, id)).toEqual([]);
   expect((await daemon.invoke('list_sessions')).some((row: any) => row.id === id)).toBe(false);
   expect(readFileSync(source.path, 'utf8')).toBe(sourceBody);
-  expect(existsSync(join(source.attachment, 'goal-objective.md'))).toBe(true);
 }
 
 test('recovery keeps an unfinished branch creation whose cleanup failed, reports it, and later removes all its parts', async () => {
@@ -104,7 +100,7 @@ test('recovery keeps an unfinished branch creation whose cleanup failed, reports
   const db = new DatabaseSync(join(profile, 'sessions.sqlite'));
   try { db.prepare("UPDATE chat_worktrees SET record_json=json_set(record_json, '$.owner', '1:0') WHERE chat_id=?").run(id); }
   finally { db.close(); }
-  expect(owners(profile, source.attachment)).toEqual([source.id, id].sort());
+  expect(objective(profile, id)).toBe('Ship it');
   expect(existsSync(published.sessionPath)).toBe(true);
   const sourceBody = readFileSync(source.path, 'utf8');
 

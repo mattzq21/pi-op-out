@@ -1,77 +1,12 @@
 import * as stateRecords from "./session-records.cjs";
-import * as storageDatabase from "../session-database.cjs";
 import * as storageFs from "node:fs";
 import * as storagePath from "node:path";
 import { homedir as storageHome } from "node:os";
 
-// Reads chat transcripts and checks the goal folders that they name. Pi and the daemon both use it; it changes nothing.
+// Reads chat transcripts. Pi and the daemon both use it; it changes nothing.
 
 export function sessionReferenceRoot() {
   return storagePath.join(storageHome(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
-}
-
-function textGoalReferences(text, root, found) {
-  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^${escaped}/sessions/(?:[^\\r\\n]*?/)?attachments/goal-(?:[a-f0-9]{64}|[A-Za-z0-9]{6})(?![A-Za-z0-9_-])`);
-  const prefix = root + "/";
-  let start = text.indexOf(prefix);
-
-  while (start !== -1) {
-    const next = text.indexOf(prefix, start + prefix.length);
-    const segment = text.slice(start, next === -1 ? undefined : next);
-    const match = pattern.exec(segment);
-
-    if (match && storagePath.resolve(match[0]) === match[0]) found.add(match[0]);
-    start = next;
-  }
-}
-
-export function managedGoalReferences(value, root = sessionReferenceRoot()) {
-  const found = new Set();
-
-  for (const token of JSON.stringify(value).matchAll(/"(?:[^"\\]|\\.)*"/g)) {
-    textGoalReferences(JSON.parse(token[0]), root, found);
-  }
-
-  return found;
-}
-
-function goalTextContents(directory, root) {
-  const info = storageFs.lstatSync(directory, { bigint: true });
-  const identity = `${info.dev}:${info.ino}`;
-  const saved = storageDatabase.connection(root).prepare("SELECT contents_json FROM goal_text_contents WHERE directory=? AND identity=?").get(directory, identity);
-
-  if (saved) return JSON.parse(saved.contents_json);
-  throw new Error('Goal text contents are not registered');
-}
-
-function validateGoalDirectory(directory, root) {
-  const objective = storagePath.join(directory, "goal-objective.md");
-
-  try {
-    if (!storageFs.lstatSync(directory).isDirectory() || !storageFs.lstatSync(objective).isFile()) throw new Error("Invalid goal attachment");
-
-    return goalTextContents(directory, root).flatMap(entry => [...managedGoalReferences(entry.text, root)]);
-  } catch (error) { throw new Error(`Managed goal attachment is unavailable: ${directory}. Reattach it before saving. ${error.message}`); }
-}
-
-export function validateNewGoalReferences(incoming, previous, root = sessionReferenceRoot()) {
-  const retained = new Set(previous);
-  const pending = new Set(incoming);
-
-  for (const directory of pending) {
-    if (retained.has(directory)) continue;
-    retained.add(directory);
-
-    for (const dependency of validateGoalDirectory(directory, root)) pending.add(dependency);
-  }
-}
-
-export function validateSessionReferencePublication(entries, previous = inheritedSessionEntries(entries), root = sessionReferenceRoot()) {
-  const incoming = managedGoalReferences(entries, root);
-  validateNewGoalReferences(incoming, managedGoalReferences(previous, root), root);
-
-  return incoming;
 }
 
 export function fileIdentity(info) {
@@ -120,18 +55,6 @@ export function storedSessionEntries(path) {
   const { entries, partial } = readTranscript(path);
   if (partial) console.warn(`${path}: last write was interrupted; ignored ${partial} bytes`);
   return entries;
-}
-
-function sessionParentPath(entry) {
-  if (entry?.type === "session") return entry.parentSession;
-
-  if (stateRecords.isAuxiliaryParent(entry) && entry.data.kind === "subagent") return entry.data.parentSessionPath;
-}
-
-function inheritedSessionEntries(entries) {
-  const parents = entries.map(sessionParentPath).filter(path => path?.constructor === String && storagePath.isAbsolute(path));
-
-  return [...new Set(parents)].flatMap(path => storedSessionEntries(path));
 }
 
 export function sessionHeaderMatches(file, id, cwd) {

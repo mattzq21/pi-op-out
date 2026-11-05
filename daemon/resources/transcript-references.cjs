@@ -12,12 +12,9 @@ function fingerprint(info) {
   return [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(':');
 }
 
-function relevant(entry, root) {
-  return entry?.goalAssets !== undefined || JSON.stringify(entry)?.includes(JSON.stringify(root).slice(1, -1));
-}
-
-function summarize(entries, root) {
-  return JSON.parse(JSON.stringify([entries[0], ...entries.slice(1).filter(entry => relevant(entry, root))]));
+// The summary of a transcript is its header.
+function summarize(entries) {
+  return JSON.parse(JSON.stringify(entries.slice(0, 1)));
 }
 
 function save(db, file, stamp, entries) {
@@ -25,11 +22,8 @@ function save(db, file, stamp, entries) {
     .run(file, entries[0]?.id?.constructor === String ? entries[0].id.toLowerCase() : null, stamp, JSON.stringify(entries));
 }
 
-function appendSaved(db, file, previous, stamp, entry) {
+function appendSaved(db, file, previous, stamp) {
   if (!previous) return false;
-
-  if (entry) return Boolean(db.prepare("UPDATE transcript_references SET fingerprint=?, entries_json=json_insert(entries_json, '$[#]', json(?)) WHERE session_path=? AND fingerprint=? AND format_version=2")
-    .run(stamp, JSON.stringify(entry), file, previous).changes);
 
   return Boolean(db.prepare('UPDATE transcript_references SET fingerprint=? WHERE session_path=? AND fingerprint=? AND format_version=2').run(stamp, file, previous).changes);
 }
@@ -91,7 +85,7 @@ function savedEntries(db, file) {
 // Saves the summary of the whole transcript, which has just been saved.
 const publish = onMainThread('transcript-references.publish', (root, file, entries) => {
   root = fs.realpathSync(root);
-  const record = summarize(entries, root);
+  const record = summarize(entries);
   const stamp = fingerprint(fs.lstatSync(file, { bigint: true }));
   const db = database.connection(root);
 
@@ -112,7 +106,7 @@ const append = onMainThread('transcript-references.append', (root, file, entry, 
 
   if (previous?.root !== root || previous.stamp !== fingerprint(before)) {
     const entries = savedEntries(db, file);
-    const record = summarize(entries, root);
+    const record = summarize(entries);
 
     database.transaction(db, 'IMMEDIATE', () => {
       save(db, file, stamp, record);
@@ -122,12 +116,11 @@ const append = onMainThread('transcript-references.append', (root, file, entry, 
 
     return;
   }
-  const addition = relevant(entry, root) ? JSON.parse(JSON.stringify(entry)) : undefined;
-  const record = addition ? [...previous.record, addition] : previous.record;
+  const record = previous.record;
   const id = previous.record[0]?.id;
 
   database.transaction(db, 'IMMEDIATE', () => {
-    if (!appendSaved(db, file, previous.stamp, stamp, addition)) save(db, file, stamp, record);
+    if (!appendSaved(db, file, previous.stamp, stamp)) save(db, file, stamp, record);
     publishReceipts(db, file, stamp, previous.stamp, id, () => savedEntries(db, file), entry);
   });
 
@@ -158,7 +151,7 @@ function read(root, file, connection) {
   } finally { fs.closeSync(descriptor); }
 
   if (fingerprint(fs.lstatSync(file, { bigint: true })) !== before) throw new Error('Transcript changed during reference import');
-  const saved = summarize(stateRecords.merge(file, entries, db), root);
+  const saved = summarize(stateRecords.merge(file, entries, db));
   saveSummary(root, file, before, saved);
 
   return saved;
