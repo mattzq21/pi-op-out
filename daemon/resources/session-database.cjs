@@ -16,7 +16,7 @@ function rollback(db, error) {
   return error;
 }
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 // The whole storage schema. Only this module creates or changes tables.
 const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, session_path TEXT, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1))); CREATE INDEX IF NOT EXISTS sessions_path ON sessions(session_path);
@@ -59,7 +59,6 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY
       CREATE TABLE IF NOT EXISTS session_group_assignments (session_key TEXT PRIMARY KEY, group_id TEXT);
       CREATE TABLE IF NOT EXISTS session_group_removed_projects (project_id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS session_group_orders (scope TEXT NOT NULL, owner TEXT NOT NULL, position INTEGER NOT NULL, token TEXT NOT NULL, PRIMARY KEY(scope, owner, position));
-      CREATE TABLE IF NOT EXISTS session_publications (publication_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS conversation_ownership (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cleanup_requests (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS recovery_directories (record_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
@@ -251,7 +250,6 @@ function reserveId(db) {
 }
 
 const pendingTables = {
-  recovery: ['session_publications'],
   retention: ['cleanup_requests'],
 };
 
@@ -331,23 +329,6 @@ const finishCleanup = onMainThread('session-database.finishCleanup', (root, kind
   connection(root).prepare('DELETE FROM cleanup_requests WHERE kind=? AND revision=?').run(kind, revision);
 });
 
-function publication(root, id) {
-  const row = rows(root, 'SELECT record_json FROM session_publications WHERE publication_id=?', id)[0];
-
-  return row ? JSON.parse(row.record_json) : undefined;
-}
-
-const savePublication = onMainThread('session-database.savePublication', (root, id, record) => {
-  connection(root).prepare(`INSERT INTO session_publications VALUES (?, ?) ON CONFLICT(publication_id) DO UPDATE SET record_json=excluded.record_json`)
-    .run(id, JSON.stringify(record));
-});
-
-const removePublication = onMainThread('session-database.removePublication', (root, id) => {
-  connection(root).prepare('DELETE FROM session_publications WHERE publication_id=?').run(id);
-});
-
-function publications(root) { return rows(root, 'SELECT publication_id FROM session_publications ORDER BY publication_id').map(row => row.publication_id); }
-
 function lookup(root, sessionId) {
   return connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId)?.session_path;
 }
@@ -369,5 +350,5 @@ function storageRoot(file) {
   throw new Error('Conversation is outside session storage');
 }
 
-module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, register, registerPath, lookup, paths, storageRoot, publication, savePublication, removePublication, publications, cleanupRequest, finishCleanup,
+module.exports = { readOnlyStorage, rollback, transaction, connection, reserve, reserveId, pending, bind, directoryQuery, register, registerPath, lookup, paths, storageRoot, cleanupRequest, finishCleanup,
   recoveryRecords, saveRecoveryRecord, queuedInputs, queuedInput };

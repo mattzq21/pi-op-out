@@ -64,23 +64,18 @@ const write = onMainThread('goals.write', (file, sessionId, goal) => {
   });
 });
 
-function copyFrom(db, source, sessionId) {
-  const goal = db.prepare('SELECT g.objective, g.status FROM session_goals g JOIN sessions s USING(session_id) WHERE s.session_path=?').get(source);
+// Gives sessionId a copy of the goal of sourceId, if it has one, inside the caller's transaction.
+function copyGoal(db, sourceId, sessionId) {
+  const goal = db.prepare('SELECT objective, status FROM session_goals WHERE session_id=?').get(sourceId);
   if (goal) insert(db, sessionId, { id: randomUUID(), sessionId, objective: goal.objective, status: goal.status });
 }
 
 // Gives the chat target the goal of the chat source, if it has one.
 const copy = onMainThread('goals.copy', (source, target, sessionId) => {
-  access(target, sessionId, db => database.transaction(db, 'IMMEDIATE', () => copyFrom(db, source, sessionId)));
+  access(target, sessionId, db => database.transaction(db, 'IMMEDIATE', () => {
+    const row = db.prepare('SELECT session_id FROM sessions WHERE session_path=?').get(source);
+    if (row) copyGoal(db, row.session_id, sessionId);
+  }));
 });
 
-// Binds the reserved sessionId to target and, with source, gives it the goal of source, in one transaction.
-const bind = onMainThread('goals.bind', (root, sessionId, target, source) => {
-  const db = database.connection(root);
-  database.transaction(db, 'IMMEDIATE', () => {
-    database.bind(db, sessionId, target);
-    if (source !== undefined) copyFrom(db, source, sessionId);
-  });
-});
-
-module.exports = { read, restore, bySubmission, write, copy, bind, validate };
+module.exports = { read, restore, bySubmission, write, copy, copyGoal, validate };

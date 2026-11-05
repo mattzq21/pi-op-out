@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import database from '../../daemon/resources/session-database.cjs';
 import sessionNames from '../../daemon/resources/session-broker/session-names.cjs';
+import newChats from '../../daemon/resources/piop-storage/new-chats.cjs';
 import { storageSchemaImports } from '../../scripts/storage-schema-plugin.mjs';
 import { testPi } from '../pi-install.mjs';
 import { localStorageChannel } from '../local-storage-channel.mjs';
@@ -134,7 +135,7 @@ test('SQL state follows archive and restore and is removed with the session', as
   assert.equal(db.prepare('SELECT count(*) AS n FROM session_names').get().n, 0);
 });
 
-test('fork publication copies current settings once, independent of the selected message', async t => {
+test('a new chat copies current settings once, independent of the selected message', async t => {
   const f = await fixture(t);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   const user = f.manager.appendMessage({ role: 'user', content: 'Start', timestamp: 1 });
@@ -143,12 +144,9 @@ test('fork publication copies current settings once, independent of the selected
   f.manager.branch(user);
   f.manager.appendCustomEntry('piop-fast-mode-state', { enabled: false });
   f.manager.appendMessage({ role: 'user', content: 'Right', timestamp: 3 });
-  const bundle = join(f.home, 'publish.mjs');
-  await build({ entryPoints: ['daemon/resources/piop-storage/publication-writes.mjs'], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', plugins: [storageSchemaImports()], banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
-  const { writeSessionFile } = await import(pathToFileURL(bundle));
   const id = database.reserve(f.root);
   const target = join(f.root, 'sessions', `2026-10-19T01-00-00-000Z_${id}.jsonl`);
-  await writeSessionFile(f.root, target, [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)]);
+  newChats.create(f.root, { path: target, entries: [{ ...f.manager.getHeader(), id, parentSession: f.file }, ...f.manager.getBranch(left)] });
   assert.equal(readFileSync(target, 'utf8').split('\n').filter(Boolean).map(JSON.parse).some(entry => entry.type === 'custom'), false);
   const fork = f.SessionManager.open(target);
   assert.deepEqual(fork.getBranch().filter(entry => entry.customType === 'piop-fast-mode-state').map(entry => entry.data), [{ enabled: false }]);

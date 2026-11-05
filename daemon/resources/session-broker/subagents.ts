@@ -1,4 +1,4 @@
-import { reserveSessionId } from "../piop-storage/session-file.ts";
+import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, CustomEntryDraft } from "@earendil-works/pi-coding-agent";
 import type { SubagentLimitsRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import { Type } from "typebox";
@@ -9,7 +9,6 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { currentHost } from "./client.ts";
-import { writeSessionFile } from "../piop-storage/session-file.ts";
 import { activeConversation } from "./conversation-location.ts";
 import { interruptSession, requireMessageLength, sendSessionMessage, sessionSnapshot, snapshotStatus, subagentResponses } from "./orchestration.ts";
 import { SUBAGENT_PARENT, latestRuns, ownedRuns, saveRun, subagentParent, subagentPayload, registerSubagentResults, type SubagentRun } from "./subagent-state.ts";
@@ -99,13 +98,13 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
   return result; };
 
-  try { await writeSessionFile(sessionPath, [
+  try { await createChat({ path: sessionPath, name: `Subagent: ${task.name}`, entries: [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: workspace.cwd },
-    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), parentSessionPath: ctx.sessionManager.getSessionFile(), toolCallId, task: task.task } }),
+    entry({ type: "custom", customType: SUBAGENT_PARENT, data: { kind: "subagent", version: 1, sessionId, hostId: currentHost(), parentSessionId, parentHostId: currentHost(), toolCallId, task: task.task } }),
     entry({ type: "custom", customType: "pi-define-agents-state", data: profile }),
     ...fastMode ? [entry(fastMode)] : [],
-  ], { name: `Subagent: ${task.name}`, dependencies: { workspace: { path: workspace.cwd, kind: "existing" } } }); }
-  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}; chat assets are retained: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
+  ] }); }
+  catch (error) { throw new Error(`Subagent session creation failed in ${workspace.cwd}: ${(error instanceof Error ? error.message : String(error))}`, { cause: error }); }
 
   return run;
 }

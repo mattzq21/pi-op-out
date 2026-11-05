@@ -1,8 +1,14 @@
 const fs = require('node:fs');
 const { dirname, join } = require('node:path');
 const { randomUUID } = require('node:crypto');
-const io = require('./session-transactions.cjs');
 const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
+
+function syncDirectory(directory) {
+  const descriptor = fs.openSync(directory, 'r');
+
+  try { fs.fsyncSync(descriptor); }
+  finally { fs.closeSync(descriptor); }
+}
 
 function relocateSession(profile, sessionPath, requestedReplacement, from) {
   const release = acquireReferencePublicationLock(profile, true);
@@ -37,7 +43,7 @@ function rewriteHeader(sessionPath, replacement, from) {
     fs.closeSync(file); file = undefined;
     require('./transcript-metadata.cjs').invalidate(sessionPath);
     fs.renameSync(temporary, sessionPath);
-    io.sync(dirname(sessionPath));
+    syncDirectory(dirname(sessionPath));
     require('./transcript-metadata.cjs').remember(sessionPath);
   } finally {
     if (file !== undefined) fs.closeSync(file);

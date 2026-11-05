@@ -23,7 +23,7 @@ export function releaseReservation(root: string, id: string): void {
   connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(id);
 }
 
-export function pending(root: string, work: 'recovery' | 'retention'): boolean {
+export function pending(root: string, work: 'retention'): boolean {
   return SessionTables.pending(connection(root), work);
 }
 

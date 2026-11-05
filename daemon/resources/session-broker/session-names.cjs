@@ -18,6 +18,7 @@ function validName(name) {
 
 function nameOf(db, sessionId) { return db.prepare('SELECT name FROM session_names WHERE session_id=?').get(sessionId)?.name; }
 
+// Saves the name of sessionId inside the caller's transaction.
 function write(db, sessionId, name, replace) {
   db.prepare(`INSERT INTO session_names (session_id, name) VALUES (?, ?) ON CONFLICT(session_id) DO ${replace ? 'UPDATE SET name=excluded.name' : 'NOTHING'}`).run(sessionId, validName(name));
 }
@@ -48,4 +49,4 @@ const renameSession = onMainThread('session-names.renameSession', (root, session
   });
 });
 
-module.exports = { capSessionName, promptName, validName, sessionName, nameSession, renameSession, nameOf };
+module.exports = { capSessionName, promptName, validName, sessionName, nameSession, renameSession, nameOf, writeName: write };

@@ -88,8 +88,6 @@ export class ConversationOwnership {
   private constructor(readonly root: string, private revocation: Revocation) {}
 
   static async create(home: string, storage: string, revocation: Revocation): Promise<ConversationOwnership> {
-    const root = join(home, storage);
-    if (Registry.pending(root, 'recovery')) await SessionLifecycle.maintain({ root });
     return new ConversationOwnership(join(home, storage), revocation);
   }
 

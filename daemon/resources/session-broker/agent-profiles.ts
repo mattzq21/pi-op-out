@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import type { AgentProfilesRequest, AgentStartPurpose, SubagentProfileRequest } from "../../../pi-extensions/piop-define-agents/contracts.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { writeSessionFile, reserveSessionId } from "../piop-storage/session-file.ts";
+import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
 import { currentHost } from "./client.ts";
 import { childFastModeEntry } from "./fast-mode.ts";
 
@@ -29,11 +29,11 @@ export async function createProfileSession(pi: ExtensionAPI, ctx: ExtensionConte
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const stateId = randomUUID();
-  await writeSessionFile(sessionPath, [
+  await createChat({ path: sessionPath, name: title, entries: [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd },
     { type: "custom", id: stateId, parentId: null, timestamp, customType: "pi-define-agents-state", data: { ...state, locked: true } },
     ...fastMode ? [{ ...fastMode, id: randomUUID(), parentId: stateId, timestamp }] : [],
-  ], { name: title, dependencies: { workspace: { path: cwd, kind: "existing" } } });
+  ] });
 
   return { peerId: sessionId, hostId: currentHost(), sessionPath, agent: state.active };
 }

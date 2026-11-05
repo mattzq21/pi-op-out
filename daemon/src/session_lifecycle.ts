@@ -46,7 +46,7 @@ export async function deleteBlank(blank: { path?: string | null; id?: string | n
   await run({ action: 'delete-blank', blank });
 }
 
-// Finishes session publications, deferred retention and temporary folder cleanup. False when the storage was busy.
+// Finishes deferred retention and temporary folder cleanup. False when the storage was busy.
 export function maintain(options: { root?: string; signal?: AbortSignal } = {}): Promise<boolean> {
   return run({ action: 'maintain' }, options);
 }

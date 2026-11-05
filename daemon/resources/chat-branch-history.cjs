@@ -1,13 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const io = require('./piop-storage/session-publication-io.cjs');
-const publication = require('./piop-storage/session-publication.cjs');
 const stateRecords = require('./piop-storage/session-records.cjs');
 const database = require('./session-database.cjs');
-const { acquireReferencePublicationLock } = require('./piop-storage/reference-publication-lock.cjs');
-const auxiliaryCopies = require('./piop-storage/auxiliary-copies.cjs');
+const newChats = require('./piop-storage/new-chats.cjs');
 const names = require('./session-broker/session-names.cjs');
+const { readSessionHeader } = require('./session-header.cjs');
 const { onMainThread } = require('./main-thread.cjs');
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -25,7 +23,7 @@ function requirePath(value, label) {
 function storageRoot(root, sessionPath) {
   requirePath(root, 'storage root');
   const canonical = fs.realpathSync(root);
-  if (io.rootForTarget(sessionPath) !== canonical) throw new Error('The conversation is outside this storage root');
+  if (database.storageRoot(sessionPath) !== canonical) throw new Error('The conversation is outside this storage root');
   return canonical;
 }
 
@@ -71,13 +69,6 @@ function userText(history) {
 
 function branchName(sourceName, history) { return (sourceName || userText(history) || 'Chat') + ' (branch)'; }
 
-function withReferences(root) {
-  return async operation => {
-    const release = acquireReferencePublicationLock(root, true);
-    try { return await operation(); } finally { release(); }
-  };
-}
-
 async function publishBranchHistory(request) {
   const { sourcePath, sessionId, entries, leafId, entryId } = request ?? {};
   requirePath(sourcePath, 'source conversation path');
@@ -85,7 +76,7 @@ async function publishBranchHistory(request) {
   requirePath(request.cwd, 'branch folder');
   if (!Array.isArray(entries) || typeof leafId !== 'string' || typeof entryId !== 'string') throw new Error('Invalid branch history request');
   const root = storageRoot(request.root, sourcePath);
-  const source = io.header(sourcePath);
+  const source = readSessionHeader(sourcePath);
   if (!source) throw new Error('The source conversation has no saved identity');
   if (source.id === sessionId) throw new Error('The branch identity is already in use');
   const selected = selectHistory(entries, leafId, entryId);
@@ -93,89 +84,36 @@ async function publishBranchHistory(request) {
   const timestamp = new Date().toISOString();
   const sessionPath = path.join(path.dirname(sourcePath), timestamp.replace(/[:.]/g, '-') + '_' + sessionId + '.jsonl');
   const cwd = fs.realpathSync(request.cwd);
-  const copies = auxiliaryCopies.planAuxiliaryCopies({ root, source: { id: source.id, path: sourcePath }, target: { id: sessionId, path: sessionPath }, cutoff: selected.at(-1)?.timestamp, cwd: { from: source.cwd, to: cwd } });
-  const history = auxiliaryCopies.rewriteForkHistory(selected, copies);
-  const retries = auxiliaryCopies.retryRecord(copies);
-  if (retries) current.set(auxiliaryCopies.FORK_RETRIES, retries);
   current.set('piop-input-hold', { type: 'custom', customType: 'piop-input-hold', data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const forkSource = { sessionId: source.id, sessionPath: sourcePath, entryId };
   const header = { type: 'session', version: source.version, id: sessionId, timestamp, cwd, parentSession: sourcePath, piopForkSource: forkSource };
-  const body = [header, ...history, ...current.values()].map(entry => JSON.stringify(entry)).join('\n') + '\n';
+  const sourceName = names.sessionName(sourcePath, source.id);
+  const name = request.keepName === true ? sourceName : branchName(sourceName, selected);
   try {
-    const published = await publication.publish(sessionPath, body, withReferences(root), { name: request.keepName === true ? names.sessionName(sourcePath, source.id) : branchName(names.sessionName(sourcePath, source.id), history), goalSource: sourcePath, dependencies: { workspace: { path: cwd, kind: 'existing' } } });
-    if (published.warnings.length) throw new Error(published.warnings.join('; '));
+    newChats.fork(root, { path: sessionPath, entries: [header, ...selected, ...current.values()], ...name === undefined ? {} : { name }, goalSource: source.id,
+      source: source.id, ...selected.length ? { cutoff: selected.at(-1).timestamp } : {}, cwd: { from: source.cwd, to: cwd } });
   } catch (error) {
     try { await discardBranchHistory(root, sessionId, sessionPath); }
     catch (cleanup) { throw new Error('Could not create the branch: ' + message(error) + '\nCleanup failed: ' + message(cleanup), { cause: error }); }
     throw new Error('Could not create the branch: ' + message(error), { cause: error });
   }
-  try {
-    await auxiliaryCopies.publishAuxiliaryCopies(root, copies, { id: sessionId }, async (file, copied, options) => {
-      const published = await publication.publish(file, copied.map(entry => JSON.stringify(entry)).join('\n') + '\n', withReferences(root), options);
-      if (published.warnings.length) throw new Error(published.warnings.join('; '));
-    });
-  } catch (error) {
-    throw new Error('The branch was saved at ' + sessionPath + ', but copying its side chats, reviews and subagents failed: ' + message(error), { cause: error });
-  }
   return { sessionPath, forkSource };
 }
 
 function ownedTranscript(file, sessionId) {
-  const header = io.header(file);
+  const header = readSessionHeader(file);
   if (!header || header.id !== sessionId || !header.piopForkSource) throw new Error('Refusing to remove a conversation that is not this branch: ' + file);
-}
-
-function journals(root, sessionId) {
-  return database.publications(root).map(id => database.publication(root, id)).filter(journal => journal?.sessionId === sessionId);
 }
 
 function registeredPath(root, sessionId) {
   return database.connection(root).prepare('SELECT session_path FROM sessions WHERE session_id=?').get(sessionId);
 }
 
-function removeFile(file) {
-  fs.unlinkSync(file);
-  io.sync(path.dirname(file));
-}
-
-function removeJournal(root, journal, target) {
-  if (journal.target !== target) throw new Error('Publication of this branch has another path: ' + journal.target);
-  const owned = file => journal.temporaryIdentity !== undefined && io.matches(file, journal.temporaryIdentity);
-  if (io.exists(journal.temporary)) {
-    if (!owned(journal.temporary)) throw new Error('Unowned temporary transcript retained: ' + journal.temporary);
-    removeFile(journal.temporary);
-  }
-  const quarantine = path.join(root, 'session-publication-quarantine', journal.id);
-  const part = path.join(quarantine, 'transcript.jsonl.part');
-  if (io.exists(part)) {
-    if (!owned(part)) throw new Error('Unowned quarantined transcript retained: ' + part);
-    removeFile(part);
-  }
-  if (io.exists(quarantine)) { fs.rmdirSync(quarantine); io.sync(path.dirname(quarantine)); }
-  database.removePublication(root, journal.id);
-}
-
-function checkNoWriter(root, target) {
-  const lease = io.claim(io.lockName(target));
-  if (lease === null) throw new Error('Another writer still owns this branch: ' + target);
-  lease();
-}
-
 const releaseReservation = onMainThread('chat-branch-history.releaseReservation', (root, sessionId) => {
   database.connection(root).prepare('DELETE FROM sessions WHERE session_id=? AND session_path IS NULL').run(sessionId);
 });
 
-function forget(root, sessionId, target) {
-  const row = registeredPath(root, sessionId);
-  if (!row) return;
-  if (row.session_path === null) {
-    releaseReservation(root, sessionId);
-    return;
-  }
-  if (row.session_path !== target) throw new Error('This branch identity belongs to another conversation: ' + row.session_path);
-  require('./session-lifecycle.cjs').forget(root, [sessionId]);
-}
-
+// Removes the branch sessionId: its rows, and then its files.
 async function discardBranchHistory(root, sessionId, sessionPath) {
   requireUuid(sessionId, 'branch identity');
   if (sessionPath !== null) {
@@ -184,22 +122,19 @@ async function discardBranchHistory(root, sessionId, sessionPath) {
   }
   requirePath(root, 'storage root');
   root = fs.realpathSync(root);
-  await io.lockedAsync(root, () => {
-    const release = acquireReferencePublicationLock(root, true);
-    try {
-      const pending = journals(root, sessionId);
-      const target = sessionPath ?? pending[0]?.target ?? registeredPath(root, sessionId)?.session_path ?? null;
-      if (target !== null && !io.inside(path.join(root, 'sessions'), target)) throw new Error('The branch is outside active conversation storage');
-      const failures = [];
-      const step = operation => { try { operation(); } catch (error) { failures.push(message(error)); } };
-      if (target !== null) step(() => { if (io.exists(target)) { ownedTranscript(target, sessionId); removeFile(target); } });
-      for (const journal of pending) step(() => removeJournal(root, journal, target));
-      if (target !== null) step(() => checkNoWriter(root, target));
-      if (!failures.length) step(() => forget(root, sessionId, target));
-      if (failures.length) throw new Error('Branch cleanup is incomplete: ' + failures.join('; '));
-    } finally { release(); }
-  });
+  const row = registeredPath(root, sessionId);
+  const target = sessionPath ?? row?.session_path ?? null;
+  if (target !== null && database.storageRoot(target) !== root) throw new Error('The branch is outside active conversation storage');
+  if (target !== null && fs.existsSync(target)) ownedTranscript(target, sessionId);
+  if (row?.session_path === null) releaseReservation(root, sessionId);
+  else if (row) {
+    if (row.session_path !== target) throw new Error('This branch identity belongs to another conversation: ' + row.session_path);
+    require('./session-lifecycle.cjs').forget(root, [sessionId]);
+  }
+  if (target !== null) {
+    fs.rmSync(target.slice(0, -'.jsonl'.length) + '.snapshots', { recursive: true, force: true });
+    fs.rmSync(target, { force: true });
+  }
 }
 
 module.exports = { publishBranchHistory, discardBranchHistory };
-

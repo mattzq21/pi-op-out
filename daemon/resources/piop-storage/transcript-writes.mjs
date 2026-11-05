@@ -107,7 +107,7 @@ export function append(root, request) {
   const item = entry(request.entry);
   registry.registerExternalTranscript(root, path, sessionId);
   registerManaged(root, path, sessionId, false);
-  if (item.type === "custom" || stateRecords.isCurrent(item)) {
+  if (stateRecords.isRecord(item) || stateRecords.isCurrent(item)) {
     if (request.after !== null && typeof request.after !== "string") throw new Error("Invalid record position");
     stateRecords.append(path, sessionId, request.after, item);
     const before = storageFs.lstatSync(path, { bigint: true });

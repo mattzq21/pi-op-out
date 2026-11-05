@@ -103,7 +103,7 @@ function recordRecoverySource(record, discovery, owners) {
 }
 
 async function discoverRoots(profile) {
-  const discovery = { cwds: new Map(), recovery: new Map(), retainedArtifacts: new Map(), sessionPaths: new Set(), warnings: [] };
+  const discovery = { cwds: new Map(), recovery: new Map(), sessionPaths: new Set(), warnings: [] };
   await readRegistry(profile, discovery);
   await recoveryRoots(profile, discovery);
 

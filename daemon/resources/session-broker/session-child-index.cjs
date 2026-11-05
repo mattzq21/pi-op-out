@@ -4,15 +4,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const { Type } = require('typebox');
 const { Check } = require('typebox/value');
-const io = require('../piop-storage/session-publication-io.cjs');
 const tables = require('../session-database.cjs');
 const { onMainThread } = require('../main-thread.cjs');
 
 const childSchema = Type.Object({ sessionId: Type.String(), sessionPath: Type.String(), kind: Type.String({ minLength: 1 }) });
 
 const indexSchema = Type.Object({ version: Type.Literal(1), sessionId: Type.String(), sessionPath: Type.String(), complete: Type.Boolean(), children: Type.Array(childSchema) });
-
-const parentSchema = Type.Object({ type: Type.Literal('custom'), customType: Type.Literal(stateRecords.AUXILIARY_PARENT), data: Type.Object({ kind: Type.String({ minLength: 1 }), sessionId: Type.String(), parentSessionId: Type.String(), parentSessionPath: Type.Optional(Type.String()) }) });
 
 function read(root, sessionId) {
   const db = tables.connection(root);
@@ -63,42 +60,29 @@ function ensure(root, sessionId, sessionPath, complete = false) {
   return value;
 }
 
-const add = onMainThread('session-child-index.add', (root, parentSessionId, parentSessionPath, child) => {
-  const value = { version: 1, sessionId: parentSessionId, sessionPath: parentSessionPath ?? '', complete: false, children: [child] };
+// Saves, inside the caller's transaction, the index of the new chat sessionId and its link to its parent.
+function register(db, sessionId, entries) {
+  db.prepare('INSERT INTO auxiliary_child_state VALUES (?, 1) ON CONFLICT(session_id) DO UPDATE SET complete=1').run(sessionId);
+  const parent = stateRecords.auxiliaryParent(entries, sessionId);
 
-  if (!Check(indexSchema, value)) throw new Error('Invalid conversation child index');
-  const db = tables.connection(root);
-
-  tables.transaction(db, 'IMMEDIATE', () => {
-    if (!identity(db, parentSessionId, value.sessionPath) || !identity(db, child.sessionId, child.sessionPath)) return;
-    db.prepare('INSERT INTO auxiliary_child_state VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING').run(parentSessionId);
-    db.prepare(`INSERT INTO auxiliary_children (parent_id, child_id, kind) VALUES (?, ?, ?)
-      ON CONFLICT(parent_id, child_id) DO UPDATE SET kind=excluded.kind`)
-      .run(parentSessionId, child.sessionId, child.kind);
-  });
-});
-
-function registerTranscript(root, sessionPath, body) {
-  const entries = stateRecords.merge(sessionPath, body.trim().split('\n').map(JSON.parse));
-  const header = entries[0];
-
-  if (!Check(io.headerSchema, header)) throw new Error('Invalid conversation child publication');
-  ensure(root, header.id, sessionPath, header.piopChildIndexVersion === 1);
-
-  for (const entry of entries) {
-    if (!Check(parentSchema, entry) || entry.data.sessionId !== header.id) continue;
-    add(root, entry.data.parentSessionId, entry.data.parentSessionPath, { sessionId: header.id, sessionPath, kind: entry.data.kind });
-  }
+  if (!parent) return;
+  db.prepare('INSERT INTO auxiliary_child_state VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING').run(parent.parentSessionId);
+  db.prepare('INSERT INTO auxiliary_children (parent_id, child_id, kind) VALUES (?, ?, ?)').run(parent.parentSessionId, sessionId, parent.kind);
 }
 
-async function initialize(sessionPath, sessionId, fresh) {
+// The auxiliary chats directly under parentId, with their kind and archive state.
+function children(root, parentId) {
+  return tables.connection(root).prepare(`SELECT c.child_id AS sessionId, c.kind, s.archived FROM auxiliary_children c
+    JOIN sessions s ON s.session_id=c.child_id WHERE c.parent_id=? AND s.session_path IS NOT NULL`).all(parentId)
+    .map(row => ({ sessionId: row.sessionId, kind: row.kind, archived: row.archived === 1 }));
+}
+
+function initialize(sessionPath, sessionId, fresh) {
   const root = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'));
 
-  if (!io.inside(path.join(root, 'sessions'), sessionPath) || !io.canonical(path.dirname(sessionPath))) throw new Error('Conversation child index is outside Piop-controlled storage');
+  if (tables.storageRoot(sessionPath) !== root || fs.realpathSync(path.dirname(sessionPath)) !== path.dirname(sessionPath)) throw new Error('Conversation child index is outside Piop-controlled storage');
 
-  return io.lockedAsync(root, () => {
-    if (fresh || read(root, sessionId)) ensure(root, sessionId, sessionPath, fresh);
-  });
+  if (fresh || read(root, sessionId)) ensure(root, sessionId, sessionPath, fresh);
 }
 
 // The chats of the tree of sessionId: its root chat and every side chat under that root. sessionId comes first.
@@ -113,4 +97,4 @@ function tree(root, sessionId) {
   return [...new Set([sessionId, ...rows.map(row => row.id)])];
 }
 
-module.exports = { read, store, ensure, add, registerTranscript, initialize, tree };
+module.exports = { read, store, ensure, register, children, initialize, tree };

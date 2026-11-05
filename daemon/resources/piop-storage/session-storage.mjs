@@ -154,7 +154,7 @@ function sessionStoragePublish(manager, entries, exclusive) {
 function sessionStorageAppend(manager, entry) {
   const path = manager.sessionFile;
   const expected = sessionStorageFiles.get(manager);
-  const after = entry.type === "custom" || stateRecords.isCurrent(entry) ? manager.fileEntries.findLast(item => item.type !== "session" && item.type !== "custom")?.id ?? null : null;
+  const after = stateRecords.isRecord(entry) || stateRecords.isCurrent(entry) ? manager.fileEntries.findLast(item => item.type !== "session" && !stateRecords.isRecord(item))?.id ?? null : null;
   let identity;
   try {
     identity = writes(manager).append({

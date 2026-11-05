@@ -13,7 +13,7 @@ import { registerAuxiliaryChats } from "./session-broker/auxiliary.ts";
 import { existsSync } from "node:fs";
 import { call } from "./storage-channel.cjs";
 
-export { writeSessionFile, publicationRetainsDependencies, type PublicationOptions, type SessionPublication } from "./piop-storage/session-file.ts";
+export { createChat, type NewChat } from "./piop-storage/session-file.ts";
 
 export { registerSubagents } from "./session-broker/subagents.ts";
 

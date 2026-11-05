@@ -3,9 +3,8 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AUXILIARY_PARENT, canFork, isCurrent } from "../piop-storage/session-records.cjs";
-import { reserveSessionId, writeSessionFile, type SessionPublication } from "../piop-storage/session-file.ts";
+import { createChat, reserveSessionId } from "../piop-storage/session-file.ts";
 import { currentHost } from "../session-broker/client.ts";
-import { retainedFork } from "./fork.ts";
 import type { AuxiliaryCopy } from "./interface.ts";
 
 type Branch = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
@@ -53,21 +52,9 @@ export async function copyAuxiliary(ctx: ExtensionContext, copy: AuxiliaryCopy) 
 
   entries.push(
     { type: "custom", customType: "piop-input-hold", data: { held: true }, id: randomUUID(), parentId: null, timestamp },
-    { type: "custom", customType: AUXILIARY_PARENT, id: randomUUID(), parentId: history.at(-1)?.id ?? null, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId, parentHostId: host, parentSessionPath: source } },
+    { type: "custom", customType: AUXILIARY_PARENT, id: randomUUID(), parentId: history.at(-1)?.id ?? null, timestamp, data: { kind: copy.kind, sessionId, hostId: host, parentSessionId, parentHostId: host } },
   );
-  let publication: SessionPublication | undefined;
-
-  try {
-    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource: undefined }, ...entries], {
-      name: copy.name,
-      dependencies: { workspace: { path: cwd, kind: "existing" } },
-    });
-  } catch (error) {
-    if (retainedFork(error instanceof Error ? error : undefined, publication)) {
-      throw new Error(`Side chat recovery is pending at ${sessionPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-    throw error;
-  }
+  await createChat({ path: sessionPath, name: copy.name, entries: [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource: undefined }, ...entries] });
 
   return { hostId: host, sessionId, sessionPath, cwd, parentSessionId };
 }

@@ -1,10 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
-const io = require('./session-publication-io.cjs');
 const stateRecords = require('./session-records.cjs');
 const database = require('../session-database.cjs');
-const { onMainThread } = require('../main-thread.cjs');
 const childIndex = require('../session-broker/session-child-index.cjs');
 const names = require('../session-broker/session-names.cjs');
 
@@ -63,66 +61,62 @@ function interruptedWork(branch) {
   return { message: promptText(prompt).trim() ? promptText(prompt) : PROMPT_ABOVE, entries: [promptCopy, error] };
 }
 
-function rewrite(value, replacements) {
+// Gives value with each ID of ids (pairs of old and new) replaced. The file names of copied chats hold their IDs, so the
+// paths of copies in the same folder change with them.
+function rewrite(value, ids) {
   let text = JSON.stringify(value);
 
-  for (const [from, to] of [...replacements].sort(([left], [right]) => right.length - left.length)) text = text.split(JSON.stringify(from).slice(1, -1)).join(JSON.stringify(to).slice(1, -1));
+  for (const [from, to] of ids) text = text.split(from).join(to);
 
   return JSON.parse(text);
 }
 
-function activeChild(root, child) {
-  const located = io.locate(root, child.sessionId);
-
-  return located && database.connection(root).prepare('SELECT archived FROM sessions WHERE session_id=?').get(child.sessionId)?.archived === 0 ? located.path : undefined;
-}
-
-function planAuxiliaryCopies({ root, source, target, cutoff, cwd }) {
+// The copies of the side chats, reviews and subagents under the chat sourceId (and under them) that were made by cutoff,
+// for its fork target. Each copy gets a reserved ID and a transcript next to the fork; with cwd, copies that worked in
+// cwd.from work in cwd.to.
+function planAuxiliaryCopies({ root, sourceId, target, cutoff, cwd }) {
   root = fs.realpathSync(root);
-  const ids = new Map([[source.id, target.id]]);
-  const replacements = [[source.id, target.id], [source.path, target.path]];
+  const ids = [[sourceId, target.id]];
+  const copied = new Set([sourceId]);
   const copies = [];
-  const queue = [{ id: source.id, cutoff }];
+  const queue = [sourceId];
 
   for (let index = 0; index < queue.length; index++) {
-    for (const child of childIndex.read(root, queue[index].id)?.children ?? []) {
-      if (ids.has(child.sessionId)) continue;
-      const file = activeChild(root, child);
-
-      if (!file) continue;
+    for (const child of childIndex.children(root, queue[index])) {
+      if (copied.has(child.sessionId) || child.archived) continue;
+      const file = database.lookup(root, child.sessionId);
       const entries = readTranscript(file);
       const header = entries[0];
 
-      if (queue[index].cutoff !== undefined && Date.parse(header.timestamp) > Date.parse(queue[index].cutoff)) continue;
+      if (cutoff !== undefined && Date.parse(header.timestamp) > Date.parse(cutoff)) continue;
       const copyId = database.reserve(root);
-      const timestamp = header.timestamp;
-      const copyPath = path.join(path.dirname(target.path), String(timestamp).replace(/[:.]/g, '-') + '_' + copyId + '.jsonl');
-      ids.set(child.sessionId, copyId);
-      replacements.push([child.sessionId, copyId], [file, copyPath]);
-      copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: copyPath, header, entries, timestamp, name: names.sessionName(file, child.sessionId) });
-      queue.push({ id: child.sessionId, cutoff: queue[index].cutoff });
+      copied.add(child.sessionId);
+      ids.push([child.sessionId, copyId]);
+      copies.push({ kind: child.kind, sourceId: child.sessionId, sourcePath: file, sessionId: copyId, sessionPath: path.join(path.dirname(target.path), String(header.timestamp).replace(/[:.]/g, '-') + '_' + copyId + '.jsonl'), header, entries, name: names.sessionName(file, child.sessionId) });
+      queue.push(child.sessionId);
     }
   }
 
   const planned = copies.map(copy => {
     const work = interruptedWork(shownBranch(copy.sourcePath, copy.header, copy.entries));
     const folder = cwd && copy.header.cwd === cwd.from ? cwd.to : copy.header.cwd;
-    const header = { ...copy.header, id: copy.sessionId, timestamp: copy.timestamp, cwd: folder };
-    const body = [header, ...rewrite(copy.entries.slice(1), replacements), ...work ? rewrite(work.entries, replacements) : []];
+    const header = { ...copy.header, id: copy.sessionId, cwd: folder };
+    const entries = [header, ...rewrite(copy.entries.slice(1), ids), ...work ? rewrite(work.entries, ids) : []];
 
-    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, sourcePath: copy.sourcePath, cwd: folder, name: copy.name, entries: body, retry: work ? rewrite(work.message, replacements) : undefined, deliveryId: work ? randomUUID() : undefined };
+    return { kind: copy.kind, sourceId: copy.sourceId, sessionId: copy.sessionId, sessionPath: copy.sessionPath, name: copy.name, entries, retry: work ? rewrite(work.message, ids) : undefined, deliveryId: work ? randomUUID() : undefined };
   });
 
-  return { copies: planned, replacements, retries: planned.filter(copy => copy.retry !== undefined).map(copy => ({ sessionId: copy.sessionId, message: copy.retry, deliveryId: copy.deliveryId })) };
+  return { ids, copies: planned, retries: planned.filter(copy => copy.retry !== undefined).map(copy => ({ sessionId: copy.sessionId, message: copy.retry, deliveryId: copy.deliveryId })) };
 }
 
+// The fork's history with the IDs of copied chats replaced, in the entries that name one.
 function rewriteForkHistory(entries, plan) {
-  const copied = plan.replacements.slice(2);
+  const copied = plan.ids.slice(1);
 
   return entries.map(entry => {
     const text = JSON.stringify(entry);
 
-    return copied.some(([from]) => text.includes(JSON.stringify(from).slice(1, -1))) ? rewrite(entry, plan.replacements) : entry;
+    return copied.some(([from]) => text.includes(from)) ? rewrite(entry, plan.ids) : entry;
   });
 }
 
@@ -140,40 +134,37 @@ function deliveredResults(entries) {
   }));
 }
 
-const copySubagentRuns = onMainThread('auxiliary-copies.copySubagentRuns', (root, plan, parents) => {
-  root = fs.realpathSync(root);
+// Copies, inside the caller's transaction, the subagent runs of each parent (the fork and its copies) whose subagent was
+// copied. parents are { sourceId, sessionId, entries }.
+function copySubagentRuns(db, plan, parents) {
   const copiedChildren = new Map(plan.copies.filter(copy => copy.kind === 'subagent').map(copy => [copy.sourceId, copy]));
-  const db = database.connection(root);
+  for (const parent of parents) {
+    const rows = db.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=? ORDER BY started_at, run_id').all(parent.sourceId);
+    const runs = rows.map(row => JSON.parse(row.run_json)).filter(run => copiedChildren.has(run.sessionId));
 
-  database.transaction(db, 'IMMEDIATE', () => {
-    for (const parent of parents) {
-      const rows = db.prepare('SELECT run_json FROM session_subagent_runs WHERE session_id=? ORDER BY started_at, run_id').all(parent.sourceId);
-      const runs = rows.map(row => JSON.parse(row.run_json)).filter(run => copiedChildren.has(run.sessionId));
+    if (!runs.length) continue;
+    db.prepare('INSERT INTO session_subagent_state VALUES (?) ON CONFLICT(session_id) DO NOTHING').run(parent.sessionId);
 
-      if (!runs.length) continue;
-      db.prepare('INSERT INTO session_subagent_state VALUES (?) ON CONFLICT(session_id) DO NOTHING').run(parent.sessionId);
+    const results = deliveredResults(parent.entries);
 
-      const results = deliveredResults(parent.entries);
+    for (const saved of runs) {
+      const child = copiedChildren.get(saved.sessionId);
+      const run = rewrite(saved, plan.ids);
 
-      for (const saved of runs) {
-        const child = copiedChildren.get(saved.sessionId);
-        const run = rewrite(saved, plan.replacements);
-
-        if (run.status === 'running' && child.retry !== undefined) {
-          Object.assign(run, { submission: 'accepted', deliveryIds: [child.deliveryId], taskNotificationId: child.deliveryId, observation: undefined });
-        }
-
-        if (run.resultDelivery === 'delivered' && !results.has(run.resultNotificationId)) {
-          run.resultDelivery = 'pending';
-          delete run.resultNotificationId;
-        }
-
-        db.prepare('INSERT INTO session_subagent_runs VALUES (?, ?, ?, ?) ON CONFLICT(session_id, run_id) DO UPDATE SET run_json=excluded.run_json')
-          .run(parent.sessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
+      if (run.status === 'running' && child.retry !== undefined) {
+        Object.assign(run, { submission: 'accepted', deliveryIds: [child.deliveryId], taskNotificationId: child.deliveryId, observation: undefined });
       }
+
+      if (run.resultDelivery === 'delivered' && !results.has(run.resultNotificationId)) {
+        run.resultDelivery = 'pending';
+        delete run.resultNotificationId;
+      }
+
+      db.prepare('INSERT INTO session_subagent_runs VALUES (?, ?, ?, ?) ON CONFLICT(session_id, run_id) DO UPDATE SET run_json=excluded.run_json')
+        .run(parent.sessionId, resultNotificationId(run), run.startedAt, JSON.stringify(run));
     }
-  });
-});
+  }
+}
 
 function retryRecord(plan) {
   if (!plan.retries.length) return undefined;
@@ -181,13 +172,4 @@ function retryRecord(plan) {
   return { type: 'custom', customType: FORK_RETRIES, id: randomUUID(), parentId: null, timestamp: new Date().toISOString(), data: { pending: plan.retries } };
 }
 
-async function publishAuxiliaryCopies(root, plan, target, publishOne) {
-  for (const copy of plan.copies) {
-    await publishOne(copy.sessionPath, copy.entries, { ...copy.name ? { name: copy.name } : {}, goalSource: copy.sourcePath, dependencies: { workspace: { path: copy.cwd, kind: 'existing' } } });
-  }
-
-  const forkPath = plan.replacements[1][1];
-  copySubagentRuns(root, plan, [{ sourceId: plan.replacements[0][0], sessionId: target.id, entries: readTranscript(forkPath) }, ...plan.copies.map(copy => ({ sourceId: copy.sourceId, sessionId: copy.sessionId, entries: copy.entries }))]);
-}
-
-module.exports = { FORK_RETRIES, FORK_ERROR, planAuxiliaryCopies, rewriteForkHistory, retryRecord, publishAuxiliaryCopies };
+module.exports = { planAuxiliaryCopies, rewriteForkHistory, retryRecord, copySubagentRuns };

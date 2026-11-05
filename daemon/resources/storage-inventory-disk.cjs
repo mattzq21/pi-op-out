@@ -125,13 +125,6 @@ async function diskStorage(profile, discovery) {
     } catch (error) { warnings.push(`${root}: temporary chat records unavailable: ${error.message}`); }
   }
 
-  async function visitRetainedArtifacts() {
-    for (const record of discovery.retainedArtifacts.values()) {
-      await visitRecord(record.category, record);
-
-    }
-  }
-
   await visit(root, 'other-storage');
   registerTemporaryChats();
 
@@ -144,8 +137,6 @@ async function diskStorage(profile, discovery) {
   register('other-storage', { path: root, ownership: 'owned', provenance: ['PIOP_STORAGE_DIRECTORY profile'], owners: [], available: directories.has(root), directory: true });
 
   for (const record of discovery.recovery.values()) await visitRecovery(record);
-
-  await visitRetainedArtifacts();
 
   registerQueuedInputs();
 

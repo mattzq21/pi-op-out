@@ -13,9 +13,8 @@ import * as History from '../../daemon/src/chat_branch_history';
 import { getProjectRepository, rememberProjectRepository } from '../../daemon/src/project_repositories';
 
 const database = require('../../daemon/resources/session-database.cjs');
-const publication = require('../../daemon/resources/piop-storage/session-publication.cjs');
+const newChats = require('../../daemon/resources/piop-storage/new-chats.cjs');
 const goals = require('../../daemon/resources/piop-storage/goals.cjs');
-const lock = require('../../daemon/resources/piop-storage/reference-publication-lock.cjs');
 
 const daemons: TestDaemon[] = [];
 afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.stop(); }, 60000);
@@ -54,10 +53,7 @@ async function sourceChat(profile: string, repo: string) {
     ({ type: 'message', id: entryId, parentId, timestamp: new Date().toISOString(), message: { role, content: [{ type: 'text', text }], timestamp: 1, ...extra } });
   const entries = [message('u1', null, 'user', 'Ship it'), message('a1', 'u1', 'assistant', 'Answer', { stopReason: 'stop' })];
   const header = { type: 'session', version: 3, id, timestamp: new Date().toISOString(), cwd: repo };
-  await publication.publish(path, [header, ...entries].map(entry => JSON.stringify(entry)).join('\n') + '\n', async (operation: any) => {
-    const release = lock.acquireReferencePublicationLock(profile, true);
-    try { return await operation(); } finally { release(); }
-  }, { dependencies: { workspace: { path: repo, kind: 'existing' } } });
+  newChats.create(profile, { path, entries: [header, ...entries] });
   goals.write(path, id, { id: randomUUID(), sessionId: id, objective: 'Ship it', status: 'active' });
   return { id, path, entries };
 }

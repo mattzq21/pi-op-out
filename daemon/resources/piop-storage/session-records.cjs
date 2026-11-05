@@ -20,11 +20,17 @@ const stateKey = entry => nativeKeys.get(entry.type) ?? entry.customType;
 const isCurrent = entry => nativeKeys.has(entry.type) || entry.type === 'custom' && isCurrentType(entry.customType);
 const isName = entry => entry?.type === 'session_info';
 const isSetting = entry => isCurrent(entry) || isName(entry);
+// In a parent chat: the message that links one of its auxiliary chats. Like custom records, it is saved in the database,
+// so that the parent's transcript does not change.
+const isAuxiliaryLink = entry => entry?.type === 'custom_message' && entry.details?.auxiliaryLink === true && !!entry.customType?.trim();
+// The entries that the database keeps, at their place in the history, instead of the transcript.
+const isRecord = entry => entry?.type === 'custom' || isAuxiliaryLink(entry);
 
 function validRecord(entry) {
   switch (entry.type) {
     case 'model_change': return typeof entry.provider === 'string' && typeof entry.modelId === 'string';
     case 'thinking_level_change': return typeof entry.thinkingLevel === 'string';
+    case 'custom_message': return isAuxiliaryLink(entry);
     default: return entry.type === 'custom' && !!entry.customType?.trim();
   }
 }
@@ -43,7 +49,7 @@ function history(entries, current = isSetting) {
   });
 }
 
-function stored(entries) { return history(entries).filter(entry => entry.type !== 'custom'); }
+function stored(entries) { return history(entries).filter(entry => !isRecord(entry)); }
 
 function transaction(file, sessionId, operation) {
   const db = database.connection(database.storageRoot(file));
@@ -58,25 +64,28 @@ function capture(entries) {
   const current = new Map(entries.filter(isCurrent).map(entry => [stateKey(entry), { after: null, entry: { ...entry, id: entry.id ?? randomUUID(), parentId: null } }]));
   const records = [...current.values()];
   for (const entry of history(entries).slice(1)) {
-    if (entry.type === 'custom') records.push({ after, entry });
+    if (isRecord(entry)) records.push({ after, entry });
     else after = entry.id;
   }
   return records;
 }
 
+// Saves the records of a chat inside the caller's transaction.
+function insertRecords(db, sessionId, records) {
+  const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
+  const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
+  for (const { after, entry } of records) {
+    if (typeof entry.id !== 'string' || !validRecord(entry)) throw new Error('Invalid session state record');
+    if (isCurrent(entry)) { setCurrent(db, sessionId, entry); continue; }
+    const json = JSON.stringify(entry);
+    const saved = previous.get(sessionId, entry.id);
+    if (saved && (saved.entry_json !== json || saved.after_id !== after)) throw new Error('Session state record identity was reused');
+    insert.run(sessionId, entry.id, after, json);
+  }
+}
+
 const seed = onMainThread('session-records.seed', (file, sessionId, records) => {
-  transaction(file, sessionId, db => {
-    const insert = db.prepare('INSERT INTO session_extension_records (session_id, entry_id, after_id, entry_json) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, entry_id) DO NOTHING');
-    const previous = db.prepare('SELECT after_id, entry_json FROM session_extension_records WHERE session_id=? AND entry_id=?');
-    for (const { after, entry } of records) {
-      if (typeof entry.id !== 'string' || !validRecord(entry)) throw new Error('Invalid session state record');
-      if (isCurrent(entry)) { setCurrent(db, sessionId, entry); continue; }
-      const json = JSON.stringify(entry);
-      const saved = previous.get(sessionId, entry.id);
-      if (saved && (saved.entry_json !== json || saved.after_id !== after)) throw new Error('Session state record identity was reused');
-      insert.run(sessionId, entry.id, after, json);
-    }
-  });
+  transaction(file, sessionId, db => insertRecords(db, sessionId, records));
 });
 
 function save(file, entries) {
@@ -151,9 +160,6 @@ function create(type, data, parentId) {
 
 const AUXILIARY_PARENT = 'piop-auxiliary-parent';
 
-// In a parent transcript: where one of its auxiliary chats is saved.
-const AUXILIARY_LINK = 'piop-auxiliary-link';
-
 const isAuxiliaryParent = entry => entry?.type === 'custom' && entry.customType === AUXILIARY_PARENT && typeof entry.data?.kind === 'string' && typeof entry.data?.parentSessionId === 'string';
 
 function isAuxiliary(entries) {
@@ -172,4 +178,4 @@ function forkPoint(entry) {
     && Array.isArray(entry.message.content) && !entry.message.content.some(part => part?.type === 'toolCall');
 }
 
-module.exports = { AUXILIARY_PARENT, AUXILIARY_LINK, isAuxiliaryParent, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };
+module.exports = { AUXILIARY_PARENT, isAuxiliaryParent, isAuxiliaryLink, isRecord, insertRecords, auxiliaryParent, isAuxiliary, canFork, forkPoint, selectBranch, selectedLeaf, stateKey, isCurrent, isName, history, stored, save, seed, capture, append, records, merge, revision, create };

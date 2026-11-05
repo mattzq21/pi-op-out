@@ -12,6 +12,6 @@ export interface ConversationChildIndex {
   children: ConversationChild[];
 }
 
-export function initialize(sessionPath: string, sessionId: string, fresh: boolean): Promise<void>;
+export function initialize(sessionPath: string, sessionId: string, fresh: boolean): void;
 
 export function tree(root: string, sessionId: string): string[];

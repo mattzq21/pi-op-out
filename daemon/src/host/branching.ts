@@ -312,7 +312,6 @@ function validatePrepared(host: Host, branch: any, state: any, parent: string): 
   if (!isAbsolute(path) || !basename(path).endsWith('_' + id + '.jsonl')) throw new Error('The prepared branch path does not bind its session identity');
   const header = JSON.parse(readHeaderLine(path));
   if (header?.type !== 'session' || header?.id !== id || header?.parentSession !== parent) throw new Error('The prepared branch does not belong to its original conversation');
-  if (!UUID.test(text(header, 'piopPublicationId'))) throw new Error('The prepared branch has no durable publication identity');
   return path;
 }
 

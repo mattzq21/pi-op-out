@@ -5,9 +5,9 @@ const { Check } = require('typebox/value');
 const database = require('./session-database.cjs');
 const { onMainThread } = require('./main-thread.cjs');
 
-// A transcript stays where it was made for its whole life. Archive and restore change only its database row; delete
-// removes its rows in one transaction, and its files after that. The start sweep removes the files that a stop between
-// the two left without rows.
+// A transcript stays where it was made for its whole life. A new chat writes its files, and then its rows in one
+// transaction. Archive and restore change only its database row; delete removes its rows in one transaction, and its
+// files after that. The start sweep removes the files that a stop between the two steps left without rows.
 
 const idsSchema = Type.Array(Type.String({ minLength: 1 }), { minItems: 1 });
 
@@ -123,7 +123,7 @@ function deleteSessions(root, ids) {
   try { require('./piop-storage/goal-files.cjs').collect(root); }
   catch (error) { warnings.push(`Deleted, but its goal files were kept until the next start: ${error.message}`); }
 
-  warnings.push(...maintenance(root, false));
+  warnings.push(...maintenance(root));
 
   return warnings;
 }
@@ -150,20 +150,9 @@ function cleanupTemporaryChats(root) {
   } catch (error) { return `Temporary folder cleanup will retry: ${error.message}`; }
 }
 
-// Finishes session publications and temporary folder cleanup. Returns the warnings.
-function maintenance(root, publications = true) {
+// Finishes temporary folder cleanup. Returns the warnings.
+function maintenance(root) {
   const warnings = [];
-
-  if (publications) {
-    try {
-      const result = require('./piop-storage/session-publication.cjs').recover(root);
-
-      for (const warning of result.warnings) warnings.push(`Session publication recovery retained: ${warning}`);
-
-      for (const retained of result.quarantined) warnings.push(`Session publication retained: ${retained.path}: ${retained.reason}`);
-    } catch (error) { warnings.push(`Session publication recovery is pending: ${error.message}`); }
-  }
-
   const temporary = cleanupTemporaryChats(root);
 
   if (temporary) warnings.push(temporary);
@@ -212,22 +201,12 @@ function run(context, request) {
   throw new Error(`Unknown session storage action: ${request?.action}`);
 }
 
-// True when the session row of the transcript's header exists: a chat whose path is not saved yet.
-function claimed(file, owner) {
-  let header;
-
-  try { header = require('./piop-storage/session-publication-io.cjs').header(file); }
-  catch { return false; }
-
-  return typeof header?.id === 'string' && Boolean(owner.get(header.id));
-}
-
 // Removes the transcripts and snapshot folders in the sessions area that no session row has, and the goal files that no
-// goal row has. Returns the warnings.
+// goal row has. A reserved ID whose path is not saved does not keep its file: Pi saves the path before it writes, and a
+// new chat saves it only when it commits. It runs at start, before any Pi. Returns the warnings.
 function sweep(root) {
   const db = database.connection(root);
   const registered = db.prepare('SELECT 1 FROM sessions WHERE session_path=?');
-  const owner = db.prepare('SELECT 1 FROM sessions WHERE session_id=?');
   const warnings = [];
 
   const visit = directory => {
@@ -250,7 +229,7 @@ function sweep(root) {
 
       if (!transcript || registered.get(transcript)) continue;
 
-      if (snapshot ? fs.existsSync(transcript) : claimed(file, owner)) continue;
+      if (snapshot && fs.existsSync(transcript)) continue;
 
       try { removeFiles(transcript); }
       catch (error) { warnings.push(`Could not remove the files of deleted conversation ${transcript}: ${error.message}`); }

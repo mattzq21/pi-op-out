@@ -52,7 +52,7 @@ function call(operation, payload) {
   const answer = JSON.parse(readLine(fd));
   if (typeof answer?.error === 'string') {
     const error = new Error(answer.error);
-    for (const flag of ['damaged', 'publicationPending', 'dependenciesRetained']) if (answer[flag] === true) error[flag] = true;
+    if (answer.damaged === true) error.damaged = true;
     throw error;
   }
   if (!answer || !Object.hasOwn(answer, 'result')) throw new Error('The Piop daemon sent an invalid storage answer');

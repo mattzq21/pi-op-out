@@ -1,25 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { canFork, isCurrent } from "../piop-storage/session-records.cjs";
-import { reserveSessionId } from "../piop-storage/session-file.ts";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { realpath, mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "../session-broker/client.ts";
-import { publishAuxiliaryCopies, writeSessionFile, publicationRetainsDependencies, type SessionPublication } from "../piop-storage/session-file.ts";
+import { createFork, reserveSessionId } from "../piop-storage/session-file.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { storageRoot } from "../session-database.cjs";
-import { planAuxiliaryCopies, retryRecord, rewriteForkHistory } from "../piop-storage/auxiliary-copies.cjs";
 import { sessionName } from "../session-broker/session-names.cjs";
 import type { ForkMode, ForkResult } from "./interface.ts";
 
 export type ForkOptions = { cwd?: string; entryId?: string; position?: "before" | "at" };
 
 const fileErrorSchema = Type.Object({ code: Type.String() });
-
-export function retainedFork(error: Error | undefined, publication?: SessionPublication) {
-  return Boolean(publication) || error !== undefined && publicationRetainsDependencies(error);
-}
 
 function userText(ctx: ExtensionContext, entryId?: string) {
   const selected = entryId ? ctx.sessionManager.getEntry(entryId) : undefined;
@@ -65,7 +58,6 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const source = ctx.sessionManager.getSessionFile();
 
   if (!header || !source) throw new Error("Save this conversation before forking it");
-  const root = storageRoot(await realpath(source));
   const cwd = await forkDirectory(ctx.cwd, options);
 
   const sessionId = await reserveSessionId();
@@ -73,34 +65,17 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   retained.push({ type: "custom", customType: "piop-input-hold", data: { held: true }, id: randomUUID(), parentId: null, timestamp });
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   const piopForkSource = options.entryId ? { sessionId: header.id, sessionPath: source, entryId: options.entryId } : undefined;
-  const copies = planAuxiliaryCopies({ root, source: { id: header.id, path: source }, target: { id: sessionId, path: sessionPath }, cutoff: selected.filter(entry => !isCurrent(entry)).at(-1)?.timestamp ?? header.timestamp });
-  retained.splice(0, retained.length, ...rewriteForkHistory(retained, copies));
-  const retries = retryRecord(copies);
-  if (retries) retained.push(retries);
   const name = sessionName(source, header.id);
-  let publication: SessionPublication | undefined;
 
   try {
-    publication = await writeSessionFile(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource }, ...retained], {
-      ...name ? { name } : {},
-      goalSource: source,
-      dependencies: { workspace: { path: cwd, kind: options.cwd === undefined ? "existing" : "created-directory" } },
+    await createFork({
+      path: sessionPath, entries: [{ ...header, id: sessionId, timestamp, cwd, parentSession: source, piopForkSource }, ...retained],
+      ...name ? { name } : {}, goalSource: header.id, source: header.id, cutoff: selected.filter(entry => !isCurrent(entry)).at(-1)?.timestamp ?? header.timestamp,
     });
   } catch (error) {
-    if (retainedFork(error instanceof Error ? error : undefined, publication)) {
-      ctx.ui.notify(`Fork publication and its directory dependencies are retained for recovery: ${sessionPath}`, "warning");
-      throw new Error(`Fork recovery is pending at ${sessionPath}: ${(error instanceof Error ? error.message : String(error))}`, { cause: error });
-    }
-
     await cleanupForkDirectory(cwd, options);
 
     throw error;
-  }
-
-  if (copies.copies.length) {
-    try { await publishAuxiliaryCopies(root, copies, { id: sessionId }); }
-    catch (error) {
-      throw new Error(`The fork was saved at ${sessionPath}, but copying its side chats, reviews and subagents failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
   }
 
   return { hostId: currentHost(), sessionId, sessionPath, cwd };

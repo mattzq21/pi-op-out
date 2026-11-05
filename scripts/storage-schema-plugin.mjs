@@ -27,9 +27,9 @@ const canonicalModules = new Set([
   "external-transcripts.cjs", "transcript-metadata.cjs", "conversation-storage.cjs",
   "session-database.cjs", "temporary-chat.cjs", "transcript-references.cjs",
 
-  "session-lifecycle.cjs", "session-transactions.cjs", "reference-publication-lock.cjs",
-  "transcript-identity.cjs", "storage-channel.cjs", "main-thread.cjs", "application-records.cjs",
-  "session-publication.cjs", "session-publication-io.cjs", "session-publication-dependencies.cjs", "session-child-index.cjs", "session-names.cjs",
+  "session-lifecycle.cjs", "reference-publication-lock.cjs",
+  "storage-channel.cjs", "main-thread.cjs", "application-records.cjs",
+  "session-child-index.cjs", "session-names.cjs",
 ]);
 
 function canonicalImports(source, path) {

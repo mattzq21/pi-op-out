@@ -5,12 +5,10 @@ import { sessionReferenceRoot } from '../daemon/resources/piop-storage/transcrip
 
 // Pi's storage channel for tests and fixtures that run Pi's code without the daemon: the daemon's storage operations
 // run in the same process, on the storage that PIOP_TEST_STORAGE_ROOT, or else HOME and PIOP_STORAGE_DIRECTORY, name at each call.
-const owner = { claims: new Set() };
-
 export function call(name, payload) {
   const operation = storageOperation(name);
   if (operation.area === 'transcript') return localTranscriptWrites()[operation.name](payload);
-  return operation.run(process.env.PIOP_TEST_STORAGE_ROOT || sessionReferenceRoot(), structuredClone(payload), owner);
+  return operation.run(process.env.PIOP_TEST_STORAGE_ROOT || sessionReferenceRoot(), structuredClone(payload));
 }
 
 export const transcriptWrites = localTranscriptWrites();

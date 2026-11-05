@@ -17,13 +17,12 @@ beforeAll(async () => {
   process.env.PIOP_STORAGE_DIRECTORY = relative(realpathSync(homedir()), root);
   modules = {
     history: await import('../../daemon/src/chat_branch_history'),
-    publication: require('../../daemon/resources/piop-storage/session-publication.cjs'),
+    newChats: require('../../daemon/resources/piop-storage/new-chats.cjs'),
     database: require('../../daemon/resources/session-database.cjs'),
     goalFiles: require('../../daemon/resources/piop-storage/goal-files.cjs'),
     goals: require('../../daemon/resources/piop-storage/goals.cjs'),
     records: require('../../daemon/resources/piop-storage/session-records.cjs'),
     names: require('../../daemon/resources/session-broker/session-names.cjs'),
-    lock: require('../../daemon/resources/piop-storage/reference-publication-lock.cjs'),
     lifecycle: require('../../daemon/resources/session-lifecycle.cjs'),
     locks: require('../../daemon/resources/storage-locks.cjs'),
   };
@@ -39,7 +38,7 @@ const message = (id: string, parentId: string | null, role: string, content: any
 const OBJECTIVE = 'Keep going. ' + 'x'.repeat(5000);
 
 async function sourceChat(objective = OBJECTIVE) {
-  const { database, publication, lock, goals } = modules;
+  const { database, newChats, goals } = modules;
   const cwd = join(home, 'project');
   mkdirSync(cwd, { recursive: true });
   const id = database.reserve(root);
@@ -56,10 +55,7 @@ async function sourceChat(objective = OBJECTIVE) {
     { type: 'thinking_level_change', id: 'thinking', parentId: null, timestamp: new Date().toISOString(), thinkingLevel: 'high' },
   ];
   const header = { type: 'session', version: 3, id, timestamp: new Date().toISOString(), cwd };
-  await publication.publish(path, [header, ...entries, ...current].map(entry => JSON.stringify(entry)).join('\n') + '\n', async (operation: any) => {
-    const release = lock.acquireReferencePublicationLock(root, true);
-    try { return await operation(); } finally { release(); }
-  }, { name: 'Source', dependencies: { workspace: { path: cwd, kind: 'existing' } } });
+  newChats.create(root, { path, entries: [header, ...entries, ...current], name: 'Source' });
   goals.write(path, id, { id: randomUUID(), sessionId: id, objective, status: 'active' });
   return { id, path, cwd, entries: [...entries, ...current] };
 }
@@ -80,8 +76,6 @@ function leftovers(id: string, path: string) {
     registry: Boolean(db.prepare('SELECT 1 FROM sessions WHERE session_id=?').get(id)),
     goal: Boolean(db.prepare('SELECT 1 FROM session_goals WHERE session_id=?').get(id)),
     state: db.prepare('SELECT count(*) AS n FROM session_extension_state WHERE session_id=?').get(id).n,
-    journals: modules.database.publications(root).length,
-    quarantine: existsSync(join(root, 'session-publication-quarantine')) ? readdirSync(join(root, 'session-publication-quarantine')).length : 0,
   };
 }
 
@@ -104,7 +98,7 @@ test('a branch copies history through the selected final response, current setti
   expect(modules.goals.read(result.sessionPath, sessionId)).toMatchObject({ objective: OBJECTIVE, sessionId });
 
   await modules.history.discardBranchHistory(root, sessionId, result.sessionPath);
-  expect(leftovers(sessionId, result.sessionPath)).toMatchObject({ transcript: false, registry: false, goal: false, state: 0, journals: 0 });
+  expect(leftovers(sessionId, result.sessionPath)).toMatchObject({ transcript: false, registry: false, goal: false, state: 0 });
   expect(readFileSync(source.path, 'utf8')).toBe(sourceBody);
   expect(modules.goals.read(source.path, source.id)).toMatchObject({ objective: OBJECTIVE });
 
@@ -112,7 +106,7 @@ test('a branch copies history through the selected final response, current setti
   await modules.history.discardBranchHistory(root, sessionId, null);
 });
 
-test('a publication that fails after claiming resources removes everything it created', async () => {
+test('a branch whose commit fails leaves no files and no rows', async () => {
   const source = await sourceChat();
   const sessionId = modules.database.reserve(root);
   const db = modules.database.connection(root);
@@ -126,7 +120,7 @@ test('a publication that fails after claiming resources removes everything it cr
   }
   const files = readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId));
   expect(files).toEqual([]);
-  expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0 });
+  expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0 });
 });
 
 test('only finished or stopped final responses on the current branch can be branched from', async () => {
@@ -167,23 +161,6 @@ test('a goal file stays while a goal row has its objective, comes back when miss
 
   expect(await deleteChat(branch.sessionPath)).toEqual({});
   expect(existsSync(file)).toBe(false);
-});
-
-test('a publication that saves the transcript but cannot finish is removed', async () => {
-  const source = await sourceChat();
-  const sessionId = modules.database.reserve(root);
-  const db = modules.database.connection(root);
-  db.exec("CREATE TRIGGER keep_branch_publication BEFORE DELETE ON session_publications WHEN json_extract(OLD.record_json, '$.sessionId')='" + sessionId + "' AND json_extract(OLD.record_json, '$.phase')='linked' BEGIN SELECT RAISE(ABORT, 'Retirement failed'); END");
-  try {
-    await expect(modules.history.publishBranchHistory({ root, sourcePath: source.path, sessionId, cwd: source.cwd, entries: source.entries, leafId: 'a3', entryId: 'a1' }))
-      .rejects.toThrow(/Session was published; durability or cleanup will retry[\s\S]*Cleanup failed: Branch cleanup is incomplete/);
-  } finally {
-    const cleanup = modules.database.connection(root);
-    cleanup.exec('DROP TRIGGER keep_branch_publication');
-  }
-  await modules.history.discardBranchHistory(root, sessionId, null);
-  expect(readdirSync(join(root, 'sessions', 'project')).filter(name => name.includes(sessionId))).toEqual([]);
-  expect(leftovers(sessionId, join(root, 'missing'))).toMatchObject({ registry: false, goal: false, state: 0, journals: 0, quarantine: 0 });
 });
 
 for (const kind of ['subagent', 'review', 'btw']) test(`worktree history rejects a ${kind} chat even outside the selected history`, async () => {
