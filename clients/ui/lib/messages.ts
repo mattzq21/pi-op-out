@@ -2,7 +2,7 @@ import type { ChatMessage } from "../types";
 import { z } from "zod";
 import { promptContextSchema, wireMessageSchema, type WireMessage } from "./messageSchemas";
 
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status"]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "piop-worktree-setup"]);
 
 export const GOAL_PROMPT = "piop-goal-context";
 

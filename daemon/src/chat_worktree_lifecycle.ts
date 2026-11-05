@@ -12,6 +12,7 @@ import { profileRoot } from './host_operations';
 import { forgetProjectRepository, rememberProjectRepository } from './project_repositories';
 import * as storageTransactions from './storage_transactions';
 import type { FolderMove } from './storage_transactions';
+import { recoverSetups, runCleanup, startSetup, stopSetup } from './worktree_scripts';
 
 function errorText(error: any): string { return error?.message ?? String(error); }
 
@@ -51,7 +52,7 @@ function canonicalFolder(folder: string): string {
   catch (error: any) { if (error.code === 'ENOENT') return resolve(folder); throw error; }
 }
 
-function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree, excludeArchivedChildren = false): boolean {
+function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.worktree, excludeArchivedChildren = false, ignoring: ReadonlySet<string> = new Set()): boolean {
   const db = SessionTables.connection(root);
   const children = new Set<string>();
   const sessions = db.prepare('SELECT session_id, session_path FROM sessions WHERE session_path IS NOT NULL AND session_id != ?').all(record.chatId) as Array<{ session_id: string; session_path: string }>;
@@ -64,6 +65,7 @@ function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.
   }
   const target = canonicalFolder(folder);
   for (const session of sessions) {
+    if (ignoring.has(session.session_id)) continue;
     if (children.has(session.session_id) && session.session_path.startsWith(join(root, 'archived') + sep)) continue;
     let header: any;
     try { header = JSON.parse(readHeaderLine(session.session_path)); }
@@ -73,6 +75,20 @@ function sharedFolder(record: ChatWorktreeRecord, root: string, folder = record.
     if (cwd === target || cwd.startsWith(target + sep)) return true;
   }
   return false;
+}
+
+// Stops the setup of each chat and runs the cleanup scripts in each worktree folder that archive or delete removes.
+// chatIds are all the chats that the action archives or deletes; it fails at the first failed cleanup.
+export async function cleanUp(chatIds: string[], root = profileRoot()): Promise<void> {
+  const leaving = new Set(chatIds);
+  for (const record of records(chatIds, root)) {
+    if (record.state !== 'active') continue;
+    await stopSetup(record.chatId);
+    if (sharedFolder(record, root, record.worktree, false, leaving)) continue;
+    try { await stat(record.worktree); }
+    catch (error: any) { if (error.code === 'ENOENT') continue; throw error; }
+    await runCleanup(record, root);
+  }
 }
 
 export async function beginArchive(chatIds: string[], root = profileRoot()): Promise<ChatWorktreeRecord[]> {
@@ -85,12 +101,12 @@ export async function beginArchive(chatIds: string[], root = profileRoot()): Pro
       try { await stat(record.gitCommonDir); }
       catch (error: any) { if (error.code !== 'ENOENT') throw error; repositoryMissing = true; }
       if (repositoryMissing) {
-        done.push(Worktrees.replace(record, { ...without(settled(record), 'protecting'), state: 'archiving', repositoryMissing: true }, root)!);
+        done.push(Worktrees.replace(record, { ...without(settled(record), 'protecting', 'setup'), state: 'archiving', repositoryMissing: true }, root)!);
         continue;
       }
       const intent = await recordProtection(record, root);
       const archive = await protectArchive({ worktree: worktreeOf(intent), home: homeDir() });
-      try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit, ...archive.base !== archive.commit ? { base: archive.base } : {} } } as ChatWorktreeRecord, root)!); }
+      try { done.push(Worktrees.replace(intent, { ...without(settled(intent), 'protecting', 'setup'), state: 'archiving', archive: { ref: archive.ref, commit: archive.commit, ...archive.base !== archive.commit ? { base: archive.base } : {} } } as ChatWorktreeRecord, root)!); }
       catch (error) {
         try { await releaseArchive(archive); }
         catch (cleanup) { throw new Error(`${errorText(error)}\nCould not release ${archive.ref}: ${errorText(cleanup)}`); }
@@ -204,6 +220,7 @@ export async function finishRestore(restoring: ChatWorktreeRecord[], root = prof
     rememberProjectRepository(root, plan.worktree, { root: plan.worktree, gitDir: record.gitCommonDir });
     Worktrees.replace(Worktrees.read(record.chatId, root), active, root);
     if (plan.worktree !== record.worktree) forgetProjectRepository(root, record.worktree);
+    if (!plan.retained) await startSetup({ chatId: record.chatId, worktree: plan.worktree, repository: record.repository }, root);
   });
 }
 
@@ -245,6 +262,7 @@ function transcriptArea(root: string, chatId: string): Area {
 
 export async function recover(root = profileRoot()): Promise<void> {
   await storageTransactions.recover({ root });
+  recoverSetups(root);
   const failures = await Worktrees.recoverPreparing(root);
   for (const record of Worktrees.list(root)) {
     if (record.state === 'preparing') continue;

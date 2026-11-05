@@ -59,6 +59,12 @@ export class SessionQueue {
 
   offer(): void { this.delivery.offer(true); }
 
+  waitForSetup(waiting: boolean): void {
+    if (this.s.setup === waiting) return;
+    this.s.setup = waiting;
+    this.delivery.offer();
+  }
+
   async receive(event: any): Promise<void> {
     const before = this.s.pending.length;
     try { await this.record.observe(event); } catch (error) {

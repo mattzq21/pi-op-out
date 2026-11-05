@@ -25,6 +25,7 @@ import { cacheHitStats } from "../lib/messages";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, ForkSource, ImageAttachment, Model, SlashCommand } from "../types";
 import { Composer, ContainedPicker } from "./Composer";
 import { createTranscript, finalResponseIndex, type TranscriptInput } from "./Transcript";
+import { readWorktreeSetup, WORKTREE_SETUP, WorktreeSetup } from "./WorktreeSetup";
 import type { TranscriptCache } from "./transcriptCache";
 import type { DebugView } from "../lib/debugFeatures";
 import type { DraftSelection } from "../lib/draftState";
@@ -342,6 +343,11 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
     return () => clearTimeout(timer);
   }, () => [props.controlsDisabled, props.transport]);
   const mcpLoading = createMemo(() => (props.statuses["pi-desktop-mcp-loading"]));
+  const worktreeSetup = createMemo(() => { const value = props.statuses[WORKTREE_SETUP];
+
+    if (!value) return undefined;
+
+    try { return readWorktreeSetup(JSON.parse(value)); } catch { return undefined; } }, undefined, { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
   const skillMcpLoading = createMemo(() => skillMcpConnecting(props.statuses["piop-skill-mcp"]));
   const sendingStatus = createMemo(() => mcpLoading() ? undefined : skillMcpLoading() ? "Skill's MCP connecting…" : sendingSubmission()?.status);
 
@@ -498,6 +504,7 @@ export function ChatView(props: Props & { transcriptActions?: JSXElement; follow
       }}><div class="conversation">
         {props.loaded !== false && !messages().length && !mcpLoading() && !pendingSubmission() && <div class="empty-chat"><span>π<sup>op</sup></span></div>}
         {transcript().element}
+        <Show when={worktreeSetup()}>{setup => <WorktreeSetup setup={setup()} onStop={props.transport && ownsConversation() ? (transport => () => transport.command({ type: "stop_worktree_setup" }))(props.transport) : undefined} />}</Show>
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           <div class="mcp-loading-list" role="status">{props.debug?.mcpServers ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}

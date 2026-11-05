@@ -34,6 +34,18 @@ function checkArchive(chatId, archive) {
   if (archive.base !== undefined && (!COMMIT.test(archive.base) || archive.base === archive.commit)) throw new Error('Invalid chat archive base');
 }
 
+const SETUP_STATES = ['running', 'succeeded', 'failed', 'stopped'];
+
+function checkSetup(record) {
+  const setup = record.setup;
+
+  if (record.state !== 'preparing' && record.state !== 'active') throw new Error('Only new and active chat worktrees have a setup');
+  if (!setup || typeof setup !== 'object' || !SETUP_STATES.includes(setup.state) || typeof setup.output !== 'string') throw new Error('Invalid worktree setup');
+  const failed = setup.state === 'failed' || setup.state === 'stopped';
+
+  if (failed !== (typeof setup.script === 'string' && typeof setup.reason === 'string')) throw new Error('Only a failed or stopped worktree setup names its script and reason');
+}
+
 function check(record) {
   if (!record || typeof record !== 'object' || record.version !== 1) throw new Error('Invalid chat worktree record');
   const chatId = chatIdOf(record.chatId);
@@ -50,6 +62,8 @@ function check(record) {
   else if (record.archive !== null) throw new Error('Only archived chats have a saved commit');
 
   if ((record.state === 'preparing') !== (typeof record.owner === 'string')) throw new Error('Only preparing chat worktrees have an owner');
+
+  if (record.setup !== undefined) checkSetup(record);
 
   if (record.state === 'restoring') {
     const plan = record.restore;

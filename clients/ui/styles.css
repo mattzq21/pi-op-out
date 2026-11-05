@@ -758,3 +758,6 @@ button.message-link:hover { text-decoration-style: solid; }
 .chat-agent-header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .chat-agent-header .chat-agent-error { flex-basis: 100%; margin: 0; color: #d77865; font-size: 12px; }
 .field textarea.chat-agent-prompt { font-family: var(--mono, ui-monospace, monospace); }
+.worktree-setup.failed > summary { color: #c64f38; }
+.worktree-setup-stop { margin-left: 6px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--dark-subtle); color: var(--muted); font-size: 11px; }
+.worktree-setup-stop:hover:not(:disabled) { background: var(--dark-control); color: var(--ink); }

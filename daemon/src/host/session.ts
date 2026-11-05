@@ -28,6 +28,7 @@ import { goalPreparationView, restoreGoalAttachments, type GoalPlace } from './g
 import type { BrokerAnswer, BrokerCall } from '../broker';
 import type { HostEvents } from './events';
 import { PiStorage } from './pi_storage';
+import { setupMessage, setupRecorded, setupView, stopSetup, watchSetup, type Setup } from '../worktree_scripts';
 
 export interface SessionHost {
   storageRoot(): string;
@@ -96,6 +97,9 @@ export class Session {
   stderrTail: string[] = [];
   providerRevision = 0;
   private unseenErrors: any[] = [];
+  private setupOff = () => {};
+  private setupWaiters: Array<() => void> = [];
+  private recordingSetup = false;
 
   private constructor(launch: SessionLaunch, identity: string, pending: any[], storage: QueueStorage | null, private host: SessionHost, private toolPayloads: ToolPayloadCache, held: boolean, goal: QueueGoal) {
     this.identity = identity;
@@ -148,7 +152,48 @@ export class Session {
     assertRunning();
     session.worker = RuntimeWorker.spawn(session.spec, session.identity, launch.timeout, session.observer(), home, new PiStorage(host.storageRoot()));
     session.restoreGoalFiles();
+    session.setupOff = watchSetup(session.identity, () => session.setupChanged());
+    session.setupChanged();
     return session;
+  }
+
+  // A chat waits with its messages while its worktree setup runs, and until the finished setup is in its transcript.
+  private setupChanged(): void {
+    const setup = this.isClosed ? null : setupView(this.identity, this.host.storageRoot());
+    const status = { type: 'extension_ui_request', id: randomUUID(), method: 'setStatus', statusKey: 'piop-worktree-setup', statusText: setup ? JSON.stringify(setup) : undefined };
+    setEntry(this.statuses, 'setStatus:piop-worktree-setup', status);
+    this.publish(status, null);
+    if (setup && setup.state !== 'running' && !this.isTransient) void this.recordSetup(setup);
+    this.setupWaits(setup !== null && !this.recordingFailed(setup));
+  }
+
+  private failedSetup: Setup | null = null;
+
+  private recordingFailed(setup: Setup): boolean { return this.failedSetup !== null && JSON.stringify(this.failedSetup) === JSON.stringify(setup); }
+
+  private setupWaits(waiting: boolean): void {
+    this.queue.waitForSetup(waiting);
+    if (!waiting) for (const resolve of this.setupWaiters.splice(0)) resolve();
+  }
+
+  setupSettled(): Promise<void> {
+    const setup = setupView(this.identity, this.host.storageRoot());
+    if (setup === null || this.recordingFailed(setup) || this.isClosed) return Promise.resolve();
+    return new Promise(resolve => this.setupWaiters.push(resolve));
+  }
+
+  private async recordSetup(setup: Setup): Promise<void> {
+    if (this.recordingSetup || this.recordingFailed(setup)) return;
+    this.recordingSetup = true;
+    try {
+      await this.execute({ type: 'insert_context', message: setupMessage(setup) });
+      setupRecorded(this.identity, this.host.storageRoot(), setup);
+    } catch (error) {
+      // The next start of this chat tries again. Until then, its messages do not wait.
+      this.failedSetup = setup;
+      this.goalError('Could not add the worktree setup result to the chat: ' + errorText(error));
+      this.setupChanged();
+    } finally { this.recordingSetup = false; }
   }
 
   private goalPlace(): GoalPlace {
@@ -229,7 +274,7 @@ export class Session {
   reservedPath(): string | null { return this.reservedPathValue; }
   setReservedPath(path: string | null): void { this.reservedPathValue = path; }
   transient(): boolean { return this.isTransient; }
-  makeVisible(): void { this.isTransient = false; }
+  makeVisible(): void { this.isTransient = false; if (this.worker) this.setupChanged(); }
   closed(): boolean { return this.isClosed; }
   stopping(): boolean { return this.isStopping; }
   working(): boolean { return this.isWorking; }
@@ -395,6 +440,8 @@ export class Session {
   private finish(): void {
     if (this.isClosed) return;
     this.isClosed = true;
+    this.setupOff();
+    for (const resolve of this.setupWaiters.splice(0)) resolve();
     if (this.isWorking) this.host.taskRunning(this.sessionId(), false, true);
     this.host.stateChanged(this.identity);
     this.idleStop.cancel();
@@ -552,6 +599,7 @@ export class Session {
       case 'get_turn_work': return turnWork(await this.raw({ type: 'get_entries' }), command.entryId);
       case 'get_state': return this.collectState(command);
       case 'force_stop': await this.stop(); return null;
+      case 'stop_worktree_setup': await stopSetup(this.identity); return null;
       case 'get_available_models': await this.refreshProviders(); break;
       case 'compact': {
         if (this.working()) throw new CommandRefusedError('piop is working. Send /compact as a message to compact after the current response.', 'daemon');
