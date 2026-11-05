@@ -24,5 +24,5 @@ render(() => <main style={{ position: 'relative' }}>
       <article data-response-id={response.messageId}>{response.preview}</article>
     </section>)}{working() && <section data-response-turn="turn-working" style={{ height: '900px' }}><p>Question the agent works on</p></section>}</div>
   </div>
-  <ResponseNavigator responses={rail()} forked={new Set(['answer-1'])} scrollRoot={scrollRoot} onNavigate={() => { (window as any).navigated++; }} onReveal={id => (window as any).revealed.push(id)} />
+  <ResponseNavigator responses={rail()} forked="answer-1" scrollRoot={scrollRoot} onNavigate={() => { (window as any).navigated++; }} onReveal={id => (window as any).revealed.push(id)} />
 </main>, document.getElementById('root')!);
